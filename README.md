@@ -13,4 +13,4 @@ WIP:
 Nice to have:
 
 [ ] Use a more sophisticated command line parser.
-
+[ ] Get rid off `libssh2` dependency.
