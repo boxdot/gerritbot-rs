@@ -31,7 +31,7 @@ fn parse_args<Iter>(mut args: Iter) -> Result<Args, &'static str>
     })
 }
 
-const USAGE: &str = r#"
+const USAGE: &'static str = r#"
 gerritbot <hostname> <port> <username> <priv_key_path>
 
 Arguments:

@@ -7,5 +7,5 @@ matrix:
   allow_failures:
     - rust: nightly
 before_install:
-  - sudo apt-get update -q
+  - sudo apt-get update -qq
   - sudo apt-get install libssh2-1-dev -y
