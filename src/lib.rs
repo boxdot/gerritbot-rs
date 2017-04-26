@@ -66,10 +66,15 @@ pub fn gerrit(host: String,
             }
         }
     });
+
+    // TODO: Right now, we are interested only in +1/-1/+2/-2 events. When we have implemented, all
+    // event types mappings, we can provide here full parsing by removing the filtering.
     rx.then(|event| {
             // event from our channel cannot fail
             let json: String = event.unwrap()?;
-            Ok(serde_json::from_str(&json)?)
+            Ok(serde_json::from_str(&json).ok())
         })
+        .filter(|event| event.is_some())
+        .map(|event| event.unwrap()) // we cannot fail here, since we filtered all None's
         .boxed()
 }

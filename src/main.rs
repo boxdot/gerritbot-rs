@@ -2,9 +2,9 @@ extern crate gerritbot;
 extern crate serde_json;
 extern crate futures;
 
-use futures::{Future, Stream};
-
 use std::path::PathBuf;
+
+use futures::{Future, Stream};
 
 struct Args {
     hostname: String,
@@ -46,7 +46,7 @@ fn main() {
     let args = match parse_args(std::env::args()) {
         Ok(args) => args,
         Err(msg) => {
-            println!("Error: {}\n\nUsage: {}", msg, USAGE);
+            println!("Error: {}\nUsage: {}", msg, USAGE);
             std::process::exit(1);
         }
     };
@@ -54,5 +54,5 @@ fn main() {
     let stream = gerritbot::gerrit(args.hostname, args.port, args.username, args.priv_key_path);
     stream.for_each(|event| Ok(println!("{:?}", event)))
         .wait()
-        .unwrap();
+        .ok();
 }
