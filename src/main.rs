@@ -1,10 +1,14 @@
-extern crate gerritbot;
+#[macro_use]
+extern crate serde_derive;
 extern crate serde_json;
+extern crate ssh2;
 extern crate futures;
 
 use std::path::PathBuf;
 
 use futures::{Future, Stream};
+
+mod gerrit;
 
 struct Args {
     hostname: String,
@@ -51,7 +55,7 @@ fn main() {
         }
     };
 
-    let stream = gerritbot::gerrit(args.hostname, args.port, args.username, args.priv_key_path);
+    let stream = gerrit::event_stream(args.hostname, args.port, args.username, args.priv_key_path);
     stream.for_each(|event| Ok(println!("{:?}", event)))
         .wait()
         .ok();
