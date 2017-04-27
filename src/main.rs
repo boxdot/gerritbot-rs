@@ -1,53 +1,35 @@
+extern crate futures;
+extern crate hyper;
+extern crate hyper_native_tls;
+extern crate iron;
+extern crate router;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde_json;
 extern crate ssh2;
-extern crate futures;
-
-use std::path::PathBuf;
 
 use futures::{Future, Stream};
+use iron::prelude::*;
+use router::Router;
 
+mod args;
 mod gerrit;
-
-struct Args {
-    hostname: String,
-    port: u16,
-    username: String,
-    priv_key_path: PathBuf,
-}
-
-fn parse_args<Iter>(mut args: Iter) -> Result<Args, &'static str>
-    where Iter: Iterator<Item = String>
-{
-    args.next();
-    let hostname = args.next().ok_or("argument 'hostname' missing")?;
-    let port = args.next().ok_or("argument 'port' is missing")?;
-    let port: u16 = port.parse().map_err(|_| "cannot parse port")?;
-    let username = args.next().ok_or("argument 'username' missing")?;
-    let priv_key_path = args.next().ok_or("path to private key is missing")?;
-
-    Ok(Args {
-        hostname: hostname,
-        port: port,
-        username: username,
-        priv_key_path: PathBuf::from(priv_key_path),
-    })
-}
+mod spark;
 
 const USAGE: &'static str = r#"
-gerritbot <hostname> <port> <username> <priv_key_path>
+gerritbot <hostname> <port> <username> <priv_key_path> <bot_token>
 
 Arguments:
     hostname        Gerrit hostname
     port            Gerrit port
     username        Username used to connect
     priv_key_path   Path to private key. Note: Due to the limitations of ssh2
-                    only rsa and dsa are supported.
+                    only RSA and DSA are supported.
+    bot_token       Token of the Spark bot for authentication.
 "#;
 
 fn main() {
-    let args = match parse_args(std::env::args()) {
+    let args = match args::parse_args(std::env::args()) {
         Ok(args) => args,
         Err(msg) => {
             println!("Error: {}\nUsage: {}", msg, USAGE);
@@ -55,7 +37,20 @@ fn main() {
         }
     };
 
-    let stream = gerrit::event_stream(args.hostname, args.port, args.username, args.priv_key_path);
+    // create spark post webhook handler
+    let mut router = Router::new();
+    let args_clone = args.clone();
+    router.post("/",
+                move |r: &mut Request| spark::handle_post_webhook(r, args.clone()),
+                "post");
+    // TODO: Do we really need a thread? How about a task in a event loop?
+    std::thread::spawn(|| Iron::new(Chain::new(router)).http("localhost:8888").unwrap());
+
+    // create gerrit event stream listener
+    let stream = gerrit::event_stream(args_clone.hostname,
+                                      args_clone.port,
+                                      args_clone.username,
+                                      args_clone.priv_key_path);
     stream.for_each(|event| Ok(println!("{:?}", event)))
         .wait()
         .ok();
