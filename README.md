@@ -5,8 +5,8 @@ A [Cisco Spark](https://www.ciscospark.com) bot which notifies about +1/-1 from 
 WIP:
 
 - [x] Implement streaming from Gerrit using SSH `gerrit-events` API.
+- [x] Implement Spark message receive endpoint.
 - [ ] Introduce a simple human-bot communication protocol.
-- [ ] Implement Spark message receive endpoint.
 - [ ] Implement send message to Spark API.
 - [ ] Connect: Spark <-> Bot <-> Gerrit.
 
@@ -14,4 +14,6 @@ Nice to have:
 
 - [ ] Use a more sophisticated command line parser.
 - [ ] Get rid off `libssh2` dependency.
+- [ ] Proper configurable logging with verbosity mode.
 - [ ] Tests.
+- [ ] Automatic update of webhooks URL in Spark.
