@@ -2,8 +2,15 @@
 pub type PersonId = String;
 
 /// Describes a state of the bot
+#[derive(Debug)]
 pub struct Bot {
     pub persons: Vec<PersonId>,
+}
+
+impl Bot {
+    pub fn new() -> Bot {
+        return Bot { persons: Vec::new() };
+    }
 }
 
 #[derive(Debug)]

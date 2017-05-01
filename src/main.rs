@@ -8,6 +8,8 @@ extern crate serde_derive;
 extern crate serde_json;
 extern crate ssh2;
 
+use std::sync::{Arc, Mutex};
+
 use futures::{Future, Stream};
 use iron::prelude::*;
 use router::Router;
@@ -38,11 +40,14 @@ fn main() {
         }
     };
 
+    // create new thread-shareable bot
+    let bot = Arc::new(Mutex::new(bot::Bot::new()));
+
     // create spark post webhook handler
     let mut router = Router::new();
     let args_clone = args.clone();
     router.post("/",
-                move |r: &mut Request| spark::handle_post_webhook(r, args.clone()),
+                move |r: &mut Request| spark::handle_post_webhook(r, args.clone(), bot.clone()),
                 "post");
     // TODO: Do we really need a thread? How about a task in a event loop?
     std::thread::spawn(|| Iron::new(Chain::new(router)).http("localhost:8888").unwrap());
