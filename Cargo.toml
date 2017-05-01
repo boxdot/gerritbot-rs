@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["boxdot <d@zerovolt.org>"]
 
 [dependencies]
+chrono = "0.3.x"
 futures = "0.1.x"
 hyper = "0.10.x"
 hyper-native-tls = "*"
@@ -12,4 +13,8 @@ router = "0.5.x"
 serde = "1.0.x"
 serde_derive = "1.0.x"
 serde_json = "1.0.x"
-ssh2 = "0.3"
+sha2 = "*"
+ssh2 = "0.3.x"
+rustc-serialize = "*"
+lazy_static = "0.2.x"
+regex = "0.2.x"
