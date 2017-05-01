@@ -4,7 +4,10 @@ use iron::prelude::*;
 use iron::status;
 use serde_json;
 
-use args::Args;
+use std::mem;
+use std::sync::{Arc, Mutex};
+
+use args;
 use bot;
 
 /// Create a new hyper client for the given url.
@@ -90,7 +93,10 @@ impl Message {
 }
 
 /// Post hook from Spark
-pub fn handle_post_webhook(req: &mut Request, args: Args) -> IronResult<Response> {
+pub fn handle_post_webhook(req: &mut Request,
+                           args: args::Args,
+                           bot: Arc<Mutex<bot::Bot>>)
+                           -> IronResult<Response> {
     let new_post: Post = match serde_json::from_reader(&mut req.body) {
         Ok(post) => post,
         Err(err) => {
@@ -112,10 +118,22 @@ pub fn handle_post_webhook(req: &mut Request, args: Args) -> IronResult<Response
     let action = msg.to_action();
     match action {
         bot::Action::Help => {
-            println!("TODO: send print message here!");
+            println!("[D] Got help action.");
+            // TODO: Send help!
+        }
+        bot::Action::Unknown => {
+            println!("[D] Got unknown action.");
+            // TODO: Send help!
         }
         _ => {
-            bot::update(action, bot::Bot { persons: vec![] });
+            let mut bot_guard = bot.lock().unwrap();
+            let ref mut bot = *bot_guard;
+
+            let old_bot = mem::replace(bot, bot::Bot::new());
+            let new_bot = bot::update(action, old_bot);
+            mem::replace(bot, new_bot);
+
+            println!("[D] New state: {:?}", bot);
         }
     };
 
