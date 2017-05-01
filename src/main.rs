@@ -3,8 +3,10 @@ extern crate hyper;
 extern crate hyper_native_tls;
 extern crate iron;
 extern crate router;
+extern crate serde;
 #[macro_use]
 extern crate serde_derive;
+#[macro_use]
 extern crate serde_json;
 extern crate ssh2;
 
@@ -29,6 +31,7 @@ Arguments:
     priv_key_path   Path to private key. Note: Due to the limitations of ssh2
                     only RSA and DSA are supported.
     bot_token       Token of the Spark bot for authentication.
+    bot_id          Identity of the Spark bot for filtering own messages.
 "#;
 
 fn main() {

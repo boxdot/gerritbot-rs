@@ -2,6 +2,7 @@ use hyper;
 use hyper_native_tls;
 use iron::prelude::*;
 use iron::status;
+use serde;
 use serde_json;
 
 use std::mem;
@@ -32,6 +33,37 @@ pub fn get_json_with_token(url: &str,
         .header(hyper::header::Accept::json())
         .header(auth)
         .send()
+}
+
+/// Try to post json to the given url with basic token authorization.
+pub fn post_with_token<T>(url: &str,
+                          token: &str,
+                          data: &T)
+                          -> Result<hyper::client::Response, hyper::Error>
+    where T: serde::ser::Serialize
+{
+    let client = new_client(url);
+    let payload = serde_json::to_string(data).unwrap();
+    let auth = hyper::header::Authorization(String::from("Bearer ") + token);
+    client.post(url)
+        .header(hyper::header::ContentType::json())
+        .header(auth)
+        .body(&payload)
+        .send()
+}
+
+fn reply(url: &str, token: &str, person_id: &str, msg: &str) {
+    let json = json!({
+        "toPersonId": person_id,
+        "markdown": msg,
+    });
+    let res = post_with_token(&(String::from(url) + "/messages"), token, &json);
+    match res {
+        Err(err) => {
+            println!("[E] Could not reply to gerrit: {:?}", err);
+        }
+        _ => (),
+    };
 }
 
 /// Webhook's post request from Spark API
@@ -92,6 +124,30 @@ impl Message {
     }
 }
 
+const GREETINGS_MSG: &'static str = r#"Hi. I am GerritBot. I can watch Gerrit reviews for you,
+and notify you about new +1/-1's.
+
+For more information, type in **help**.
+
+By the way, my icon is made by
+[ Madebyoliver ](http://www.flaticon.com/authors/madebyoliver)
+from
+[ www.flaticon.com ](http://www.flaticon.com)
+and is licensed by
+[ CC 3.0 BY](http://creativecommons.org/licenses/by/3.0/).
+"#;
+
+const HELP_MSG: &'static str = r#"Commands:
+
+`enable` I will start notifying you.
+
+`disable` I will stop notifying you.
+
+`status` I will tell if notification are enabled or disabled for you.
+
+`help` This message
+"#;
+
 /// Post hook from Spark
 pub fn handle_post_webhook(req: &mut Request,
                            args: args::Args,
@@ -106,6 +162,12 @@ pub fn handle_post_webhook(req: &mut Request,
     };
 
     let mut msg = new_post.data;
+
+    // filter own messages
+    if msg.person_id == args.spark_bot_id {
+        return Ok(Response::with(status::Ok));
+    }
+
     match msg.load_text(&args.spark_url, &args.spark_bot_token) {
         Err(err) => {
             println!("[E] Could not load post's text: {}", err);
@@ -115,15 +177,20 @@ pub fn handle_post_webhook(req: &mut Request,
     };
     println!("[I] Incoming: {:?}", msg);
 
+    // fold over actions
+    let person_id = msg.person_id.clone();
     let action = msg.to_action();
     match action {
         bot::Action::Help => {
             println!("[D] Got help action.");
-            // TODO: Send help!
+            reply(&args.spark_url, &args.spark_bot_token, &person_id, HELP_MSG);
         }
         bot::Action::Unknown => {
             println!("[D] Got unknown action.");
-            // TODO: Send help!
+            reply(&args.spark_url,
+                  &args.spark_bot_token,
+                  &person_id,
+                  GREETINGS_MSG);
         }
         _ => {
             let mut bot_guard = bot.lock().unwrap();
@@ -134,6 +201,11 @@ pub fn handle_post_webhook(req: &mut Request,
             mem::replace(bot, new_bot);
 
             println!("[D] New state: {:?}", bot);
+
+            reply(&args.spark_url,
+                  &args.spark_bot_token,
+                  &person_id,
+                  "Got it!");
         }
     };
 
