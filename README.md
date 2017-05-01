@@ -9,6 +9,11 @@ WIP:
 - [ ] Introduce a simple human-bot communication protocol.
 - [ ] Implement send message to Spark API.
 - [ ] Connect: Spark <-> Bot <-> Gerrit.
+- [ ] Implement serialization of state.
+
+Nice to have features:
+
+- [ ] Query Gerrit for the list of watched reviews.
 
 Nice to have:
 
