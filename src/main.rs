@@ -1,13 +1,19 @@
+extern crate chrono;
 extern crate futures;
 extern crate hyper;
 extern crate hyper_native_tls;
 extern crate iron;
+#[macro_use]
+extern crate lazy_static;
+extern crate regex;
 extern crate router;
+extern crate rustc_serialize;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 #[macro_use]
 extern crate serde_json;
+extern crate sha2;
 extern crate ssh2;
 
 use std::sync::{Arc, Mutex};
@@ -20,6 +26,7 @@ mod args;
 mod bot;
 mod gerrit;
 mod spark;
+mod utils;
 
 const USAGE: &'static str = r#"
 gerritbot <hostname> <port> <username> <priv_key_path> <bot_token>
@@ -60,7 +67,8 @@ fn main() {
                                       args_clone.port,
                                       args_clone.username,
                                       args_clone.priv_key_path);
-    stream.for_each(|event| Ok(println!("{:?}", event)))
+    stream.map(gerrit::approvals_to_message)
+        .for_each(|msg| Ok(println!("{:?}", msg)))
         .wait()
         .ok();
 }

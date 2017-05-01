@@ -8,6 +8,7 @@ WIP:
 - [x] Implement Spark message receive endpoint.
 - [x] Introduce a simple human-bot communication protocol.
 - [x] Implement send message to Spark API.
+- [ ] Implement Gerrit account verification.
 - [ ] Connect: Spark <-> Bot <-> Gerrit.
 - [ ] Implement serialization of state.
 

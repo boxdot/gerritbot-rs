@@ -2,6 +2,7 @@ use hyper;
 use hyper_native_tls;
 use iron::prelude::*;
 use iron::status;
+use regex;
 use serde;
 use serde_json;
 
@@ -66,6 +67,9 @@ fn reply(url: &str, token: &str, person_id: &str, msg: &str) {
     };
 }
 
+/// Spark id of the user
+pub type PersonId = String;
+
 /// Webhook's post request from Spark API
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -115,38 +119,35 @@ impl Message {
 
     // Convert Spark message to bot action
     fn to_action(self) -> bot::Action {
-        match self.text.trim().to_lowercase().as_ref() {
-            "help" => bot::Action::Help,
-            "enable" => bot::Action::Enable(self.person_id),
-            "disable" => bot::Action::Disable(self.person_id),
+        lazy_static! {
+            static ref RE_CONFIGURE: regex::Regex = regex::Regex::new(r"^configure ([^ ]+)$")
+                .unwrap();
+            static ref RE_ALL: regex::RegexSet = regex::RegexSet::new(&[
+                RE_CONFIGURE.as_str(),
+                r"^enable$",
+                r"^disable$",
+                r"^help$",
+            ]).unwrap();
+        }
+
+        let matches = RE_ALL.matches(&self.text);
+        if !matches.matched_any() {
+            return bot::Action::Unknown;
+        }
+
+        let pos = matches.iter().next().unwrap();
+        match pos {
+            0 => {
+                let cap = RE_CONFIGURE.captures(&self.text).unwrap();
+                return bot::Action::Configure(self.person_id, String::from(&cap[1]));
+            }
+            1 => bot::Action::Enable(self.person_id),
+            2 => bot::Action::Disable(self.person_id),
+            3 => bot::Action::Help,
             _ => bot::Action::Unknown,
         }
     }
 }
-
-const GREETINGS_MSG: &'static str = r#"Hi. I am GerritBot. I can watch Gerrit reviews for you,
-and notify you about new +1/-1's.
-
-For more information, type in **help**.
-
-By the way, my icon is made by
-[ Madebyoliver ](http://www.flaticon.com/authors/madebyoliver)
-from
-[ www.flaticon.com ](http://www.flaticon.com)
-and is licensed by
-[ CC 3.0 BY](http://creativecommons.org/licenses/by/3.0/).
-"#;
-
-const HELP_MSG: &'static str = r#"Commands:
-
-`enable` I will start notifying you.
-
-`disable` I will stop notifying you.
-
-`status` I will tell if notification are enabled or disabled for you.
-
-`help` This message
-"#;
 
 /// Post hook from Spark
 pub fn handle_post_webhook(req: &mut Request,
@@ -177,37 +178,23 @@ pub fn handle_post_webhook(req: &mut Request,
     };
     println!("[I] Incoming: {:?}", msg);
 
-    // fold over actions
+    // handle message
     let person_id = msg.person_id.clone();
     let action = msg.to_action();
-    match action {
-        bot::Action::Help => {
-            println!("[D] Got help action.");
-            reply(&args.spark_url, &args.spark_bot_token, &person_id, HELP_MSG);
-        }
-        bot::Action::Unknown => {
-            println!("[D] Got unknown action.");
-            reply(&args.spark_url,
-                  &args.spark_bot_token,
-                  &person_id,
-                  GREETINGS_MSG);
-        }
-        _ => {
-            let mut bot_guard = bot.lock().unwrap();
-            let ref mut bot = *bot_guard;
 
-            let old_bot = mem::replace(bot, bot::Bot::new());
-            let new_bot = bot::update(action, old_bot);
-            mem::replace(bot, new_bot);
+    let mut bot_guard = bot.lock().unwrap();
+    let ref mut bot = *bot_guard;
 
-            println!("[D] New state: {:?}", bot);
+    // fold over actions
+    let old_bot = mem::replace(bot, bot::Bot::new());
+    let (new_bot, response_msg) = bot::update(action, old_bot);
+    mem::replace(bot, new_bot);
 
-            reply(&args.spark_url,
-                  &args.spark_bot_token,
-                  &person_id,
-                  "Got it!");
-        }
-    };
+    println!("[D] New state: {:?}", bot);
+    reply(&args.spark_url,
+          &args.spark_bot_token,
+          &person_id,
+          &response_msg);
 
     Ok(Response::with(status::Ok))
 }

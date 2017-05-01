@@ -10,10 +10,13 @@ use futures::stream::BoxStream;
 use futures::sync::mpsc::channel;
 use futures::{Future, Sink, Stream};
 
+/// Gerrit username
+pub type Username = String;
+
 #[derive(Deserialize, Debug)]
 pub struct User {
-    name: String,
-    username: String,
+    name: Option<String>,
+    username: Username,
     email: Option<String>,
 }
 
@@ -138,9 +141,42 @@ pub fn event_stream(host: String,
     rx.then(|event| {
             // event from our channel cannot fail
             let json: String = event.unwrap()?;
-            Ok(serde_json::from_str(&json).ok())
+            let res = serde_json::from_str(&json);
+            if res.is_err() {
+                println!("[D] {:?} for json: {}", res, json);
+            }
+            Ok(res.ok())
         })
         .filter(|event| event.is_some())
         .map(|event| event.unwrap()) // we cannot fail here, since we filtered all None's
         .boxed()
+}
+
+// "some change in gerrit: +1 (Code-Review), -1 (QA) from Some One"
+pub fn approvals_to_message(event: Event) -> Result<String, StreamError> {
+    let approval_msgs = event.approvals
+        .iter()
+        .filter(|approval| approval.old_value != approval.value)
+        .map(|approval| {
+            let value: i32 = approval.value.parse().unwrap();
+            format!("{}{} ({})",
+                    if value > 0 { "+" } else { "" },
+                    value,
+                    approval.description)
+        })
+        .fold(String::new(), |acc, msg| if !acc.is_empty() {
+            acc + ", " + &msg
+        } else {
+            msg
+        });
+
+    let name = match event.author.name {
+        Some(name) => name,
+        None => event.author.username,
+    };
+
+    let message = format!("{}: {} from {}", event.change.subject, approval_msgs, name);
+    println!("[D] {:?}", message);
+
+    Ok(message)
 }
