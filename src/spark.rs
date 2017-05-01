@@ -5,6 +5,7 @@ use iron::status;
 use serde_json;
 
 use args::Args;
+use bot;
 
 /// Create a new hyper client for the given url.
 fn new_client(url: &str) -> hyper::Client {
@@ -76,6 +77,16 @@ impl Message {
         self.text = msg.text;
         Ok(())
     }
+
+    // Convert Spark message to bot action
+    fn to_action(self) -> bot::Action {
+        match self.text.trim().to_lowercase().as_ref() {
+            "help" => bot::Action::Help,
+            "enable" => bot::Action::Enable(self.person_id),
+            "disable" => bot::Action::Disable(self.person_id),
+            _ => bot::Action::Unknown,
+        }
+    }
 }
 
 /// Post hook from Spark
@@ -84,7 +95,7 @@ pub fn handle_post_webhook(req: &mut Request, args: Args) -> IronResult<Response
         Ok(post) => post,
         Err(err) => {
             println!("[E] Could not parse post: {}", err);
-            return Ok(Response::with(status::BadRequest));
+            return Ok(Response::with(status::Ok));
         }
     };
 
@@ -92,12 +103,21 @@ pub fn handle_post_webhook(req: &mut Request, args: Args) -> IronResult<Response
     match msg.load_text(&args.spark_url, &args.spark_bot_token) {
         Err(err) => {
             println!("[E] Could not load post's text: {}", err);
-            return Ok(Response::with(status::BadRequest));
+            return Ok(Response::with(status::Ok));
         }
         _ => (),
     };
-    println!("Incoming: {:?}", msg);
+    println!("[I] Incoming: {:?}", msg);
 
-    // TODO: Handle messages and reply here!
+    let action = msg.to_action();
+    match action {
+        bot::Action::Help => {
+            println!("TODO: send print message here!");
+        }
+        _ => {
+            bot::update(action, bot::Bot { persons: vec![] });
+        }
+    };
+
     Ok(Response::with(status::Ok))
 }

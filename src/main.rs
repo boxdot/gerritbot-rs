@@ -13,6 +13,7 @@ use iron::prelude::*;
 use router::Router;
 
 mod args;
+mod bot;
 mod gerrit;
 mod spark;
 
