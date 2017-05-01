@@ -6,8 +6,8 @@ WIP:
 
 - [x] Implement streaming from Gerrit using SSH `gerrit-events` API.
 - [x] Implement Spark message receive endpoint.
-- [ ] Introduce a simple human-bot communication protocol.
-- [ ] Implement send message to Spark API.
+- [x] Introduce a simple human-bot communication protocol.
+- [x] Implement send message to Spark API.
 - [ ] Connect: Spark <-> Bot <-> Gerrit.
 - [ ] Implement serialization of state.
 
