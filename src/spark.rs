@@ -58,11 +58,11 @@ pub struct SparkClient {
 }
 
 impl SparkClient {
-    pub fn new(args: args::Args) -> SparkClient {
+    pub fn new(args: &args::Args) -> SparkClient {
         SparkClient {
-            url: args.spark_url,
-            bot_token: args.spark_bot_token,
-            bot_id: args.spark_bot_id,
+            url: args.spark_url.clone(),
+            bot_token: args.spark_bot_token.clone(),
+            bot_id: args.spark_bot_id.clone(),
         }
     }
 

@@ -54,11 +54,10 @@ fn main() {
     let bot = Arc::new(Mutex::new(bot::Bot::new()));
 
     // create a new (const) Spark client
-    let spark_client = spark::SparkClient::new(args.clone());
+    let spark_client = spark::SparkClient::new(&args);
 
     // create spark post webhook handler
     let mut router = Router::new();
-    let args_clone = args.clone();
     router.post("/",
                 move |r: &mut Request| spark::handle_post_webhook(r, &spark_client, bot.clone()),
                 "post");
@@ -66,10 +65,7 @@ fn main() {
     std::thread::spawn(|| Iron::new(Chain::new(router)).http("localhost:8888").unwrap());
 
     // create gerrit event stream listener
-    let stream = gerrit::event_stream(args_clone.hostname,
-                                      args_clone.port,
-                                      args_clone.username,
-                                      args_clone.priv_key_path);
+    let stream = gerrit::event_stream(args.hostname, args.port, args.username, args.priv_key_path);
     stream.map(gerrit::approvals_to_message)
         .for_each(|msg| Ok(println!("{:?}", msg)))
         .wait()
