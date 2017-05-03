@@ -24,12 +24,10 @@ fn new_client(url: &str) -> hyper::Client {
 }
 
 /// Try to get json from the given url with basic token authorization.
-pub fn get_json_with_token(url: &str,
-                           token: &str)
-                           -> Result<hyper::client::Response, hyper::Error> {
-    let client = new_client(url);
+fn get_json_with_token(url: String, token: &str) -> Result<hyper::client::Response, hyper::Error> {
+    let client = new_client(&url);
     let auth = hyper::header::Authorization(hyper::header::Bearer { token: String::from(token) });
-    client.get(url)
+    client.get(&url)
         .header(hyper::header::ContentType::json())
         .header(hyper::header::Accept::json())
         .header(auth)
@@ -37,34 +35,55 @@ pub fn get_json_with_token(url: &str,
 }
 
 /// Try to post json to the given url with basic token authorization.
-pub fn post_with_token<T>(url: &str,
+pub fn post_with_token<T>(url: String,
                           token: &str,
                           data: &T)
                           -> Result<hyper::client::Response, hyper::Error>
     where T: serde::ser::Serialize
 {
-    let client = new_client(url);
+    let client = new_client(&url);
     let payload = serde_json::to_string(data).unwrap();
     let auth = hyper::header::Authorization(String::from("Bearer ") + token);
-    client.post(url)
+    client.post(&url)
         .header(hyper::header::ContentType::json())
         .header(auth)
         .body(&payload)
         .send()
 }
 
-fn reply(url: &str, token: &str, person_id: &str, msg: &str) {
-    let json = json!({
-        "toPersonId": person_id,
-        "markdown": msg,
-    });
-    let res = post_with_token(&(String::from(url) + "/messages"), token, &json);
-    match res {
-        Err(err) => {
-            println!("[E] Could not reply to gerrit: {:?}", err);
+pub struct SparkClient {
+    url: String,
+    bot_token: String,
+    bot_id: String,
+}
+
+impl SparkClient {
+    pub fn new(args: args::Args) -> SparkClient {
+        SparkClient {
+            url: args.spark_url,
+            bot_token: args.spark_bot_token,
+            bot_id: args.spark_bot_id,
         }
-        _ => (),
-    };
+    }
+
+    fn reply(&self, person_id: &str, msg: &str) {
+        let json = json!({
+            "toPersonId": person_id,
+            "markdown": msg,
+        });
+        let res = post_with_token(self.url.clone() + "/messages", &self.bot_token, &json);
+        match res {
+            Err(err) => {
+                println!("[E] Could not reply to gerrit: {:?}", err);
+            }
+            _ => (),
+        };
+    }
+
+    fn get_message_text(&self, message_id: &str) -> Result<hyper::client::Response, hyper::Error> {
+        get_json_with_token(self.url.clone() + "/messages/" + message_id,
+                            &self.bot_token)
+    }
 }
 
 /// Spark id of the user
@@ -107,10 +126,9 @@ struct Message {
 impl Message {
     /// Load text from Spark for a received message
     /// Note: Spark does not send the text with the message to the registered post hook.
-    pub fn load_text(&mut self, spark_url: &str, token: &str) -> Result<(), String> {
-        let url = String::from(spark_url) + "/messages/" + &self.id;
-        let resp = get_json_with_token(&url, token).map_err(
-            |err| format!("Invalid response from spark: {}", err))?;
+    pub fn load_text(&mut self, client: &SparkClient) -> Result<(), String> {
+        let resp = client.get_message_text(&self.id)
+            .map_err(|err| format!("Invalid response from spark: {}", err))?;
         let msg: Message = serde_json::from_reader(resp).map_err(
             |err| String::from(format!("Cannot parse json: {}", err)))?;
         self.text = msg.text;
@@ -151,7 +169,7 @@ impl Message {
 
 /// Post hook from Spark
 pub fn handle_post_webhook(req: &mut Request,
-                           args: args::Args,
+                           client: &SparkClient,
                            bot: Arc<Mutex<bot::Bot>>)
                            -> IronResult<Response> {
     let new_post: Post = match serde_json::from_reader(&mut req.body) {
@@ -165,11 +183,11 @@ pub fn handle_post_webhook(req: &mut Request,
     let mut msg = new_post.data;
 
     // filter own messages
-    if msg.person_id == args.spark_bot_id {
+    if msg.person_id == client.bot_id {
         return Ok(Response::with(status::Ok));
     }
 
-    match msg.load_text(&args.spark_url, &args.spark_bot_token) {
+    match msg.load_text(&client) {
         Err(err) => {
             println!("[E] Could not load post's text: {}", err);
             return Ok(Response::with(status::Ok));
@@ -191,10 +209,7 @@ pub fn handle_post_webhook(req: &mut Request,
     mem::replace(bot, new_bot);
 
     println!("[D] New state: {:?}", bot);
-    reply(&args.spark_url,
-          &args.spark_bot_token,
-          &person_id,
-          &response_msg);
+    client.reply(&person_id, &response_msg);
 
     Ok(Response::with(status::Ok))
 }
