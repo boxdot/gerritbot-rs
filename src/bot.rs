@@ -19,7 +19,7 @@ struct User {
 fn generate_verification_token(person_id: &str, username: &str) -> String {
     let now = chrono::UTC::now();
     let salt = utils::xorshift64star(now.timestamp() as u64);
-    calc_verification_token(&person_id, &username, salt)
+    calc_verification_token(person_id, username, salt)
 }
 
 // TODO: write a good test for it
@@ -58,7 +58,7 @@ enum UserUpdate<'a> {
 
 impl Bot {
     pub fn new() -> Bot {
-        return Bot { users: Vec::new() };
+        Bot { users: Vec::new() }
     }
 
     /// Return value is the user, and whether the user is a new one.
@@ -66,7 +66,7 @@ impl Bot {
                      person_id: spark::PersonId,
                      username: gerrit::Username)
                      -> UserUpdate<'a> {
-        if let Some(pos) = self.users.iter().position(|ref u| u.spark_person_id == person_id) {
+        if let Some(pos) = self.users.iter().position(|u| u.spark_person_id == person_id) {
             let user: &'a mut User = &mut self.users[pos];
             if user.gerrit_username != username {
                 // User is trying to configure a different gerrit username => reset user
@@ -84,8 +84,8 @@ impl Bot {
         }
     }
 
-    fn enable<'a>(&'a mut self, person_id: &spark::PersonId, enabled: bool) -> Option<&'a User> {
-        let pos = self.users.iter().position(|ref u| &u.spark_person_id == person_id);
+    fn enable<'a>(&'a mut self, person_id: &str, enabled: bool) -> Option<&'a User> {
+        let pos = self.users.iter().position(|u| u.spark_person_id == person_id);
         match pos {
             Some(pos) => {
                 let user: &'a mut User = &mut self.users[pos];
@@ -94,6 +94,16 @@ impl Bot {
             }
             None => None,
         }
+    }
+
+    pub fn try_to_verify(&mut self, event: gerrit::Event) -> Option<(spark::PersonId, String)> {
+        // TODO
+        None
+    }
+
+    pub fn check_comment(&mut self, event: gerrit::Event) -> Option<(spark::PersonId, String)> {
+        // TODO
+        None
     }
 }
 
@@ -204,13 +214,13 @@ pub fn update(action: Action, bot: Bot) -> (Bot, String) {
         }
         Action::Enable(person_id) => {
             bot.enable(&person_id, true)
-                .and_then(|ref user| if user.verified { Some(()) } else { None })
+                .and_then(|user| if user.verified { Some(()) } else { None })
                 .map_or(String::from(NOT_CONFIGURED_MSG),
                         |_| String::from("Got it!"))
         }
         Action::Disable(person_id) => {
             bot.enable(&person_id, false)
-                .and_then(|ref user| if user.verified { Some(()) } else { None })
+                .and_then(|user| if user.verified { Some(()) } else { None })
                 .map_or(String::from(NOT_CONFIGURED_MSG),
                         |_| String::from("Got it!"))
         }

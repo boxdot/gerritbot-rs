@@ -67,25 +67,26 @@ pub struct ChangeKey {
     id: String,
 }
 
-// Only specific event are accepted by this type by design!
+// Only specific events are accepted by this type by design!
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Event {
-    author: User,
-    approvals: Vec<Approval>,
-    comment: Option<String>,
+    pub author: Option<User>,
+    pub uploader: Option<User>,
+    pub approvals: Option<Vec<Approval>>,
+    pub comment: Option<String>,
     #[serde(rename="patchSet")]
-    patchset: PatchSet,
-    change: Change,
-    project: String,
+    pub patchset: PatchSet,
+    pub change: Change,
+    pub project: String,
     #[serde(rename="refName")]
-    ref_name: String,
+    pub ref_name: String,
     #[serde(rename="changeKey")]
-    changekey: ChangeKey,
+    pub changekey: ChangeKey,
     #[serde(rename="type")]
-    event_type: String,
+    pub event_type: String,
     #[serde(rename="eventCreatedOn")]
-    created_on: u32,
+    pub created_on: u32,
 }
 
 #[derive(Debug)]
@@ -106,7 +107,7 @@ impl From<serde_json::Error> for StreamError {
     }
 }
 
-pub fn event_stream(host: String,
+pub fn event_stream(host: &str,
                     port: u16,
                     username: String,
                     priv_key_path: PathBuf)
@@ -153,30 +154,33 @@ pub fn event_stream(host: String,
 }
 
 // "some change in gerrit: +1 (Code-Review), -1 (QA) from Some One"
-pub fn approvals_to_message(event: Event) -> Result<String, StreamError> {
-    let approval_msgs = event.approvals
-        .iter()
-        .filter(|approval| approval.old_value != approval.value)
-        .map(|approval| {
-            let value: i32 = approval.value.parse().unwrap();
-            format!("{}{} ({})",
-                    if value > 0 { "+" } else { "" },
-                    value,
-                    approval.description)
-        })
-        .fold(String::new(), |acc, msg| if !acc.is_empty() {
-            acc + ", " + &msg
-        } else {
-            msg
-        });
+pub fn approvals_to_message(event: Event) -> Option<String> {
+    if let Some(approvals) = event.approvals {
+        let approval_msgs = approvals.iter()
+            .filter(|approval| approval.old_value != approval.value)
+            .map(|approval| {
+                let value: i32 = approval.value.parse().unwrap();
+                format!("{}{} ({})",
+                        if value > 0 { "+" } else { "" },
+                        value,
+                        approval.description)
+            })
+            .fold(String::new(), |acc, msg| if !acc.is_empty() {
+                acc + ", " + &msg
+            } else {
+                msg
+            });
 
-    let name = match event.author.name {
-        Some(name) => name,
-        None => event.author.username,
-    };
+        let author = event.author.unwrap();
+        let name = match author.name {
+            Some(name) => name,
+            None => author.username,
+        };
 
-    let message = format!("{}: {} from {}", event.change.subject, approval_msgs, name);
-    println!("[D] {:?}", message);
-
-    Ok(message)
+        let message = format!("{}: {} from {}", event.change.subject, approval_msgs, name);
+        println!("[D] {:?}", message);
+        Some(message)
+    } else {
+        None
+    }
 }

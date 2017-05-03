@@ -24,10 +24,10 @@ fn new_client(url: &str) -> hyper::Client {
 }
 
 /// Try to get json from the given url with basic token authorization.
-fn get_json_with_token(url: String, token: &str) -> Result<hyper::client::Response, hyper::Error> {
-    let client = new_client(&url);
+fn get_json_with_token(url: &str, token: &str) -> Result<hyper::client::Response, hyper::Error> {
+    let client = new_client(url);
     let auth = hyper::header::Authorization(hyper::header::Bearer { token: String::from(token) });
-    client.get(&url)
+    client.get(url)
         .header(hyper::header::ContentType::json())
         .header(hyper::header::Accept::json())
         .header(auth)
@@ -35,16 +35,16 @@ fn get_json_with_token(url: String, token: &str) -> Result<hyper::client::Respon
 }
 
 /// Try to post json to the given url with basic token authorization.
-pub fn post_with_token<T>(url: String,
+pub fn post_with_token<T>(url: &str,
                           token: &str,
                           data: &T)
                           -> Result<hyper::client::Response, hyper::Error>
     where T: serde::ser::Serialize
 {
-    let client = new_client(&url);
+    let client = new_client(url);
     let payload = serde_json::to_string(data).unwrap();
     let auth = hyper::header::Authorization(String::from("Bearer ") + token);
-    client.post(&url)
+    client.post(url)
         .header(hyper::header::ContentType::json())
         .header(auth)
         .body(&payload)
@@ -71,17 +71,14 @@ impl SparkClient {
             "toPersonId": person_id,
             "markdown": msg,
         });
-        let res = post_with_token(self.url.clone() + "/messages", &self.bot_token, &json);
-        match res {
-            Err(err) => {
-                println!("[E] Could not reply to gerrit: {:?}", err);
-            }
-            _ => (),
-        };
+        let res = post_with_token(&(self.url.clone() + "/messages"), &self.bot_token, &json);
+        if let Err(err) = res {
+            println!("[E] Could not reply to gerrit: {:?}", err);
+        }
     }
 
     fn get_message_text(&self, message_id: &str) -> Result<hyper::client::Response, hyper::Error> {
-        get_json_with_token(self.url.clone() + "/messages/" + message_id,
+        get_json_with_token(&(self.url.clone() + "/messages/" + message_id),
                             &self.bot_token)
     }
 }
@@ -140,29 +137,19 @@ impl Message {
         lazy_static! {
             static ref RE_CONFIGURE: regex::Regex = regex::Regex::new(r"^configure ([^ ]+)$")
                 .unwrap();
-            static ref RE_ALL: regex::RegexSet = regex::RegexSet::new(&[
-                RE_CONFIGURE.as_str(),
-                r"^enable$",
-                r"^disable$",
-                r"^help$",
-            ]).unwrap();
         }
 
-        let matches = RE_ALL.matches(&self.text);
-        if !matches.matched_any() {
-            return bot::Action::Unknown;
-        }
-
-        let pos = matches.iter().next().unwrap();
-        match pos {
-            0 => {
-                let cap = RE_CONFIGURE.captures(&self.text).unwrap();
-                return bot::Action::Configure(self.person_id, String::from(&cap[1]));
+        match &self.text.trim().to_lowercase()[..] {
+            "enable" => bot::Action::Enable(self.person_id),
+            "disable" => bot::Action::Disable(self.person_id),
+            "help" => bot::Action::Help,
+            _ => {
+                let cap = RE_CONFIGURE.captures(&self.text);
+                match cap {
+                    Some(cap) => bot::Action::Configure(self.person_id, String::from(&cap[1])),
+                    None => bot::Action::Unknown,
+                }
             }
-            1 => bot::Action::Enable(self.person_id),
-            2 => bot::Action::Disable(self.person_id),
-            3 => bot::Action::Help,
-            _ => bot::Action::Unknown,
         }
     }
 }

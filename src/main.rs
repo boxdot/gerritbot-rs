@@ -58,16 +58,29 @@ fn main() {
 
     // create spark post webhook handler
     let mut router = Router::new();
+    let bot_clone = bot.clone();
     router.post("/",
-                move |r: &mut Request| spark::handle_post_webhook(r, &spark_client, bot.clone()),
+                move |r: &mut Request| {
+                    spark::handle_post_webhook(r, &spark_client, bot_clone.clone())
+                },
                 "post");
     // TODO: Do we really need a thread? How about a task in a event loop?
     std::thread::spawn(|| Iron::new(Chain::new(router)).http("localhost:8888").unwrap());
 
     // create gerrit event stream listener
-    let stream = gerrit::event_stream(args.hostname, args.port, args.username, args.priv_key_path);
-    stream.map(gerrit::approvals_to_message)
-        .for_each(|msg| Ok(println!("{:?}", msg)))
+    let stream = gerrit::event_stream(&args.hostname, args.port, args.username, args.priv_key_path);
+    stream.map(move |event| if event.event_type == "patchset-created" {
+            bot.lock().unwrap().try_to_verify(event)
+        } else if event.event_type == "comment-added" {
+            bot.lock().unwrap().check_comment(event)
+        } else {
+            None
+        })
+        .filter(|response| response.is_some())
+        .for_each(|response| {
+            let (person_id, msg) = response.unwrap();
+            Ok(println!("Have to answer to {} with {}", person_id, msg))
+        })
         .wait()
         .ok();
 }
