@@ -96,12 +96,21 @@ impl Bot {
         }
     }
 
-    pub fn try_to_verify(&mut self, event: gerrit::Event) -> Option<(spark::PersonId, String)> {
-        // TODO
+    pub fn verify(&mut self,
+                  username: gerrit::Username,
+                  subject: String)
+                  -> Option<spark::PersonId> {
+        // TODO: linear search is slow
+        for user in &mut self.users.iter_mut() {
+            if user.gerrit_username == username && user.verification_token == subject.trim() {
+                user.verified = true;
+                return Some(user.spark_person_id.clone());
+            }
+        }
         None
     }
 
-    pub fn check_comment(&mut self, event: gerrit::Event) -> Option<(spark::PersonId, String)> {
+    pub fn update_approvals(&mut self, event: gerrit::Event) -> Option<spark::PersonId> {
         // TODO
         None
     }
@@ -112,6 +121,8 @@ pub enum Action {
     Configure(spark::PersonId, gerrit::Username),
     Enable(spark::PersonId),
     Disable(spark::PersonId),
+    Verify(gerrit::Username, String),
+    UpdateApprovals(gerrit::Event),
     Help,
     Unknown,
 }
@@ -224,6 +235,8 @@ pub fn update(action: Action, bot: Bot) -> (Bot, String) {
                 .map_or(String::from(NOT_CONFIGURED_MSG),
                         |_| String::from("Got it!"))
         }
+        Action::Verify(username, subject) => bot.verify(username, subject).unwrap_or_default(),
+        Action::UpdateApprovals(event) => bot.update_approvals(event).unwrap_or_default(),
         Action::Help => String::from(HELP_MSG),
         Action::Unknown => String::from(GREETINGS_MSG),
     };

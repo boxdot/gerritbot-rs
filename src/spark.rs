@@ -133,7 +133,7 @@ impl Message {
     }
 
     // Convert Spark message to bot action
-    fn to_action(self) -> bot::Action {
+    fn into_action(self) -> bot::Action {
         lazy_static! {
             static ref RE_CONFIGURE: regex::Regex = regex::Regex::new(r"^configure ([^ ]+)$")
                 .unwrap();
@@ -174,21 +174,18 @@ pub fn handle_post_webhook(req: &mut Request,
         return Ok(Response::with(status::Ok));
     }
 
-    match msg.load_text(&client) {
-        Err(err) => {
-            println!("[E] Could not load post's text: {}", err);
-            return Ok(Response::with(status::Ok));
-        }
-        _ => (),
-    };
+    if let Err(err) = msg.load_text(client) {
+        println!("[E] Could not load post's text: {}", err);
+        return Ok(Response::with(status::Ok));
+    }
     println!("[I] Incoming: {:?}", msg);
 
     // handle message
     let person_id = msg.person_id.clone();
-    let action = msg.to_action();
+    let action = msg.into_action();
 
     let mut bot_guard = bot.lock().unwrap();
-    let ref mut bot = *bot_guard;
+    let bot = &mut (*bot_guard);
 
     // fold over actions
     let old_bot = mem::replace(bot, bot::Bot::new());
