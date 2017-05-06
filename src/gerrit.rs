@@ -10,6 +10,8 @@ use futures::stream::BoxStream;
 use futures::sync::mpsc::channel;
 use futures::{Future, Sink, Stream};
 
+use bot;
+
 /// Gerrit username
 pub type Username = String;
 
@@ -67,12 +69,13 @@ pub struct ChangeKey {
     id: String,
 }
 
-// Only specific event are accepted by this type by design!
+// Only specific events are accepted by this type by design!
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Event {
-    author: User,
-    approvals: Vec<Approval>,
+    author: Option<User>,
+    uploader: Option<User>,
+    approvals: Option<Vec<Approval>>,
     comment: Option<String>,
     #[serde(rename="patchSet")]
     patchset: PatchSet,
@@ -86,6 +89,18 @@ pub struct Event {
     event_type: String,
     #[serde(rename="eventCreatedOn")]
     created_on: u32,
+}
+
+impl Event {
+    pub fn into_action(self) -> bot::Action {
+        if self.event_type == "patchset-created" && self.change.status == "DRAFT" {
+            bot::Action::Verify(self.change.owner.username, self.change.subject)
+        } else if self.approvals.is_some() {
+            bot::Action::UpdateApprovals(self)
+        } else {
+            bot::Action::NoOp
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -106,7 +121,7 @@ impl From<serde_json::Error> for StreamError {
     }
 }
 
-pub fn event_stream(host: String,
+pub fn event_stream(host: &str,
                     port: u16,
                     username: String,
                     priv_key_path: PathBuf)
@@ -142,9 +157,7 @@ pub fn event_stream(host: String,
             // event from our channel cannot fail
             let json: String = event.unwrap()?;
             let res = serde_json::from_str(&json);
-            if res.is_err() {
-                println!("[D] {:?} for json: {}", res, json);
-            }
+            println!("[D] {:?} for json: {}", res, json);
             Ok(res.ok())
         })
         .filter(|event| event.is_some())
@@ -153,30 +166,33 @@ pub fn event_stream(host: String,
 }
 
 // "some change in gerrit: +1 (Code-Review), -1 (QA) from Some One"
-pub fn approvals_to_message(event: Event) -> Result<String, StreamError> {
-    let approval_msgs = event.approvals
-        .iter()
-        .filter(|approval| approval.old_value != approval.value)
-        .map(|approval| {
-            let value: i32 = approval.value.parse().unwrap();
-            format!("{}{} ({})",
-                    if value > 0 { "+" } else { "" },
-                    value,
-                    approval.description)
-        })
-        .fold(String::new(), |acc, msg| if !acc.is_empty() {
-            acc + ", " + &msg
-        } else {
-            msg
-        });
+// pub fn approvals_to_message(event: Event) -> Option<String> {
+//     if let Some(approvals) = event.approvals {
+//         let approval_msgs = approvals.iter()
+//             .filter(|approval| approval.old_value != approval.value)
+//             .map(|approval| {
+//                 let value: i32 = approval.value.parse().unwrap();
+//                 format!("{}{} ({})",
+//                         if value > 0 { "+" } else { "" },
+//                         value,
+//                         approval.description)
+//             })
+//             .fold(String::new(), |acc, msg| if !acc.is_empty() {
+//                 acc + ", " + &msg
+//             } else {
+//                 msg
+//             });
 
-    let name = match event.author.name {
-        Some(name) => name,
-        None => event.author.username,
-    };
+//         let author = event.author.unwrap();
+//         let name = match author.name {
+//             Some(name) => name,
+//             None => author.username,
+//         };
 
-    let message = format!("{}: {} from {}", event.change.subject, approval_msgs, name);
-    println!("[D] {:?}", message);
-
-    Ok(message)
-}
+//         let message = format!("{}: {} from {}", event.change.subject, approval_msgs, name);
+//         println!("[D] {:?}", message);
+//         Some(message)
+//     } else {
+//         None
+//     }
+// }

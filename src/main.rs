@@ -16,6 +16,7 @@ extern crate serde_json;
 extern crate sha2;
 extern crate ssh2;
 
+use std::mem;
 use std::sync::{Arc, Mutex};
 
 use futures::{Future, Stream};
@@ -55,20 +56,43 @@ fn main() {
 
     // create spark post webhook handler
     let mut router = Router::new();
-    let args_clone = args.clone();
+    let bot_for_spark_handler = bot.clone();
+    let spark_client = spark::SparkClient::new(&args);
     router.post("/",
-                move |r: &mut Request| spark::handle_post_webhook(r, args.clone(), bot.clone()),
+                move |r: &mut Request| {
+                    spark::handle_post_webhook(r, &spark_client, bot_for_spark_handler.clone())
+                },
                 "post");
     // TODO: Do we really need a thread? How about a task in a event loop?
     std::thread::spawn(|| Iron::new(Chain::new(router)).http("localhost:8888").unwrap());
 
     // create gerrit event stream listener
-    let stream = gerrit::event_stream(args_clone.hostname,
-                                      args_clone.port,
-                                      args_clone.username,
-                                      args_clone.priv_key_path);
-    stream.map(gerrit::approvals_to_message)
-        .for_each(|msg| Ok(println!("{:?}", msg)))
+    // TODO: I have to create the client again, since it was moved above. Why was it moved? It
+    // should have been captured by reference. Is it because it was moved in a different thread?
+    let spark_client = spark::SparkClient::new(&args);
+    let stream = gerrit::event_stream(&args.hostname, args.port, args.username, args.priv_key_path);
+    stream.map(gerrit::Event::into_action)
+        .filter(|action| match *action {
+            bot::Action::Unknown(_) => false,
+            _ => true,
+        })
+        .for_each(|action| {
+            let mut bot_guard = bot.lock().unwrap();
+            let bot = &mut (*bot_guard);
+
+            // fold over actions
+            let old_bot = mem::replace(bot, bot::Bot::new());
+            let (new_bot, response) = bot::update(action, old_bot);
+            mem::replace(bot, new_bot);
+
+            println!("[D] New state: {:?}", bot);
+            if let Some(response) = response {
+                println!("[D] {:?}", response);
+                spark_client.reply(&response.person_id, &response.message);
+            }
+
+            Ok(())
+        })
         .wait()
         .ok();
 }
