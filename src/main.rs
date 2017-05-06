@@ -54,12 +54,10 @@ fn main() {
     // create new thread-shareable bot
     let bot = Arc::new(Mutex::new(bot::Bot::new()));
 
-    // create a new (const) Spark client
-    let spark_client = spark::SparkClient::new(&args);
-
     // create spark post webhook handler
     let mut router = Router::new();
     let bot_for_spark_handler = bot.clone();
+    let spark_client = spark::SparkClient::new(&args);
     router.post("/",
                 move |r: &mut Request| {
                     spark::handle_post_webhook(r, &spark_client, bot_for_spark_handler.clone())
@@ -69,10 +67,13 @@ fn main() {
     std::thread::spawn(|| Iron::new(Chain::new(router)).http("localhost:8888").unwrap());
 
     // create gerrit event stream listener
+    // TODO: I have to create the client again, since it was moved above. Why was it moved? It
+    // should have been captured by reference. Is it because it was moved in a different thread?
+    let spark_client = spark::SparkClient::new(&args);
     let stream = gerrit::event_stream(&args.hostname, args.port, args.username, args.priv_key_path);
     stream.map(gerrit::Event::into_action)
         .filter(|action| match *action {
-            bot::Action::Unknown => false,
+            bot::Action::Unknown(_) => false,
             _ => true,
         })
         .for_each(|action| {
@@ -81,12 +82,14 @@ fn main() {
 
             // fold over actions
             let old_bot = mem::replace(bot, bot::Bot::new());
-            let (new_bot, response_msg) = bot::update(action, old_bot);
+            let (new_bot, response) = bot::update(action, old_bot);
             mem::replace(bot, new_bot);
 
-            // TODO: Reply in spark if needed
             println!("[D] New state: {:?}", bot);
-            println!("[D] Have to answer with {} to TODO", response_msg);
+            if let Some(response) = response {
+                println!("[D] {:?}", response);
+                spark_client.reply(&response.person_id, &response.message);
+            }
 
             Ok(())
         })

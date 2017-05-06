@@ -66,7 +66,7 @@ impl SparkClient {
         }
     }
 
-    fn reply(&self, person_id: &str, msg: &str) {
+    pub fn reply(&self, person_id: &str, msg: &str) {
         let json = json!({
             "toPersonId": person_id,
             "markdown": msg,
@@ -142,12 +142,12 @@ impl Message {
         match &self.text.trim().to_lowercase()[..] {
             "enable" => bot::Action::Enable(self.person_id),
             "disable" => bot::Action::Disable(self.person_id),
-            "help" => bot::Action::Help,
+            "help" => bot::Action::Help(self.person_id),
             _ => {
                 let cap = RE_CONFIGURE.captures(&self.text);
                 match cap {
                     Some(cap) => bot::Action::Configure(self.person_id, String::from(&cap[1])),
-                    None => bot::Action::Unknown,
+                    None => bot::Action::Unknown(self.person_id),
                 }
             }
         }
@@ -181,7 +181,6 @@ pub fn handle_post_webhook(req: &mut Request,
     println!("[I] Incoming: {:?}", msg);
 
     // handle message
-    let person_id = msg.person_id.clone();
     let action = msg.into_action();
 
     let mut bot_guard = bot.lock().unwrap();
@@ -189,11 +188,14 @@ pub fn handle_post_webhook(req: &mut Request,
 
     // fold over actions
     let old_bot = mem::replace(bot, bot::Bot::new());
-    let (new_bot, response_msg) = bot::update(action, old_bot);
+    let (new_bot, response) = bot::update(action, old_bot);
     mem::replace(bot, new_bot);
 
     println!("[D] New state: {:?}", bot);
-    client.reply(&person_id, &response_msg);
+    if let Some(response) = response {
+        println!("[D] {:?}", response);
+        client.reply(&response.person_id, &response.message);
+    }
 
     Ok(Response::with(status::Ok))
 }
