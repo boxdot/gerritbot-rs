@@ -1,6 +1,5 @@
-use rustc_serialize::hex::ToHex;
-
 use chrono;
+use rustc_serialize::hex::ToHex;
 use sha2::{self, Digest};
 
 use gerrit;
@@ -110,8 +109,46 @@ impl Bot {
         None
     }
 
-    fn update_approvals(&mut self, event: gerrit::Event) -> Option<&User> {
-        // TODO
+    fn get_approvals_msg(&self, event: gerrit::Event) -> Option<(&User, String)> {
+        println!("[D] Incoming approvals: {:?}", event);
+
+        let author = event.author;
+        let change = event.change;
+        let approvals = event.approvals;
+
+        let approver = author.unwrap().username.clone();
+        if approver == change.owner.username {
+            // No need to notify about user's own approvals.
+            return None;
+        }
+
+        // TODO: Fix linear search
+        let users = &self.users;
+        for user in users.iter() {
+            if user.gerrit_username == change.owner.username {
+                if let Some(approvals) = approvals {
+                    let msgs: Vec<String> = approvals.iter()
+                        .filter(|approval| {
+                            approval.old_value != approval.value && approval.value != "0"
+                        })
+                        .map(|approval| {
+                            let value: i8 = approval.value.parse().unwrap_or(0);
+                            format!("{}: {}{} ({}) from {}",
+                                    change.subject,
+                                    if value > 0 { "+" } else { "" },
+                                    value,
+                                    approval.approval_type,
+                                    approver)
+                        })
+                        .collect();
+                    return if !msgs.is_empty() {
+                        Some((user, msgs.join("\n")))
+                    } else {
+                        None
+                    };
+                }
+            }
+        }
         None
     }
 }
@@ -271,12 +308,8 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Response>) {
             })
         }
         Action::UpdateApprovals(event) => {
-            bot.update_approvals(event)
-                .map(|user| {
-                    // TODO: Need to format the approval.
-                    Response::new(user.spark_person_id.clone(),
-                                  String::from("Incoming approval for you."))
-                })
+            bot.get_approvals_msg(event)
+                .map(|(user, message)| Response::new(user.spark_person_id.clone(), message))
         }
         Action::Help(person_id) => Some(Response::new(person_id, String::from(HELP_MSG))),
         Action::Unknown(person_id) => Some(Response::new(person_id, String::from(GREETINGS_MSG))),
