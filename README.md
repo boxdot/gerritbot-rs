@@ -9,7 +9,7 @@ WIP:
 - [x] Introduce a simple human-bot communication protocol.
 - [x] Implement send message to Spark API.
 - [x] Implement Gerrit account verification.
-- [ ] Connect: Spark <-> Bot <-> Gerrit.
+- [x] Connect: Spark <-> Bot <-> Gerrit.
 - [ ] Implement serialization of state.
 
 Nice to have:
