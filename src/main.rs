@@ -34,8 +34,8 @@ gerritbot <hostname> <port> <username> <priv_key_path> <bot_token>
 Arguments:
     hostname        Gerrit hostname
     port            Gerrit port
-    username        Username used to connect
-    priv_key_path   Path to private key. Note: Due to the limitations of ssh2
+    username        Gerrit username for stream-events API
+    priv_key_path   Path to private key. Note: Due to the limitations of `ssh2` crate
                     only RSA and DSA are supported.
     bot_token       Token of the Spark bot for authentication.
     bot_id          Identity of the Spark bot for filtering own messages.
@@ -62,7 +62,7 @@ fn main() {
         }
         Err(err) => {
             println!("[W] Could not load bot from 'state.json': {:?}", err);
-            bot::Bot::new()
+            bot::Bot::new(args.username.clone())
         }
     };
 
@@ -111,7 +111,7 @@ fn main() {
             println!("[D] handle: {:?}", action);
 
             // fold over actions
-            let old_bot = std::mem::replace(&mut bot, bot::Bot::new());
+            let old_bot = std::mem::replace(&mut bot, bot::Bot::default());
             let (new_bot, task) = bot::update(action, old_bot);
             std::mem::replace(&mut bot, new_bot);
 

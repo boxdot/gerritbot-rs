@@ -52,6 +52,7 @@ impl User {
 /// Describes a state of the bot
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bot {
+    gerrit_username: Option<String>, // TODO: this should not be part of the state
     users: Vec<User>,
 }
 
@@ -80,8 +81,18 @@ enum UserUpdate<'a> {
 }
 
 impl Bot {
-    pub fn new() -> Bot {
-        Bot { users: Vec::new() }
+    pub fn new(gerrit_username: gerrit::Username) -> Bot {
+        Bot {
+            gerrit_username: Some(gerrit_username),
+            users: Vec::new(),
+        }
+    }
+
+    pub fn default() -> Bot {
+        Bot {
+            gerrit_username: None,
+            users: Vec::new(),
+        }
     }
 
     /// Return value is the user, and whether the user is a new one.
@@ -199,6 +210,13 @@ impl Bot {
     pub fn num_users(&self) -> usize {
         self.users.len()
     }
+
+    pub fn gerrit_username(&self) -> &str {
+        match self.gerrit_username {
+            Some(ref username) => username,
+            None => "unknown",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -264,34 +282,37 @@ const HELP_MSG: &'static str = r#"Commands:
 macro_rules! verification_msg {
     () => (r#"Got it!
 
-We are almost there. I still need to link your Spark account with your Gerrit account `{}`.
-For that, please create a new _draft_ in Gerrit with the folling commit message:
+We are almost there. I still need to link your Spark account with your Gerrit account `{}`. For that, please create a new _draft_ in Gerrit with the folling commit message:
 
 `{}`
 
-After the draft is created, I will get a message from Gerrit, and will notify you, that your accounts are linked.
+and add me (username: `{}`) to the draft.
+
+After the draft is created and I am added to it, I will get a message from Gerrit, and will notify you, that your accounts are linked.
 "#;)
 }
 
 macro_rules! update_verification_msg {
     () => (r#"Got it!
 
-You have already linked your Spark account previously with a different Gerrit username.
-I updated your username to `{}`, but now you have to link your accounts again.
+You have already linked your Spark account previously with a different Gerrit username. I updated your username to `{}`, but now you have to link your accounts again.
 
 Please create a new draft in Gerrit with the folling commit message:
 
 `{}`
+
+and add me (username: `{}`) to the draft.
 "#;)
 }
 
 macro_rules! verification_pending_msg {
     () => (r#"Got it!
 
-A verification for your Gerrit account `{}` is still pending. To complete verification,
-please create a new draft in Gerrit with the folling commit message:
+A verification for your Gerrit account `{}` is still pending. To complete verification, please create a new draft in Gerrit with the folling commit message:
 
 `{}`
+
+and add me (username: `{}`) to the draft.
 "#;)
 }
 
@@ -314,19 +335,22 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
     let mut bot = bot;
     let task = match action {
         Action::Configure(person_id, username) => {
+            let bot_gerrit_username = String::from(bot.gerrit_username());
             let user_update = bot.configure(person_id, username);
             let task = match user_update {
                 UserUpdate::Added(user) => {
                     Task::ReplyAndSave(Response::new(user.spark_person_id.clone(),
                                                      format!(verification_msg!(),
                                                              user.gerrit_username,
-                                                             user.verification_token)))
+                                                             user.verification_token,
+                                                             bot_gerrit_username)))
                 }
                 UserUpdate::Updated(user) => {
                     Task::ReplyAndSave(Response::new(user.spark_person_id.clone(),
                                                      format!(update_verification_msg!(),
                                                              user.gerrit_username,
-                                                             user.verification_token)))
+                                                             user.verification_token,
+                                                             bot_gerrit_username)))
                 }
                 UserUpdate::NoOp(user) => {
                     let msg = if user.verified {
@@ -334,7 +358,8 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
                     } else {
                         format!(verification_pending_msg!(),
                                 user.gerrit_username,
-                                user.verification_token)
+                                user.verification_token,
+                                bot_gerrit_username)
                     };
                     Task::Reply(Response::new(user.spark_person_id.clone(), msg))
                 }

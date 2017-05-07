@@ -93,7 +93,8 @@ pub struct Event {
 
 impl Event {
     pub fn into_action(self) -> bot::Action {
-        if self.event_type == "patchset-created" && self.change.status == "DRAFT" {
+        if (self.event_type == "patchset-created" || self.event_type == "reviewer-added") &&
+           self.change.status == "DRAFT" {
             bot::Action::Verify(self.change.owner.username, self.change.subject)
         } else if self.approvals.is_some() {
             bot::Action::UpdateApprovals(self)
