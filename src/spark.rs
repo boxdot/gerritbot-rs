@@ -1,3 +1,6 @@
+use futures::future::Future;
+use futures::Sink;
+use futures::sync::mpsc::Sender;
 use hyper;
 use hyper_native_tls;
 use iron::prelude::*;
@@ -5,9 +8,7 @@ use iron::status;
 use regex;
 use serde;
 use serde_json;
-
-use std::mem;
-use std::sync::{Arc, Mutex};
+use tokio_core;
 
 use args;
 use bot;
@@ -54,7 +55,7 @@ pub fn post_with_token<T>(url: &str,
 pub struct SparkClient {
     url: String,
     bot_token: String,
-    bot_id: String,
+    pub bot_id: String,
 }
 
 impl SparkClient {
@@ -107,11 +108,11 @@ struct Post {
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct Message {
+pub struct Message {
     created: String,
     id: String,
     person_email: String,
-    person_id: String,
+    pub person_id: String,
     room_id: String,
     room_type: String,
 
@@ -132,8 +133,8 @@ impl Message {
         Ok(())
     }
 
-    // Convert Spark message to bot action
-    fn into_action(self) -> bot::Action {
+    /// Convert Spark message to bot action
+    pub fn into_action(self) -> bot::Action {
         lazy_static! {
             static ref RE_CONFIGURE: regex::Regex = regex::Regex::new(r"^configure ([^ ]+)$")
                 .unwrap();
@@ -155,10 +156,10 @@ impl Message {
 }
 
 /// Post hook from Spark
-pub fn handle_post_webhook(req: &mut Request,
-                           client: &SparkClient,
-                           bot: Arc<Mutex<bot::Bot>>)
-                           -> IronResult<Response> {
+pub fn webhook_handler(req: &mut Request,
+                       remote: &tokio_core::reactor::Remote,
+                       tx: Sender<Message>)
+                       -> IronResult<Response> {
     let new_post: Post = match serde_json::from_reader(&mut req.body) {
         Ok(post) => post,
         Err(err) => {
@@ -167,35 +168,8 @@ pub fn handle_post_webhook(req: &mut Request,
         }
     };
 
-    let mut msg = new_post.data;
-
-    // filter own messages
-    if msg.person_id == client.bot_id {
-        return Ok(Response::with(status::Ok));
-    }
-
-    if let Err(err) = msg.load_text(client) {
-        println!("[E] Could not load post's text: {}", err);
-        return Ok(Response::with(status::Ok));
-    }
-    println!("[I] Incoming: {:?}", msg);
-
-    // handle message
-    let action = msg.into_action();
-
-    let mut bot_guard = bot.lock().unwrap();
-    let bot = &mut (*bot_guard);
-
-    // fold over actions
-    let old_bot = mem::replace(bot, bot::Bot::new());
-    let (new_bot, response) = bot::update(action, old_bot);
-    mem::replace(bot, new_bot);
-
-    println!("[D] New state: {:?}", bot);
-    if let Some(response) = response {
-        println!("[D] {:?}", response);
-        client.reply(&response.person_id, &response.message);
-    }
+    let msg = new_post.data;
+    remote.spawn(move |_| tx.send(msg).map_err(|_| ()).map(|_| ()));
 
     Ok(Response::with(status::Ok))
 }
