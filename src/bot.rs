@@ -1,12 +1,18 @@
+use std::path::Path;
+use std::io;
+use std::fs::File;
+use std::convert;
+
 use chrono;
 use rustc_serialize::hex::ToHex;
+use serde_json;
 use sha2::{self, Digest};
 
 use gerrit;
 use spark;
 use utils;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct User {
     spark_person_id: spark::PersonId,
     gerrit_username: gerrit::Username,
@@ -38,15 +44,33 @@ impl User {
             gerrit_username: username,
             verified: false,
             verification_token: token,
-            enabled: false,
+            enabled: true,
         }
     }
 }
 
 /// Describes a state of the bot
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bot {
     users: Vec<User>,
+}
+
+#[derive(Debug)]
+pub enum BotError {
+    Io(io::Error),
+    Serialization(serde_json::Error),
+}
+
+impl convert::From<io::Error> for BotError {
+    fn from(err: io::Error) -> BotError {
+        BotError::Io(err)
+    }
+}
+
+impl convert::From<serde_json::Error> for BotError {
+    fn from(err: serde_json::Error) -> BotError {
+        BotError::Serialization(err)
+    }
 }
 
 enum UserUpdate<'a> {
@@ -126,6 +150,10 @@ impl Bot {
         let users = &self.users;
         for user in users.iter() {
             if user.gerrit_username == change.owner.username {
+                if !user.enabled {
+                    break;
+                }
+
                 if let Some(approvals) = approvals {
                     let msgs: Vec<String> = approvals.iter()
                         .filter(|approval| {
@@ -150,6 +178,14 @@ impl Bot {
             }
         }
         None
+    }
+
+    pub fn save<P>(self, filename: P) -> Result<(), BotError>
+        where P: AsRef<Path>
+    {
+        let f = File::create(filename)?;
+        serde_json::to_writer(f, &self)?;
+        Ok(())
     }
 }
 
@@ -179,6 +215,12 @@ impl Response {
             message: message,
         }
     }
+}
+
+#[derive(Debug)]
+pub enum Task {
+    Reply(Response),
+    ReplyAndSave(Response),
 }
 
 const GREETINGS_MSG: &'static str =
@@ -256,23 +298,23 @@ const NOT_CONFIGURED_MSG: &'static str =
 
 /// Action controller
 /// Return new bot state and an optional message to send to the user
-pub fn update(action: Action, bot: Bot) -> (Bot, Option<Response>) {
+pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
     let mut bot = bot;
-    let response = match action {
+    let task = match action {
         Action::Configure(person_id, username) => {
             let user_update = bot.configure(person_id, username);
-            let response = match user_update {
+            let task = match user_update {
                 UserUpdate::Added(user) => {
-                    Response::new(user.spark_person_id.clone(),
-                                  format!(verification_msg!(),
-                                          user.gerrit_username,
-                                          user.verification_token))
+                    Task::ReplyAndSave(Response::new(user.spark_person_id.clone(),
+                                                     format!(verification_msg!(),
+                                                             user.gerrit_username,
+                                                             user.verification_token)))
                 }
                 UserUpdate::Updated(user) => {
-                    Response::new(user.spark_person_id.clone(),
-                                  format!(update_verification_msg!(),
-                                          user.gerrit_username,
-                                          user.verification_token))
+                    Task::ReplyAndSave(Response::new(user.spark_person_id.clone(),
+                                                     format!(update_verification_msg!(),
+                                                             user.gerrit_username,
+                                                             user.verification_token)))
                 }
                 UserUpdate::NoOp(user) => {
                     let msg = if user.verified {
@@ -282,38 +324,48 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Response>) {
                                 user.gerrit_username,
                                 user.verification_token)
                     };
-                    Response::new(user.spark_person_id.clone(), msg)
+                    Task::Reply(Response::new(user.spark_person_id.clone(), msg))
                 }
             };
-            Some(response)
+            Some(task)
         }
         Action::Enable(person_id) => {
-            let msg = bot.enable(&person_id, true)
-                .and_then(|user| if user.verified { Some(()) } else { None })
-                .map_or(String::from(NOT_CONFIGURED_MSG),
-                        |_| String::from("Got it!"));
-            Some(Response::new(person_id, msg))
+            let successful = bot.enable(&person_id, true).map_or(false, |user| user.verified);
+            let task = if successful {
+                Task::ReplyAndSave(Response::new(person_id, String::from("Got it!")))
+            } else {
+                Task::Reply(Response::new(person_id, String::from(NOT_CONFIGURED_MSG)))
+            };
+            Some(task)
         }
         Action::Disable(person_id) => {
-            let msg = bot.enable(&person_id, false)
-                .and_then(|user| if user.verified { Some(()) } else { None })
-                .map_or(String::from(NOT_CONFIGURED_MSG),
-                        |_| String::from("Got it!"));
-            Some(Response::new(person_id, msg))
+            let successful = bot.enable(&person_id, false).map_or(false, |user| user.verified);
+            let task = if successful {
+                Task::ReplyAndSave(Response::new(person_id, String::from("Got it!")))
+            } else {
+                Task::Reply(Response::new(person_id, String::from(NOT_CONFIGURED_MSG)))
+            };
+            Some(task)
         }
         Action::Verify(username, subject) => {
             bot.verify(username, subject).map(|user| {
                 let msg = format!(successfully_verified_msg!(), user.gerrit_username);
-                Response::new(user.spark_person_id.clone(), msg)
+                Task::ReplyAndSave(Response::new(user.spark_person_id.clone(), msg))
             })
         }
         Action::UpdateApprovals(event) => {
             bot.get_approvals_msg(event)
-                .map(|(user, message)| Response::new(user.spark_person_id.clone(), message))
+                .map(|(user, message)| {
+                    Task::Reply(Response::new(user.spark_person_id.clone(), message))
+                })
         }
-        Action::Help(person_id) => Some(Response::new(person_id, String::from(HELP_MSG))),
-        Action::Unknown(person_id) => Some(Response::new(person_id, String::from(GREETINGS_MSG))),
+        Action::Help(person_id) => {
+            Some(Task::Reply(Response::new(person_id, String::from(HELP_MSG))))
+        }
+        Action::Unknown(person_id) => {
+            Some(Task::Reply(Response::new(person_id, String::from(GREETINGS_MSG))))
+        }
         _ => None,
     };
-    (bot, response)
+    (bot, task)
 }

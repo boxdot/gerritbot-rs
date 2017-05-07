@@ -17,8 +17,6 @@ extern crate sha2;
 extern crate ssh2;
 extern crate tokio_core;
 
-use std::cell::Cell;
-
 use futures::Stream;
 use futures::sync::mpsc::channel;
 use iron::prelude::*;
@@ -56,7 +54,7 @@ fn main() {
     let mut core = tokio_core::reactor::Core::new().unwrap();
 
     // create new thread-shareable bot
-    let bot = Cell::new(bot::Bot::new());
+    let mut bot = bot::Bot::new();
 
     // create spark message stream
     let spark_client = spark::SparkClient::new(&args);
@@ -93,6 +91,7 @@ fn main() {
             });
 
     // join spark and gerrit action stream into one and fold over actions with accumulator `bot`
+    let handle = core.handle();
     let actions = spark_stream.select(gerrit_stream)
         .filter(|action| match *action {
             bot::Action::NoOp => false,
@@ -102,18 +101,36 @@ fn main() {
             println!("[D] handle: {:?}", action);
 
             // fold over actions
-            let old_bot = bot.replace(bot::Bot::new());
-            let (new_bot, response) = bot::update(action, old_bot);
-            bot.replace(new_bot);
+            let old_bot = std::mem::replace(&mut bot, bot::Bot::new());
+            let (new_bot, task) = bot::update(action, old_bot);
+            std::mem::replace(&mut bot, new_bot);
 
-            response
+            // Handle save task and return response.
+            // Note: We have to do it here, since the value of `bot` is only available in this
+            // function.
+            if let Some(task) = task {
+                println!("[D] new task {:?}", task);
+                let response = match task {
+                    bot::Task::Reply(response) => response,
+                    bot::Task::ReplyAndSave(response) => {
+                        let bot_clone = bot.clone();
+                        handle.spawn_fn(move || {
+                            if let Err(err) = bot_clone.save("state.json") {
+                                println!("[E] Coult not save sate: {:?}", err);
+                            }
+                            Ok(())
+                        });
+                        response
+                    }
+                };
+                return Some(response);
+            }
+            None
         })
         .for_each(|response| {
             if let Some(response) = response {
-                println!("[D] {:?}", response);
                 spark_client.reply(&response.person_id, &response.message);
             }
-
             Ok(())
         });
 
