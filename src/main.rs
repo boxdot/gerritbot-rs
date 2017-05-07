@@ -15,11 +15,12 @@ extern crate serde_derive;
 extern crate serde_json;
 extern crate sha2;
 extern crate ssh2;
+extern crate tokio_core;
 
-use std::mem;
-use std::sync::{Arc, Mutex};
+use std::cell::Cell;
 
-use futures::{Future, Stream};
+use futures::Stream;
+use futures::sync::mpsc::channel;
 use iron::prelude::*;
 use router::Router;
 
@@ -51,48 +52,70 @@ fn main() {
         }
     };
 
-    // create new thread-shareable bot
-    let bot = Arc::new(Mutex::new(bot::Bot::new()));
+    // event loop
+    let mut core = tokio_core::reactor::Core::new().unwrap();
 
-    // create spark post webhook handler
-    let mut router = Router::new();
-    let bot_for_spark_handler = bot.clone();
+    // create new thread-shareable bot
+    let bot = Cell::new(bot::Bot::new());
+
+    // create spark message stream
     let spark_client = spark::SparkClient::new(&args);
+    let remote = core.remote();
+    let (tx, rx) = channel(1);
+    let mut router = Router::new();
     router.post("/",
-                move |r: &mut Request| {
-                    spark::handle_post_webhook(r, &spark_client, bot_for_spark_handler.clone())
+                move |req: &mut Request| {
+                    println!("[D] new webhook post request");
+                    spark::webhook_handler(req, &remote, tx.clone())
                 },
                 "post");
-    // TODO: Do we really need a thread? How about a task in a event loop?
+
+    let spark_stream = rx.filter(|msg| msg.person_id != spark_client.bot_id)
+        .map(|mut msg| {
+            println!("[D] loading message text");
+            if let Err(err) = msg.load_text(&spark_client) {
+                println!("[E] Could not load post's text: {}", err);
+                return None;
+            }
+            Some(msg)
+        })
+        .filter_map(|msg| msg.map(spark::Message::into_action));
+
+    // start listening to the webhook
     std::thread::spawn(|| Iron::new(Chain::new(router)).http("localhost:8888").unwrap());
 
     // create gerrit event stream listener
-    // TODO: I have to create the client again, since it was moved above. Why was it moved? It
-    // should have been captured by reference. Is it because it was moved in a different thread?
-    let spark_client = spark::SparkClient::new(&args);
-    let stream = gerrit::event_stream(&args.hostname, args.port, args.username, args.priv_key_path);
-    stream.map(gerrit::Event::into_action)
+    let gerrit_stream =
+        gerrit::event_stream(&args.hostname, args.port, args.username, args.priv_key_path)
+            .map(gerrit::Event::into_action)
+            .map_err(|err| {
+                println!("[E] {:?}", err);
+            });
+
+    // join spark and gerrit action stream into one and fold over actions with accumulator `bot`
+    let actions = spark_stream.select(gerrit_stream)
         .filter(|action| match *action {
-            bot::Action::Unknown(_) => false,
+            bot::Action::NoOp => false,
             _ => true,
         })
-        .for_each(|action| {
-            let mut bot_guard = bot.lock().unwrap();
-            let bot = &mut (*bot_guard);
+        .map(|action| {
+            println!("[D] handle: {:?}", action);
 
             // fold over actions
-            let old_bot = mem::replace(bot, bot::Bot::new());
+            let old_bot = bot.replace(bot::Bot::new());
             let (new_bot, response) = bot::update(action, old_bot);
-            mem::replace(bot, new_bot);
+            bot.replace(new_bot);
 
-            println!("[D] New state: {:?}", bot);
+            response
+        })
+        .for_each(|response| {
             if let Some(response) = response {
                 println!("[D] {:?}", response);
                 spark_client.reply(&response.person_id, &response.message);
             }
 
             Ok(())
-        })
-        .wait()
-        .ok();
+        });
+
+    core.run(actions).unwrap();
 }
