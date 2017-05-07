@@ -10,7 +10,8 @@ WIP:
 - [x] Implement send message to Spark API.
 - [x] Implement Gerrit account verification.
 - [x] Connect: Spark <-> Bot <-> Gerrit.
-- [ ] Implement serialization of state.
+- [x] Implement serialization of state.
+- [ ] Remove the task list and write a proper README.
 
 Nice to have:
 

@@ -187,6 +187,18 @@ impl Bot {
         serde_json::to_writer(f, &self)?;
         Ok(())
     }
+
+    pub fn load<P>(filename: P) -> Result<Self, BotError>
+        where P: AsRef<Path>
+    {
+        let f = File::open(filename)?;
+        let bot: Bot = serde_json::from_reader(f)?;
+        Ok(bot)
+    }
+
+    pub fn num_users(&self) -> usize {
+        self.users.len()
+    }
 }
 
 #[derive(Debug)]
