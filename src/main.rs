@@ -53,8 +53,18 @@ fn main() {
     // event loop
     let mut core = tokio_core::reactor::Core::new().unwrap();
 
-    // create new thread-shareable bot
-    let mut bot = bot::Bot::new();
+    // load or create a new bot
+    let mut bot = match bot::Bot::load("state.json") {
+        Ok(bot) => {
+            println!("[I] Loaded bot from 'state.json' with {} user(s).",
+                     bot.num_users());
+            bot
+        }
+        Err(err) => {
+            println!("[W] Could not load bot from 'state.json': {:?}", err);
+            bot::Bot::new()
+        }
+    };
 
     // create spark message stream
     let spark_client = spark::SparkClient::new(&args);
