@@ -2,6 +2,7 @@
 name = "gerritbot"
 version = "0.1.0"
 authors = ["boxdot <d@zerovolt.org>"]
+license = "MIT/Apache-2.0"
 
 [dependencies]
 chrono = "0.3.x"
