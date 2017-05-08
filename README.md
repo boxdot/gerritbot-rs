@@ -39,7 +39,7 @@ The state of the bot is stored in the `state.json` file in the directory, where 
 
 - [ ] Automatic update of webhooks URL in Spark.
 - [ ] Use a more sophisticated command line parser.
-- [ ] Get rid off `libssh2` dependency.
+- [ ] Get rid of `libssh2` dependency.
 - [ ] Proper configurable logging with verbosity mode.
 - [ ] Tests.
 
