@@ -1,4 +1,6 @@
 extern crate chrono;
+#[macro_use]
+extern crate clap;
 extern crate futures;
 extern crate hyper;
 extern crate hyper_native_tls;
@@ -28,27 +30,8 @@ mod gerrit;
 mod spark;
 mod utils;
 
-const USAGE: &'static str = r#"
-gerritbot <hostname> <port> <username> <priv_key_path> <bot_token>
-
-Arguments:
-    hostname        Gerrit hostname
-    port            Gerrit port
-    username        Gerrit username for stream-events API
-    priv_key_path   Path to private key. Note: Due to the limitations of `ssh2` crate
-                    only RSA and DSA are supported.
-    bot_token       Token of the Spark bot for authentication.
-    bot_id          Identity of the Spark bot for filtering own messages.
-"#;
-
 fn main() {
-    let args = match args::parse_args(std::env::args()) {
-        Ok(args) => args,
-        Err(msg) => {
-            println!("Error: {}\nUsage: {}", msg, USAGE);
-            std::process::exit(1);
-        }
-    };
+    let args = args::parse_args();
 
     // event loop
     let mut core = tokio_core::reactor::Core::new().unwrap();

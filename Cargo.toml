@@ -6,6 +6,7 @@ license = "MIT/Apache-2.0"
 
 [dependencies]
 chrono = "0.3.x"
+clap = "2.24.x"
 futures = "0.1.x"
 hyper = "0.10.x"
 hyper-native-tls = "*"

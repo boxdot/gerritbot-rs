@@ -1,3 +1,4 @@
+use clap::App;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -13,25 +14,32 @@ pub struct Args {
 
 const SPARK_URL: &'static str = "https://api.ciscospark.com/v1";
 
-pub fn parse_args<Iter>(mut args: Iter) -> Result<Args, &'static str>
-    where Iter: Iterator<Item = String>
-{
-    args.next();
-    let hostname = args.next().ok_or("argument 'hostname' missing")?;
-    let port = args.next().ok_or("argument 'port' is missing")?;
-    let port: u16 = port.parse().map_err(|_| "cannot parse port")?;
-    let username = args.next().ok_or("argument 'username' missing")?;
-    let priv_key_path = args.next().ok_or("path to private key is missing")?;
-    let bot_token = args.next().ok_or("bot token is missing")?;
-    let bot_token_id = args.next().ok_or("bot id is missing")?;
+const USAGE: &'static str = r#"
+"-h, --hostname=<URL>   'Gerrit hostname'
+-p, --port=<PORT>       'Gerrit port'
+-u, --username=<USER>   'Gerrit username'
+--priv-key-path=<PATH>  'Path to private key. Note: Due to the limitations of `ssh2` crate only RSA and DSA are supported.'
+--bot-token=<TOKEN>     'Token of the Spark bot for authentication.'
+--bot-id=<ID>           'Identity of the Spark bot for filtering own messages.'
+-v...                   'Verbosity level.'
+"#;
 
-    Ok(Args {
-        hostname: hostname,
-        port: port,
-        username: username,
-        priv_key_path: PathBuf::from(priv_key_path),
+pub fn parse_args() -> Args {
+    let matches = App::new("gerritbot")
+        .version("0.1.0")
+        .author("boxdot <d@zerovolt.org>")
+        .about("A Cisco Spark bot, which notifies you about new review approvals (i.e. \
+                +2/+1/-1/-2 etc.) from Gerrit.")
+        .args_from_usage(USAGE)
+        .get_matches();
+
+    Args {
+        hostname: String::from(matches.value_of("hostname").unwrap()),
+        port: value_t_or_exit!(matches.value_of("port"), u16),
+        username: String::from(matches.value_of("username").unwrap()),
+        priv_key_path: PathBuf::from(matches.value_of("priv-key-path").unwrap()),
         spark_url: String::from(SPARK_URL),
-        spark_bot_token: bot_token,
-        spark_bot_id: bot_token_id,
-    })
+        spark_bot_token: String::from(matches.value_of("bot-token").unwrap()),
+        spark_bot_id: String::from(matches.value_of("bot-id").unwrap()),
+    }
 }
