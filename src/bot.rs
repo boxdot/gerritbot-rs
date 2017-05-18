@@ -4,7 +4,6 @@ use std::fs::File;
 use std::convert;
 
 use chrono;
-use rustc_serialize::hex::ToHex;
 use serde_json;
 use sha2::{self, Digest};
 
@@ -27,13 +26,12 @@ fn generate_verification_token(person_id: &str, username: &str) -> String {
     calc_verification_token(person_id, username, salt)
 }
 
-// TODO: write a good test for it
 fn calc_verification_token(person_id: &str, username: &str, salt: u64) -> String {
     let mut hasher = sha2::Sha256::default();
     hasher.input(person_id.as_bytes());
     hasher.input(username.as_bytes());
     hasher.input(&utils::transform_u64_to_array_of_u8(salt));
-    hasher.result().as_slice().to_hex()
+    format!("{:x}", hasher.result())
 }
 
 impl User {
@@ -405,4 +403,20 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
         _ => None,
     };
     (bot, task)
+}
+
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_calc_verification_token() {
+        let token = "2fab9448788184fe14299b04fbccb1c7c62101b6a265c29cf2e67a8d84406064";
+
+        assert!(&calc_verification_token("some_person", "some_username", 0) == token);
+        assert!(&calc_verification_token("some_other_person", "some_username", 0) != token);
+        assert!(&calc_verification_token("some_person", "some_other_username", 0) != token);
+        for salt in 1..2u64.pow(12) {
+            assert!(&calc_verification_token("some_person", "some_username", salt) != token);
+        }
+    }
 }

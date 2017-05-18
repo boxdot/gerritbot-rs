@@ -9,7 +9,6 @@ extern crate iron;
 extern crate lazy_static;
 extern crate regex;
 extern crate router;
-extern crate rustc_serialize;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
