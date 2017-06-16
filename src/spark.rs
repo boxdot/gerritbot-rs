@@ -28,7 +28,8 @@ fn new_client(url: &str) -> hyper::Client {
 fn get_json_with_token(url: &str, token: &str) -> Result<hyper::client::Response, hyper::Error> {
     let client = new_client(url);
     let auth = hyper::header::Authorization(hyper::header::Bearer { token: String::from(token) });
-    client.get(url)
+    client
+        .get(url)
         .header(hyper::header::ContentType::json())
         .header(hyper::header::Accept::json())
         .header(auth)
@@ -36,16 +37,19 @@ fn get_json_with_token(url: &str, token: &str) -> Result<hyper::client::Response
 }
 
 /// Try to post json to the given url with basic token authorization.
-pub fn post_with_token<T>(url: &str,
-                          token: &str,
-                          data: &T)
-                          -> Result<hyper::client::Response, hyper::Error>
-    where T: serde::ser::Serialize
+pub fn post_with_token<T>(
+    url: &str,
+    token: &str,
+    data: &T,
+) -> Result<hyper::client::Response, hyper::Error>
+where
+    T: serde::ser::Serialize,
 {
     let client = new_client(url);
     let payload = serde_json::to_string(data).unwrap();
     let auth = hyper::header::Authorization(String::from("Bearer ") + token);
-    client.post(url)
+    client
+        .post(url)
         .header(hyper::header::ContentType::json())
         .header(auth)
         .body(&payload)
@@ -79,8 +83,10 @@ impl SparkClient {
     }
 
     fn get_message_text(&self, message_id: &str) -> Result<hyper::client::Response, hyper::Error> {
-        get_json_with_token(&(self.url.clone() + "/messages/" + message_id),
-                            &self.bot_token)
+        get_json_with_token(
+            &(self.url.clone() + "/messages/" + message_id),
+            &self.bot_token,
+        )
     }
 }
 
@@ -109,9 +115,9 @@ struct Post {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
-    created: String,
+    created: Option<String>,
     id: String,
-    person_email: String,
+    pub person_email: String,
     pub person_id: String,
     room_id: String,
     room_type: String,
@@ -125,10 +131,12 @@ impl Message {
     /// Load text from Spark for a received message
     /// Note: Spark does not send the text with the message to the registered post hook.
     pub fn load_text(&mut self, client: &SparkClient) -> Result<(), String> {
-        let resp = client.get_message_text(&self.id)
-            .map_err(|err| format!("Invalid response from spark: {}", err))?;
-        let msg: Message = serde_json::from_reader(resp).map_err(
-            |err| String::from(format!("Cannot parse json: {}", err)))?;
+        let resp = client.get_message_text(&self.id).map_err(
+            |err| format!("Invalid response from spark: {}", err),
+        )?;
+        let msg: Message = serde_json::from_reader(resp).map_err(|err| {
+            String::from(format!("Cannot parse json: {}", err))
+        })?;
         self.text = msg.text;
         Ok(())
     }
@@ -156,10 +164,11 @@ impl Message {
 }
 
 /// Post hook from Spark
-pub fn webhook_handler(req: &mut Request,
-                       remote: &tokio_core::reactor::Remote,
-                       tx: Sender<Message>)
-                       -> IronResult<Response> {
+pub fn webhook_handler(
+    req: &mut Request,
+    remote: &tokio_core::reactor::Remote,
+    tx: Sender<Message>,
+) -> IronResult<Response> {
     let new_post: Post = match serde_json::from_reader(&mut req.body) {
         Ok(post) => post,
         Err(err) => {

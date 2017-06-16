@@ -25,11 +25,11 @@ pub struct User {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Approval {
-    #[serde(rename="type")]
+    #[serde(rename = "type")]
     pub approval_type: String,
     pub description: String,
     pub value: String,
-    pub old_value: String,
+    pub old_value: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -38,15 +38,15 @@ pub struct PatchSet {
     pub number: String,
     pub revision: String,
     pub parents: Vec<String>,
-    #[serde(rename="ref")]
+    #[serde(rename = "ref")]
     pub reference: String,
     pub uploader: User,
     pub created_on: u32,
     pub author: User,
     pub is_draft: bool,
     pub kind: String,
-    pub size_insertions: u32,
-    pub size_deletions: u32,
+    pub size_insertions: i32,
+    pub size_deletions: i32,
 }
 
 #[derive(Deserialize, Debug)]
@@ -77,30 +77,30 @@ pub struct Event {
     pub uploader: Option<User>,
     pub approvals: Option<Vec<Approval>>,
     pub comment: Option<String>,
-    #[serde(rename="patchSet")]
+    #[serde(rename = "patchSet")]
     pub patchset: PatchSet,
     pub change: Change,
     pub project: String,
-    #[serde(rename="refName")]
+    #[serde(rename = "refName")]
     pub ref_name: String,
-    #[serde(rename="changeKey")]
+    #[serde(rename = "changeKey")]
     pub changekey: ChangeKey,
-    #[serde(rename="type")]
+    #[serde(rename = "type")]
     pub event_type: String,
-    #[serde(rename="eventCreatedOn")]
+    #[serde(rename = "eventCreatedOn")]
     pub created_on: u32,
 }
 
 impl Event {
     pub fn into_action(self) -> bot::Action {
-        if (self.event_type == "patchset-created" || self.event_type == "reviewer-added") &&
-           self.change.status == "DRAFT" {
-            bot::Action::Verify(self.change.owner.username, self.change.subject)
+        if self.event_type == "patchset-created" || self.event_type == "reviewer-added" {
+            if self.patchset.is_draft {
+                return bot::Action::Verify(self.change.owner.username, self.change.subject);
+            }
         } else if self.approvals.is_some() {
-            bot::Action::UpdateApprovals(self)
-        } else {
-            bot::Action::NoOp
+            return bot::Action::UpdateApprovals(self);
         }
+        bot::Action::NoOp
     }
 }
 
@@ -122,32 +122,52 @@ impl From<serde_json::Error> for StreamError {
     }
 }
 
-pub fn event_stream(host: &str,
-                    port: u16,
-                    username: String,
-                    priv_key_path: PathBuf)
-                    -> BoxStream<Event, StreamError> {
+pub fn event_stream(
+    host: &str,
+    port: u16,
+    username: String,
+    priv_key_path: PathBuf,
+) -> BoxStream<Event, StreamError> {
     let hostport = format!("{}:{}", host, port);
-    let mut session = ssh2::Session::new().unwrap();
+    let mut pub_key_path = PathBuf::from(priv_key_path.to_str().unwrap());
+    pub_key_path.set_extension("pub");
+    println!("[D] Deduced public key: {}", pub_key_path.to_str().unwrap());
 
-    let (mut tx, rx) = channel(1);
+    let (main_tx, rx) = channel(1);
     thread::spawn(move || {
-        // Connect to the local SSH server
-        let tcp = TcpStream::connect(hostport).unwrap();
-        session.handshake(&tcp).unwrap();
+        loop {
+            println!("[I] (Re)connecting to Gerrit over ssh: {}", hostport);
 
-        // Try to authenticate
-        session.userauth_pubkey_file(&username, None, &priv_key_path, None)
-            .unwrap();
+            // TODO: Remove all unwrap's here, since otherwise we may stuck in an endless loop.
 
-        let mut ssh_channel = session.channel_session().unwrap();
-        ssh_channel.exec("gerrit stream-events").unwrap();
+            // Connect to the local SSH server
+            let mut session = ssh2::Session::new().unwrap();
+            let tcp = TcpStream::connect(&hostport).unwrap();
+            session.handshake(&tcp).unwrap();
 
-        let buf_channel = BufReader::new(ssh_channel);
-        for line in buf_channel.lines() {
-            match tx.send(line).wait() {
-                Ok(s) => tx = s,
-                Err(_) => break,
+            // Try to authenticate
+            session
+                .userauth_pubkey_file(&username, Some(&pub_key_path), &priv_key_path, None)
+                .unwrap();
+
+            let mut ssh_channel = session.channel_session().unwrap();
+            ssh_channel.exec("gerrit stream-events").unwrap();
+
+            let buf_channel = BufReader::new(ssh_channel);
+            let mut tx = main_tx.clone();
+            for line in buf_channel.lines() {
+                if let Ok(line) = line {
+                    match tx.clone().send(line).wait() {
+                        Ok(s) => tx = s,
+                        Err(err) => {
+                            println!("[E] Cannot send message through channel {:?}", err);
+                            break;
+                        }
+                    }
+                } else {
+                    println!("[E] Could not read line from buffer. Will drop connection.");
+                    break;
+                }
             }
         }
     });
@@ -156,13 +176,11 @@ pub fn event_stream(host: &str,
     // we have implemented all event types mappings, we can provide here full parsing by removing
     // the filtering.
     rx.then(|event| {
-            // event from our channel cannot fail
-            let json: String = event.unwrap()?;
-            let res = serde_json::from_str(&json);
-            println!("[D] {:?} for json: {}", res, json);
-            Ok(res.ok())
-        })
-        .filter(|event| event.is_some())
-        .map(|event| event.unwrap()) // we cannot fail here, since we filtered all None's
+        // event from our channel cannot fail
+        let json: String = event.unwrap();
+        let res = serde_json::from_str(&json);
+        println!("[D] {:?} for json: {}", res, json);
+        Ok(res.ok())
+    }).filter_map(|event| event)
         .boxed()
 }

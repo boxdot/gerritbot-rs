@@ -38,8 +38,10 @@ fn main() {
     // load or create a new bot
     let mut bot = match bot::Bot::load("state.json") {
         Ok(bot) => {
-            println!("[I] Loaded bot from 'state.json' with {} user(s).",
-                     bot.num_users());
+            println!(
+                "[I] Loaded bot from 'state.json' with {} user(s).",
+                bot.num_users()
+            );
             bot
         }
         Err(err) => {
@@ -53,16 +55,18 @@ fn main() {
     let remote = core.remote();
     let (tx, rx) = channel(1);
     let mut router = Router::new();
-    router.post("/",
-                move |req: &mut Request| {
-                    println!("[D] new webhook post request");
-                    spark::webhook_handler(req, &remote, tx.clone())
-                },
-                "post");
+    router.post(
+        "/",
+        move |req: &mut Request| {
+            println!("[D] new webhook post request");
+            spark::webhook_handler(req, &remote, tx.clone())
+        },
+        "post",
+    );
 
     let spark_stream = rx.filter(|msg| msg.person_id != spark_client.bot_id)
         .map(|mut msg| {
-            println!("[D] loading message text");
+            println!("[D] loading text for message:\n{:?}", msg);
             if let Err(err) = msg.load_text(&spark_client) {
                 println!("[E] Could not load post's text: {}", err);
                 return None;
@@ -72,19 +76,25 @@ fn main() {
         .filter_map(|msg| msg.map(spark::Message::into_action));
 
     // start listening to the webhook
-    std::thread::spawn(|| Iron::new(Chain::new(router)).http("localhost:8888").unwrap());
+    // TODO: Add listening host port argument for webhook
+    std::thread::spawn(|| {
+        let mut iron = Iron::new(Chain::new(router));
+        iron.threads = 2;
+        iron.http("localhost:8888").unwrap()
+    });
 
     // create gerrit event stream listener
     let gerrit_stream =
         gerrit::event_stream(&args.hostname, args.port, args.username, args.priv_key_path)
             .map(gerrit::Event::into_action)
             .map_err(|err| {
-                println!("[E] {:?}", err);
+                println!("[E] Gerrit stream error {:?}", err);
             });
 
     // join spark and gerrit action stream into one and fold over actions with accumulator `bot`
     let handle = core.handle();
-    let actions = spark_stream.select(gerrit_stream)
+    let actions = spark_stream
+        .select(gerrit_stream)
         .filter(|action| match *action {
             bot::Action::NoOp => false,
             _ => true,
@@ -121,10 +131,14 @@ fn main() {
         })
         .for_each(|response| {
             if let Some(response) = response {
+                println!("[D] Replying with:\n{}", response.message);
                 spark_client.reply(&response.person_id, &response.message);
             }
             Ok(())
         });
 
-    core.run(actions).unwrap();
+    let result = core.run(actions);
+    if let Err(err) = result {
+        print!("Shutting down due to error: {:?}", err);
+    };
 }
