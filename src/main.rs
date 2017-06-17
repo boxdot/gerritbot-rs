@@ -1,20 +1,15 @@
-extern crate chrono;
 #[macro_use]
 extern crate clap;
 extern crate futures;
 extern crate hyper;
 extern crate hyper_native_tls;
 extern crate iron;
-#[macro_use]
-extern crate lazy_static;
-extern crate regex;
 extern crate router;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 #[macro_use]
 extern crate serde_json;
-extern crate sha2;
 extern crate ssh2;
 extern crate tokio_core;
 
@@ -27,7 +22,6 @@ mod args;
 mod bot;
 mod gerrit;
 mod spark;
-mod utils;
 
 fn main() {
     let args = args::parse_args();
