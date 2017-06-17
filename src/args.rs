@@ -28,8 +28,10 @@ pub fn parse_args() -> Args {
     let matches = App::new("gerritbot")
         .version("0.1.0")
         .author("boxdot <d@zerovolt.org>")
-        .about("A Cisco Spark bot, which notifies you about new review approvals (i.e. \
-                +2/+1/-1/-2 etc.) from Gerrit.")
+        .about(
+            "A Cisco Spark bot, which notifies you about new review approvals (i.e. \
+                +2/+1/-1/-2 etc.) from Gerrit.",
+        )
         .args_from_usage(USAGE)
         .get_matches();
 
