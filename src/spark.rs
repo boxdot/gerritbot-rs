@@ -5,7 +5,6 @@ use hyper;
 use hyper_native_tls;
 use iron::prelude::*;
 use iron::status;
-use regex;
 use serde;
 use serde_json;
 use tokio_core;
@@ -93,6 +92,9 @@ impl SparkClient {
 /// Spark id of the user
 pub type PersonId = String;
 
+/// Email of the user
+pub type Email = String;
+
 /// Webhook's post request from Spark API
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -143,22 +145,11 @@ impl Message {
 
     /// Convert Spark message to bot action
     pub fn into_action(self) -> bot::Action {
-        lazy_static! {
-            static ref RE_CONFIGURE: regex::Regex = regex::Regex::new(r"^configure ([^ ]+)$")
-                .unwrap();
-        }
-
         match &self.text.trim().to_lowercase()[..] {
-            "enable" => bot::Action::Enable(self.person_id),
-            "disable" => bot::Action::Disable(self.person_id),
+            "enable" => bot::Action::Enable(self.person_id, self.person_email),
+            "disable" => bot::Action::Disable(self.person_id, self.person_email),
             "help" => bot::Action::Help(self.person_id),
-            _ => {
-                let cap = RE_CONFIGURE.captures(&self.text);
-                match cap {
-                    Some(cap) => bot::Action::Configure(self.person_id, String::from(&cap[1])),
-                    None => bot::Action::Unknown(self.person_id),
-                }
-            }
+            _ => bot::Action::Unknown(self.person_id),
         }
     }
 }

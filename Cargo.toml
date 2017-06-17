@@ -1,22 +1,18 @@
 [package]
 name = "gerritbot"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["boxdot <d@zerovolt.org>"]
 license = "MIT/Apache-2.0"
 
 [dependencies]
-chrono = "0.3.x"
 clap = "2.24.x"
 futures = "0.1.x"
 hyper = "0.10.x"
 hyper-native-tls = "0.2.x"
 iron = "0.5.x"
-lazy_static = "0.2.x"
-regex = "0.2.x"
 router = "0.5.x"
 serde = "1.0.x"
 serde_derive = "1.0.x"
 serde_json = "1.0.x"
-sha2 = "0.5.x"
 ssh2 = "0.3.x"
 tokio-core = "0.1.x"
