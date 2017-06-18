@@ -14,24 +14,29 @@ A [Cisco Spark](https://www.ciscospark.com) bot, which notifies you about new re
 4. Build and run the bot
 
 ```shell
-$ cargo run
-Usage:
-gerritbot <hostname> <port> <username> <priv_key_path> <bot_token>
+$ cargo run -- <arguments>
+```
 
-Arguments:
-    hostname        Gerrit hostname
-    port            Gerrit port
-    username        Gerrit username for stream-events API
-    priv_key_path   Path to private key. Note: Due to the limitations of `ssh2` crate
-                    only RSA and DSA are supported.
-    bot_token       Token of the Spark bot for authentication.
-    bot_id          Identity of the Spark bot for filtering own messages.
+with the following arguments:
+
+```
+--gerrit-hostname <URL>              Gerrit hostname
+--gerrit-port <PORT>                 Gerrit port
+--gerrit-priv-key-path <PATH>        Path to the private key for authentication in Gerrit. Note:
+                                     Due to the limitations of `ssh2` crate only RSA and DSA are
+                                     supported.
+--gerrit-username <USER>             Gerrit username
+--spark-bot-id <ID>                  Identity of the Spark bot for filtering own messages
+--spark-bot-token <TOKEN>            Token of the Spark bot for authentication
+--spark-endpoint <localhost:8888>    Endpoint on which the bot will listen for incoming Spark
+                                     messages.
 ```
 
 To be able to listen to Gerrit messages, you need to have a Gerrit user with `stream-api` access
 capabilities. Admins and Non-interactive users should have such.
 
-The state of the bot is stored in the `state.json` file in the directory, where the bot is running.
+The state of the bot is stored in the `state.json` file in the same directory, where the bot is
+running.
 
 **This is my first Rust project. Any constructive criticism is welcome.**
 
