@@ -3,11 +3,12 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct Args {
-    pub hostname: String,
-    pub port: u16,
-    pub username: String,
-    pub priv_key_path: PathBuf,
+    pub gerrit_hostname: String,
+    pub gerrit_port: u16,
+    pub gerrit_username: String,
+    pub gerrit_priv_key_path: PathBuf,
     pub spark_url: String,
+    pub spark_endpoint: String,
     pub spark_bot_token: String,
     pub spark_bot_id: String,
 }
@@ -15,18 +16,18 @@ pub struct Args {
 const SPARK_URL: &'static str = "https://api.ciscospark.com/v1";
 
 const USAGE: &'static str = r#"
-"-h, --hostname=<URL>   'Gerrit hostname'
--p, --port=<PORT>       'Gerrit port'
--u, --username=<USER>   'Gerrit username'
---priv-key-path=<PATH>  'Path to private key. Note: Due to the limitations of `ssh2` crate only RSA and DSA are supported.'
---bot-token=<TOKEN>     'Token of the Spark bot for authentication.'
---bot-id=<ID>           'Identity of the Spark bot for filtering own messages.'
--v...                   'Verbosity level.'
+--gerrit-hostname=<URL>           'Gerrit hostname'
+--gerrit-port=<PORT>              'Gerrit port'
+--gerrit-username=<USER>          'Gerrit username'
+--gerrit-priv-key-path=<PATH>     'Path to the private key for authentication in Gerrit. Note: Due to the limitations of `ssh2` crate only RSA and DSA are supported.'
+--spark-endpoint=[localhost:8888] 'Endpoint on which the bot will listen for incoming Spark messages.'
+--spark-bot-token=<TOKEN>         'Token of the Spark bot for authentication'
+--spark-bot-id=<ID>               'Identity of the Spark bot for filtering own messages'
 "#;
 
 pub fn parse_args() -> Args {
     let matches = App::new("gerritbot")
-        .version("0.1.0")
+        .version("0.1.1")
         .author("boxdot <d@zerovolt.org>")
         .about(
             "A Cisco Spark bot, which notifies you about new review approvals (i.e. \
@@ -36,12 +37,15 @@ pub fn parse_args() -> Args {
         .get_matches();
 
     Args {
-        hostname: String::from(matches.value_of("hostname").unwrap()),
-        port: value_t_or_exit!(matches.value_of("port"), u16),
-        username: String::from(matches.value_of("username").unwrap()),
-        priv_key_path: PathBuf::from(matches.value_of("priv-key-path").unwrap()),
+        gerrit_hostname: String::from(matches.value_of("gerrit-hostname").unwrap()),
+        gerrit_port: value_t_or_exit!(matches.value_of("gerrit-port"), u16),
+        gerrit_username: String::from(matches.value_of("gerrit-username").unwrap()),
+        gerrit_priv_key_path: PathBuf::from(matches.value_of("gerrit-priv-key-path").unwrap()),
         spark_url: String::from(SPARK_URL),
-        spark_bot_token: String::from(matches.value_of("bot-token").unwrap()),
-        spark_bot_id: String::from(matches.value_of("bot-id").unwrap()),
+        spark_endpoint: String::from(matches.value_of("spark-endpoint").unwrap_or(
+            "localhost:8888",
+        )),
+        spark_bot_token: String::from(matches.value_of("spark-bot-token").unwrap()),
+        spark_bot_id: String::from(matches.value_of("spark-bot-id").unwrap()),
     }
 }

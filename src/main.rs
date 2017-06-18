@@ -40,7 +40,7 @@ fn main() {
         }
         Err(err) => {
             println!("[W] Could not load bot from 'state.json': {:?}", err);
-            bot::Bot::new(args.username.clone())
+            bot::Bot::new(args.gerrit_username.clone())
         }
     };
 
@@ -69,21 +69,24 @@ fn main() {
         })
         .filter_map(|msg| msg.map(spark::Message::into_action));
 
-    // start listening to the webhook
-    // TODO: Add listening host port argument for webhook
-    std::thread::spawn(|| {
+    // start listening for incoming messages on the webhook
+    let spark_endpoint = args.spark_endpoint.clone();
+    std::thread::spawn(move || {
         let mut iron = Iron::new(Chain::new(router));
         iron.threads = 2;
-        iron.http("localhost:8888").unwrap()
+        iron.http(&spark_endpoint).unwrap()
     });
 
     // create gerrit event stream listener
-    let gerrit_stream =
-        gerrit::event_stream(&args.hostname, args.port, args.username, args.priv_key_path)
-            .map(gerrit::Event::into_action)
-            .map_err(|err| {
-                println!("[E] Gerrit stream error {:?}", err);
-            });
+    let gerrit_stream = gerrit::event_stream(
+        &args.gerrit_hostname,
+        args.gerrit_port,
+        args.gerrit_username,
+        args.gerrit_priv_key_path,
+    ).map(gerrit::Event::into_action)
+        .map_err(|err| {
+            println!("[E] Gerrit stream error {:?}", err);
+        });
 
     // join spark and gerrit action stream into one and fold over actions with accumulator `bot`
     let handle = core.handle();
