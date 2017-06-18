@@ -131,8 +131,9 @@ impl Bot {
                             })
                             .map(|approval| {
                                 format!(
-                                    "{}: {} ({}) from {}",
+                                    "[{}]({}): {} ({}) from {}",
                                     change.subject,
+                                    change.url,
                                     format_approval_value(&approval.value),
                                     approval.approval_type,
                                     approver
