@@ -218,8 +218,6 @@ const HELP_MSG: &'static str = r#"Commands:
 
 `disable` I will stop notifying you.
 
-`status` I will tell if notification are enabled or disabled for you.
-
 `help` This message
 "#;
 
