@@ -51,8 +51,8 @@ impl convert::From<serde_json::Error> for BotError {
 
 fn format_approval_value(value: &str) -> String {
     let value: i8 = value.parse().unwrap_or(0);
-    // TODO: when Spark will be allow to format text with different colors,
-    // set green resp. red color here.
+    // TODO: when Spark will allow to format text with different colors, set
+    // green resp. red color here.
     if value > 0 {
         format!("+{}", value)
     } else {
