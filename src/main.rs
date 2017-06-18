@@ -40,7 +40,7 @@ fn main() {
         }
         Err(err) => {
             println!("[W] Could not load bot from 'state.json': {:?}", err);
-            bot::Bot::new(args.gerrit_username.clone())
+            bot::Bot::new()
         }
     };
 
@@ -100,7 +100,7 @@ fn main() {
             println!("[D] handle: {:?}", action);
 
             // fold over actions
-            let old_bot = std::mem::replace(&mut bot, bot::Bot::default());
+            let old_bot = std::mem::replace(&mut bot, bot::Bot::new());
             let (new_bot, task) = bot::update(action, old_bot);
             std::mem::replace(&mut bot, new_bot);
 
