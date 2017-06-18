@@ -28,7 +28,6 @@ impl User {
 /// Describes a state of the bot
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bot {
-    gerrit_username: Option<String>, // TODO: this should not be part of the state
     users: Vec<User>,
 }
 
@@ -62,18 +61,8 @@ fn format_approval_value(value: &str) -> String {
 }
 
 impl Bot {
-    pub fn new(gerrit_username: gerrit::Username) -> Bot {
-        Bot {
-            gerrit_username: Some(gerrit_username),
-            users: Vec::new(),
-        }
-    }
-
-    pub fn default() -> Bot {
-        Bot {
-            gerrit_username: None,
-            users: Vec::new(),
-        }
+    pub fn new() -> Bot {
+        Bot { users: Vec::new() }
     }
 
     fn enable<'a>(&'a mut self, person_id: &str, email: &str, enabled: bool) -> &'a User {
