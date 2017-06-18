@@ -50,6 +50,17 @@ impl convert::From<serde_json::Error> for BotError {
     }
 }
 
+fn format_approval_value(value: &str) -> String {
+    let value: i8 = value.parse().unwrap_or(0);
+    // TODO: when Spark will be allow to format text with different colors,
+    // set green resp. red color here.
+    if value > 0 {
+        format!("+{}", value)
+    } else {
+        format!("{}", value)
+    }
+}
+
 impl Bot {
     pub fn new(gerrit_username: gerrit::Username) -> Bot {
         Bot {
@@ -119,12 +130,10 @@ impl Bot {
                                 filtered
                             })
                             .map(|approval| {
-                                let value: i8 = approval.value.parse().unwrap_or(0);
                                 format!(
-                                    "{}: {}{} ({}) from {}",
+                                    "{}: {} ({}) from {}",
                                     change.subject,
-                                    if value > 0 { "+" } else { "" },
-                                    value,
+                                    format_approval_value(&approval.value),
                                     approval.approval_type,
                                     approver
                                 )
