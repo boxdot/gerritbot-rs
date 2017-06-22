@@ -96,7 +96,7 @@ fn main() {
             bot::Action::NoOp => false,
             _ => true,
         })
-        .map(|action| {
+        .filter_map(|action| {
             println!("[D] handle: {:?}", action);
 
             // fold over actions
@@ -105,8 +105,8 @@ fn main() {
             std::mem::replace(&mut bot, new_bot);
 
             // Handle save task and return response.
-            // Note: We have to do it here, since the value of `bot` is only available in this
-            // function.
+            // Note: We have to do it here, since the value of `bot` is only
+            // available in this function.
             if let Some(task) = task {
                 println!("[D] new task {:?}", task);
                 let response = match task {
@@ -127,10 +127,8 @@ fn main() {
             None
         })
         .for_each(|response| {
-            if let Some(response) = response {
-                println!("[D] Replying with:\n{}", response.message);
-                spark_client.reply(&response.person_id, &response.message);
-            }
+            println!("[D] Replying with:\n{}", response.message);
+            spark_client.reply(&response.person_id, &response.message);
             Ok(())
         });
 

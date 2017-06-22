@@ -11,6 +11,7 @@ use spark;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct User {
     spark_person_id: spark::PersonId,
+    /// email of the user assumed to be the same in Spark and Gerrit
     email: spark::Email,
     enabled: bool,
 }
@@ -65,8 +66,7 @@ impl Bot {
         Bot { users: Vec::new() }
     }
 
-    fn enable<'a>(&'a mut self, person_id: &str, email: &str, enabled: bool) -> &'a User {
-        // FIXME: Replace linear search
+    fn find_or_add_user<'a>(&'a mut self, person_id: &str, email: &str) -> &'a mut User {
         let pos = self.users.iter().position(
             |u| u.spark_person_id == person_id,
         );
@@ -80,6 +80,11 @@ impl Bot {
                 self.users.iter_mut().last().unwrap()
             }
         };
+        user
+    }
+
+    fn enable<'a>(&'a mut self, person_id: &str, email: &str, enabled: bool) -> &'a User {
+        let user: &'a mut User = self.find_or_add_user(person_id, email);
         user.enabled = enabled;
         user
     }
@@ -176,7 +181,6 @@ pub enum Action {
 
 #[derive(Debug)]
 pub struct Response {
-    // TODO: Switch to a reference, since it should be alive inside of the Bot state
     pub person_id: spark::PersonId,
     pub message: String,
 }
@@ -259,4 +263,56 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
         _ => None,
     };
     (bot, task)
+}
+
+#[cfg(test)]
+mod test {
+    use super::{Bot, User};
+
+    #[test]
+    fn enable_non_existent_user() {
+        let test = |enable| {
+            let mut bot = Bot::new();
+            let num_users = bot.num_users();
+            bot.enable("some_person_id", "some@example.com", enable);
+            assert!(
+                bot.users
+                    .iter()
+                    .position(|u| {
+                        u.spark_person_id == "some_person_id" && u.email == "some@example.com" &&
+                            u.enabled == enable
+                    })
+                    .is_some()
+            );
+            assert!(bot.num_users() == num_users + 1);
+        };
+        test(true);
+        test(false);
+    }
+
+    #[test]
+    fn enable_existent_user() {
+        let test = |enable| {
+            let mut bot = Bot::new();
+            bot.users.push(User::new(
+                String::from("some_person_id"),
+                String::from("some@example.com"),
+            ));
+            let num_users = bot.num_users();
+
+            bot.enable("some_person_id", "some@example.com", enable);
+            assert!(
+                bot.users
+                    .iter()
+                    .position(|u| {
+                        u.spark_person_id == "some_person_id" && u.email == "some@example.com" &&
+                            u.enabled == enable
+                    })
+                    .is_some()
+            );
+            assert!(bot.num_users() == num_users);
+        };
+        test(true);
+        test(false);
+    }
 }
