@@ -11,7 +11,7 @@ use spark;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct User {
     spark_person_id: spark::PersonId,
-    /// email of the user assumed to be the same in Spark and Gerrit
+    /// email of the user; assumed to be the same in Spark and Gerrit
     email: spark::Email,
     enabled: bool,
 }
