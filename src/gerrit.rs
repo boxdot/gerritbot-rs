@@ -134,7 +134,8 @@ pub fn event_stream(
         loop {
             println!("[I] (Re)connecting to Gerrit over ssh: {}", hostport);
 
-            // TODO: Remove all unwrap's here, since otherwise we may stuck in an endless loop.
+            // TODO: Remove all unwraps here, since otherwise we may stuck in
+            // an endless loop.
 
             // Connect to the local SSH server
             let mut session = ssh2::Session::new().unwrap();
@@ -168,9 +169,9 @@ pub fn event_stream(
         }
     });
 
-    // TODO: Right now, we are interested only in +1/-1/+2/-2 events, and new draft events. When
-    // we have implemented all event types mappings, we can provide here full parsing by removing
-    // the filtering.
+    // TODO: Right now, we are interested only in +1/-1/+2/-2 events, and new
+    // draft events. When we have implemented all event types mappings, we can
+    // provide here full parsing by removing the filtering.
     rx.then(|event| {
         // event from our channel cannot fail
         let json: String = event.unwrap();
