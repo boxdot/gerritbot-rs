@@ -84,9 +84,7 @@ fn main() {
         args.gerrit_username,
         args.gerrit_priv_key_path,
     ).map(gerrit::Event::into_action)
-        .map_err(|err| {
-            println!("[E] Gerrit stream error {:?}", err);
-        });
+        .map_err(|_| ()); // map error to ()
 
     // join spark and gerrit action stream into one and fold over actions with accumulator `bot`
     let handle = core.handle();
@@ -132,8 +130,5 @@ fn main() {
             Ok(())
         });
 
-    let result = core.run(actions);
-    if let Err(err) = result {
-        print!("Shutting down due to error: {:?}", err);
-    };
+    let _ = core.run(actions);
 }

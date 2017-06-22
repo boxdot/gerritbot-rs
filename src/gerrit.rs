@@ -7,7 +7,7 @@ use ssh2;
 use serde_json;
 
 use futures::stream::BoxStream;
-use futures::sync::mpsc::channel;
+use futures::sync::mpsc::{channel, Sender};
 use futures::{Future, Sink, Stream};
 
 use bot;
@@ -104,6 +104,7 @@ impl Event {
 pub enum StreamError {
     Io(io::Error),
     Parse(serde_json::Error),
+    Terminated,
 }
 
 impl From<io::Error> for StreamError {
@@ -124,6 +125,11 @@ fn get_pub_key_path(priv_key_path: &PathBuf) -> PathBuf {
     pub_key_path
 }
 
+fn send_terminate_msg(tx: Sender<Result<String, ()>>) {
+    // we terminate our stream by sending an empty err message
+    let _ = tx.send(Err(())).wait();
+}
+
 pub fn event_stream(
     host: &str,
     port: u16,
@@ -142,27 +148,67 @@ pub fn event_stream(
         loop {
             println!("[I] (Re)connecting to Gerrit over ssh: {}", hostport);
 
-            // TODO: Remove all unwraps here, since otherwise we may stuck in
-            // an endless loop.
-
             // Connect to the local SSH server
-            let mut session = ssh2::Session::new().unwrap();
-            let tcp = TcpStream::connect(&hostport).unwrap();
-            session.handshake(&tcp).unwrap();
+            let mut session = match ssh2::Session::new() {
+                Some(session) => session,
+                None => {
+                    println!("[E] Could not create a new ssh session for connecting to Gerrit.");
+                    send_terminate_msg(main_tx);
+                    return;
+                }
+            };
+
+            let tcp = match TcpStream::connect(&hostport) {
+                Ok(tcp) => tcp,
+                Err(err) => {
+                    println!("[E] Could not connect to gerrit at {}: {:?}", hostport, err);
+                    send_terminate_msg(main_tx);
+                    return;
+                }
+            };
+
+            if let Err(err) = session.handshake(&tcp) {
+                println!("[E] Could not connect to gerrit: {:?}", err);
+                send_terminate_msg(main_tx);
+                return;
+            };
 
             // Try to authenticate
-            session
-                .userauth_pubkey_file(&username, Some(&pub_key_path), &priv_key_path, None)
-                .unwrap();
+            if let Err(err) = session.userauth_pubkey_file(
+                &username,
+                Some(&pub_key_path),
+                &priv_key_path,
+                None,
+            )
+            {
+                println!("[E] Could not authenticate: {:?}", err);
+                send_terminate_msg(main_tx);
+                return;
+            };
 
-            let mut ssh_channel = session.channel_session().unwrap();
-            ssh_channel.exec("gerrit stream-events").unwrap();
+            let mut ssh_channel = match session.channel_session() {
+                Ok(ssh_channel) => ssh_channel,
+                Err(err) => {
+                    println!("[E] Could not create ssh channel: {:?}", err);
+                    send_terminate_msg(main_tx);
+                    return;
+                }
+            };
+
+            if let Err(err) = ssh_channel.exec("gerrit stream-events") {
+                println!(
+                    "[E] Could not execture gerrit stream-event command over ssh: {:?}",
+                    err
+                );
+                send_terminate_msg(main_tx);
+                return;
+            };
 
             let buf_channel = BufReader::new(ssh_channel);
             let mut tx = main_tx.clone();
             for line in buf_channel.lines() {
                 if let Ok(line) = line {
-                    match tx.clone().send(line).wait() {
+                    match tx.clone().send(Ok(line)).wait() {
                         Ok(s) => tx = s,
                         Err(err) => {
                             println!("[E] Cannot send message through channel {:?}", err);
@@ -177,15 +223,14 @@ pub fn event_stream(
         }
     });
 
-    // TODO: Right now, we are interested only in +1/-1/+2/-2 events, and new
-    // draft events. When we have implemented all event types mappings, we can
-    // provide here full parsing by removing the filtering.
-    rx.then(|event| {
-        // event from our channel cannot fail
-        let json: String = event.unwrap();
-        let res = serde_json::from_str(&json);
-        println!("[D] {:?} for json: {}", res, json);
-        Ok(res.ok())
+    rx.then(|event| match event.unwrap() {
+        Ok(event) => {
+            let json: String = event;
+            let res = serde_json::from_str(&json);
+            println!("[D] {:?} for json: {}", res, json);
+            Ok(res.ok())
+        }
+        Err(_) => Err(StreamError::Terminated),
     }).filter_map(|event| event)
         .boxed()
 }
