@@ -118,6 +118,12 @@ impl From<serde_json::Error> for StreamError {
     }
 }
 
+fn get_pub_key_path(priv_key_path: &PathBuf) -> PathBuf {
+    let mut pub_key_path = PathBuf::from(priv_key_path.to_str().unwrap());
+    pub_key_path.set_extension("pub");
+    pub_key_path
+}
+
 pub fn event_stream(
     host: &str,
     port: u16,
@@ -125,9 +131,11 @@ pub fn event_stream(
     priv_key_path: PathBuf,
 ) -> BoxStream<Event, StreamError> {
     let hostport = format!("{}:{}", host, port);
-    let mut pub_key_path = PathBuf::from(priv_key_path.to_str().unwrap());
-    pub_key_path.set_extension("pub");
-    println!("[D] Deduced public key: {}", pub_key_path.to_str().unwrap());
+    let pub_key_path = get_pub_key_path(&priv_key_path);
+    println!(
+        "[D] Will use public key: {}",
+        pub_key_path.to_str().unwrap()
+    );
 
     let (main_tx, rx) = channel(1);
     thread::spawn(move || {
@@ -180,4 +188,15 @@ pub fn event_stream(
         Ok(res.ok())
     }).filter_map(|event| event)
         .boxed()
+}
+
+#[cfg(test)]
+mod test {
+    use super::{get_pub_key_path, PathBuf};
+
+    #[test]
+    fn test_get_pub_key_path() {
+        let result = get_pub_key_path(&PathBuf::from("some_priv_key"));
+        assert!(result == PathBuf::from("some_priv_key.pub"));
+    }
 }
