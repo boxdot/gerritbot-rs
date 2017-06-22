@@ -195,7 +195,7 @@ pub fn event_stream(
                 }
             };
 
-            if let Err(err) = ssh_channel.exec("gerrit stream-events") {
+            if let Err(err) = ssh_channel.exec("gerrit stream-events -s comment-added") {
                 println!(
                     "[E] Could not execture gerrit stream-event command over ssh: {:?}",
                     err
