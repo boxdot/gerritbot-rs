@@ -77,7 +77,7 @@ impl SparkClient {
         });
         let res = post_with_token(&(self.url.clone() + "/messages"), &self.bot_token, &json);
         if let Err(err) = res {
-            println!("[E] Could not reply to gerrit: {:?}", err);
+            error!("Could not reply to gerrit: {:?}", err);
         }
     }
 
@@ -163,7 +163,7 @@ pub fn webhook_handler(
     let new_post: Post = match serde_json::from_reader(&mut req.body) {
         Ok(post) => post,
         Err(err) => {
-            println!("[E] Could not parse post: {}", err);
+            error!("Could not parse post: {}", err);
             return Ok(Response::with(status::Ok));
         }
     };

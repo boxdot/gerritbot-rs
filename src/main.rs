@@ -4,6 +4,8 @@ extern crate futures;
 extern crate hyper;
 extern crate hyper_native_tls;
 extern crate iron;
+#[macro_use]
+extern crate log;
 extern crate router;
 extern crate serde;
 #[macro_use]
@@ -11,6 +13,7 @@ extern crate serde_derive;
 #[macro_use]
 extern crate serde_json;
 extern crate ssh2;
+extern crate stderrlog;
 extern crate tokio_core;
 
 use futures::Stream;
@@ -25,6 +28,14 @@ mod spark;
 
 fn main() {
     let args = args::parse_args();
+    stderrlog::new()
+        .module(module_path!())
+        .quiet(args.quiet)
+        .timestamp(stderrlog::Timestamp::Second)
+        .verbosity(args.verbosity)
+        .init()
+        .unwrap();
+    info!("starting.");
 
     // event loop
     let mut core = tokio_core::reactor::Core::new().unwrap();
@@ -32,14 +43,14 @@ fn main() {
     // load or create a new bot
     let mut bot = match bot::Bot::load("state.json") {
         Ok(bot) => {
-            println!(
-                "[I] Loaded bot from 'state.json' with {} user(s).",
+            info!(
+                "Loaded bot from 'state.json' with {} user(s).",
                 bot.num_users()
             );
             bot
         }
         Err(err) => {
-            println!("[W] Could not load bot from 'state.json': {:?}", err);
+            warn!("Could not load bot from 'state.json': {:?}", err);
             bot::Bot::new()
         }
     };
@@ -52,7 +63,7 @@ fn main() {
     router.post(
         "/",
         move |req: &mut Request| {
-            println!("[D] new webhook post request");
+            debug!("Incoming webhook post request");
             spark::webhook_handler(req, &remote, tx.clone())
         },
         "post",
@@ -60,9 +71,9 @@ fn main() {
 
     let spark_stream = rx.filter(|msg| msg.person_id != spark_client.bot_id)
         .map(|mut msg| {
-            println!("[D] loading text for message:\n{:?}", msg);
+            debug!("Loading text for message:\n{:?}", msg);
             if let Err(err) = msg.load_text(&spark_client) {
-                println!("[E] Could not load post's text: {}", err);
+                error!("Could not load post's text: {}", err);
                 return None;
             }
             Some(msg)
@@ -85,7 +96,7 @@ fn main() {
         args.gerrit_priv_key_path,
     ).map(gerrit::Event::into_action)
         .map_err(|err| if let gerrit::StreamError::Terminated(reason) = err {
-            println!("[E] Gerrit stream error: {}", reason);
+            error!("Gerrit stream error: {}", reason);
         }); // map error to ()
 
     // join spark and gerrit action stream into one and fold over actions with accumulator `bot`
@@ -97,7 +108,7 @@ fn main() {
             _ => true,
         })
         .filter_map(|action| {
-            println!("[D] handle: {:?}", action);
+            debug!("Handle action: {:?}", action);
 
             // fold over actions
             let old_bot = std::mem::replace(&mut bot, bot::Bot::new());
@@ -108,14 +119,14 @@ fn main() {
             // Note: We have to do it here, since the value of `bot` is only
             // available in this function.
             if let Some(task) = task {
-                println!("[D] new task {:?}", task);
+                debug!("New task {:?}", task);
                 let response = match task {
                     bot::Task::Reply(response) => response,
                     bot::Task::ReplyAndSave(response) => {
                         let bot_clone = bot.clone();
                         handle.spawn_fn(move || {
                             if let Err(err) = bot_clone.save("state.json") {
-                                println!("[E] Coult not save sate: {:?}", err);
+                                error!("Could not save state: {:?}", err);
                             }
                             Ok(())
                         });
@@ -127,7 +138,7 @@ fn main() {
             None
         })
         .for_each(|response| {
-            println!("[D] Replying with:\n{}", response.message);
+            debug!("Replying with:\n{}", response.message);
             spark_client.reply(&response.person_id, &response.message);
             Ok(())
         });
