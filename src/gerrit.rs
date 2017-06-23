@@ -104,7 +104,7 @@ impl Event {
 pub enum StreamError {
     Io(io::Error),
     Parse(serde_json::Error),
-    Terminated,
+    Terminated(String /* reason */),
 }
 
 impl From<io::Error> for StreamError {
@@ -125,9 +125,79 @@ fn get_pub_key_path(priv_key_path: &PathBuf) -> PathBuf {
     pub_key_path
 }
 
-fn send_terminate_msg(tx: Sender<Result<String, ()>>) {
-    // we terminate our stream by sending an empty err message
-    let _ = tx.send(Err(())).wait();
+fn send_terminate_msg<T>(
+    tx: &Sender<Result<String, StreamError>>,
+    reason: String,
+) -> Result<T, ()> {
+    let _ = tx.clone().send(Err(StreamError::Terminated(reason))).wait();
+    Err(())
+}
+
+fn connect_to_gerrit(
+    tx: &Sender<Result<String, StreamError>>,
+    hostport: &str,
+    username: &str,
+    priv_key_path: &PathBuf,
+    pub_key_path: &PathBuf,
+) -> Result<ssh2::Session, ()> {
+    // Connect to the local SSH server
+    let mut session = ssh2::Session::new().ok_or_else(|| {
+        let _ = send_terminate_msg::<()>(
+            &tx.clone(),
+            String::from(
+                "Could not create a new ssh session for connecting to Gerrit.",
+            ),
+        );
+    })?;
+
+    let tcp = TcpStream::connect(hostport).or_else(|err| {
+        send_terminate_msg(
+            &tx.clone(),
+            format!("Could not connect to gerrit at {}: {:?}", hostport, err),
+        )
+    })?;
+
+    session.handshake(&tcp).or_else(|err| {
+        send_terminate_msg(
+            &tx.clone(),
+            format!("Could not connect to gerrit: {:?}", err),
+        )
+    })?;
+
+    // Try to authenticate
+    session
+        .userauth_pubkey_file(username, Some(pub_key_path), priv_key_path, None)
+        .or_else(|err| {
+            send_terminate_msg(&tx.clone(), format!("Could not authenticate: {:?}", err))
+        })?;
+
+    Ok(session)
+}
+
+fn new_ssh_channel<'a>(
+    tx: &Sender<Result<String, StreamError>>,
+    session: &'a ssh2::Session,
+) -> Result<ssh2::Channel<'a>, ()> {
+    let mut ssh_channel = session.channel_session().or_else(|err| {
+        send_terminate_msg(
+            &tx.clone(),
+            format!("Could not create ssh channel: {:?}", err),
+        )
+    })?;
+
+    ssh_channel
+        .exec("gerrit stream-events -s comment-added")
+        .or_else(|err| {
+            send_terminate_msg(
+                &tx.clone(),
+                format!(
+                    "Could not execture gerrit stream-event command over ssh: {:?}",
+                    err
+                ),
+            )
+        })?;
+
+    Ok(ssh_channel)
 }
 
 pub fn event_stream(
@@ -144,65 +214,18 @@ pub fn event_stream(
     );
 
     let (main_tx, rx) = channel(1);
-    thread::spawn(move || {
+    thread::spawn(move || -> Result<(), ()> {
         loop {
             println!("[I] (Re)connecting to Gerrit over ssh: {}", hostport);
 
-            // Connect to the local SSH server
-            let mut session = match ssh2::Session::new() {
-                Some(session) => session,
-                None => {
-                    println!("[E] Could not create a new ssh session for connecting to Gerrit.");
-                    send_terminate_msg(main_tx);
-                    return;
-                }
-            };
-
-            let tcp = match TcpStream::connect(&hostport) {
-                Ok(tcp) => tcp,
-                Err(err) => {
-                    println!("[E] Could not connect to gerrit at {}: {:?}", hostport, err);
-                    send_terminate_msg(main_tx);
-                    return;
-                }
-            };
-
-            if let Err(err) = session.handshake(&tcp) {
-                println!("[E] Could not connect to gerrit: {:?}", err);
-                send_terminate_msg(main_tx);
-                return;
-            };
-
-            // Try to authenticate
-            if let Err(err) = session.userauth_pubkey_file(
+            let session = connect_to_gerrit(
+                &main_tx,
+                &hostport,
                 &username,
-                Some(&pub_key_path),
                 &priv_key_path,
-                None,
-            )
-            {
-                println!("[E] Could not authenticate: {:?}", err);
-                send_terminate_msg(main_tx);
-                return;
-            };
-
-            let mut ssh_channel = match session.channel_session() {
-                Ok(ssh_channel) => ssh_channel,
-                Err(err) => {
-                    println!("[E] Could not create ssh channel: {:?}", err);
-                    send_terminate_msg(main_tx);
-                    return;
-                }
-            };
-
-            if let Err(err) = ssh_channel.exec("gerrit stream-events -s comment-added") {
-                println!(
-                    "[E] Could not execture gerrit stream-event command over ssh: {:?}",
-                    err
-                );
-                send_terminate_msg(main_tx);
-                return;
-            };
+                &pub_key_path,
+            )?;
+            let ssh_channel = new_ssh_channel(&main_tx, &session)?;
 
             let buf_channel = BufReader::new(ssh_channel);
             let mut tx = main_tx.clone();
@@ -223,14 +246,13 @@ pub fn event_stream(
         }
     });
 
-    rx.then(|event| match event.unwrap() {
-        Ok(event) => {
+    rx.then(|event| {
+        event.unwrap().map(|event| {
             let json: String = event;
             let res = serde_json::from_str(&json);
             println!("[D] {:?} for json: {}", res, json);
-            Ok(res.ok())
-        }
-        Err(_) => Err(StreamError::Terminated),
+            res.ok()
+        })
     }).filter_map(|event| event)
         .boxed()
 }

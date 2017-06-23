@@ -84,7 +84,9 @@ fn main() {
         args.gerrit_username,
         args.gerrit_priv_key_path,
     ).map(gerrit::Event::into_action)
-        .map_err(|_| ()); // map error to ()
+        .map_err(|err| if let gerrit::StreamError::Terminated(reason) = err {
+            println!("[E] Gerrit stream error: {}", reason);
+        }); // map error to ()
 
     // join spark and gerrit action stream into one and fold over actions with accumulator `bot`
     let handle = core.handle();
