@@ -90,7 +90,7 @@ impl Bot {
     }
 
     fn get_approvals_msg(&self, event: gerrit::Event) -> Option<(&User, String)> {
-        println!("[D] Incoming approvals: {:?}", event);
+        debug!("Incoming approvals: {:?}", event);
 
         let author = event.author;
         let change = event.change;
@@ -120,7 +120,7 @@ impl Bot {
                                 } else {
                                     approval.value != "0"
                                 };
-                                println!("Filtered approval: {:?}", !filtered);
+                                debug!("Filtered approval: {:?}", !filtered);
                                 filtered
                             })
                             .map(|approval| {

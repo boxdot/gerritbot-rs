@@ -208,15 +208,12 @@ pub fn event_stream(
 ) -> BoxStream<Event, StreamError> {
     let hostport = format!("{}:{}", host, port);
     let pub_key_path = get_pub_key_path(&priv_key_path);
-    println!(
-        "[D] Will use public key: {}",
-        pub_key_path.to_str().unwrap()
-    );
+    debug!("Will use public key: {}", pub_key_path.to_str().unwrap());
 
     let (main_tx, rx) = channel(1);
     thread::spawn(move || -> Result<(), ()> {
         loop {
-            println!("[I] (Re)connecting to Gerrit over ssh: {}", hostport);
+            info!("(Re)connecting to Gerrit over ssh: {}", hostport);
 
             let session = connect_to_gerrit(
                 &main_tx,
@@ -234,12 +231,12 @@ pub fn event_stream(
                     match tx.clone().send(Ok(line)).wait() {
                         Ok(s) => tx = s,
                         Err(err) => {
-                            println!("[E] Cannot send message through channel {:?}", err);
+                            error!("Cannot send message through channel {:?}", err);
                             break;
                         }
                     }
                 } else {
-                    println!("[E] Could not read line from buffer. Will drop connection.");
+                    error!("Could not read line from buffer. Will drop connection.");
                     break;
                 }
             }
@@ -250,7 +247,7 @@ pub fn event_stream(
         event.unwrap().map(|event| {
             let json: String = event;
             let res = serde_json::from_str(&json);
-            println!("[D] {:?} for json: {}", res, json);
+            debug!("Parsed json {} to: {:?}", json, res);
             res.ok()
         })
     }).filter_map(|event| event)

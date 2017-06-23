@@ -11,6 +11,8 @@ pub struct Args {
     pub spark_endpoint: String,
     pub spark_bot_token: String,
     pub spark_bot_id: String,
+    pub verbosity: usize,
+    pub quiet: bool,
 }
 
 const SPARK_URL: &'static str = "https://api.ciscospark.com/v1";
@@ -23,6 +25,9 @@ const USAGE: &'static str = r#"
 --spark-endpoint=[localhost:8888] 'Endpoint on which the bot will listen for incoming Spark messages.'
 --spark-bot-token=<TOKEN>         'Token of the Spark bot for authentication'
 --spark-bot-id=<ID>               'Identity of the Spark bot for filtering own messages'
+
+-v...                             'Verbosity level'
+-q...                             'Quiet'
 "#;
 
 pub fn parse_args() -> Args {
@@ -47,5 +52,7 @@ pub fn parse_args() -> Args {
         )),
         spark_bot_token: String::from(matches.value_of("spark-bot-token").unwrap()),
         spark_bot_id: String::from(matches.value_of("spark-bot-id").unwrap()),
+        verbosity: 2 + matches.occurrences_of("v") as usize,
+        quiet: matches.is_present("q"),
     }
 }

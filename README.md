@@ -45,7 +45,7 @@ running.
 - [ ] Automatic update of webhooks URL in Spark.
 - [x] Use a more sophisticated command line parser.
 - [ ] Get rid of `libssh2` dependency.
-- [ ] Proper configurable logging with verbosity mode.
+- [x] Proper configurable logging with verbosity mode.
 - [ ] Tests.
 
 ## License
