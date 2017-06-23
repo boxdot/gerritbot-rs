@@ -133,13 +133,28 @@ fn send_terminate_msg<T>(
     Err(())
 }
 
+struct GerritConnection {
+    session: ssh2::Session,
+    /// tcp has to be kept alive with session together, even if it is never used directly
+    _tcp: TcpStream,
+}
+
+impl GerritConnection {
+    fn new(session: ssh2::Session, tcp: TcpStream) -> GerritConnection {
+        GerritConnection {
+            session: session,
+            _tcp: tcp,
+        }
+    }
+}
+
 fn connect_to_gerrit(
     tx: &Sender<Result<String, StreamError>>,
     hostport: &str,
     username: &str,
     priv_key_path: &PathBuf,
     pub_key_path: &PathBuf,
-) -> Result<ssh2::Session, ()> {
+) -> Result<GerritConnection, ()> {
     // Connect to the local SSH server
     let mut session = ssh2::Session::new().ok_or_else(|| {
         let _ = send_terminate_msg::<()>(
@@ -171,7 +186,7 @@ fn connect_to_gerrit(
             send_terminate_msg(&tx.clone(), format!("Could not authenticate: {:?}", err))
         })?;
 
-    Ok(session)
+    Ok(GerritConnection::new(session, tcp))
 }
 
 fn new_ssh_channel<'a>(
@@ -234,14 +249,15 @@ pub fn event_stream(
         loop {
             info!("(Re)connecting to Gerrit over ssh: {}", hostport);
 
-            let session = connect_to_gerrit(
+            let conn = connect_to_gerrit(
                 &main_tx,
                 &hostport,
                 &username,
                 &priv_key_path,
                 &pub_key_path,
             )?;
-            let ssh_channel = new_ssh_channel(&main_tx, &session)?;
+            let ssh_channel = new_ssh_channel(&main_tx, &conn.session)?;
+            info!("Connected to Gerrit.");
 
             let buf_channel = BufReader::new(ssh_channel);
             let mut tx = main_tx.clone();

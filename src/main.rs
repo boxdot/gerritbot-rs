@@ -35,7 +35,7 @@ fn main() {
         .verbosity(args.verbosity)
         .init()
         .unwrap();
-    info!("starting.");
+    info!("Starting");
 
     // load or create a new bot
     let mut bot = match bot::Bot::load("state.json") {
