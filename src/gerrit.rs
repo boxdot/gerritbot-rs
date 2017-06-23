@@ -7,7 +7,7 @@ use ssh2;
 use serde_json;
 
 use futures::stream::BoxStream;
-use futures::sync::mpsc::{channel, Sender};
+use futures::sync::mpsc::{channel, Receiver, Sender};
 use futures::{Future, Sink, Stream};
 
 use bot;
@@ -101,7 +101,7 @@ impl Event {
 }
 
 #[derive(Debug)]
-pub enum StreamError {
+enum StreamError {
     Io(io::Error),
     Parse(serde_json::Error),
     Terminated(String /* reason */),
@@ -200,12 +200,31 @@ fn new_ssh_channel<'a>(
     Ok(ssh_channel)
 }
 
+fn receiver_into_event_stream(
+    rx: Receiver<Result<String, StreamError>>,
+) -> BoxStream<bot::Action, ()> {
+    rx.then(|event| {
+        // parse each json message as event (if we did not get an error)
+        event.unwrap().map(|event| {
+            let json: String = event;
+            let res = serde_json::from_str(&json);
+            debug!("Parsed json {} as:\n{:?}", json, res);
+            res.ok()
+        })
+    }).filter_map(|event| event)
+        .map(Event::into_action)
+        .map_err(|err| if let StreamError::Terminated(reason) = err {
+            error!("Gerrit stream error: {}", reason);
+        })
+        .boxed()
+}
+
 pub fn event_stream(
     host: &str,
     port: u16,
     username: String,
     priv_key_path: PathBuf,
-) -> BoxStream<Event, StreamError> {
+) -> BoxStream<bot::Action, ()> {
     let hostport = format!("{}:{}", host, port);
     let pub_key_path = get_pub_key_path(&priv_key_path);
     debug!("Will use public key: {}", pub_key_path.to_str().unwrap());
@@ -243,15 +262,7 @@ pub fn event_stream(
         }
     });
 
-    rx.then(|event| {
-        event.unwrap().map(|event| {
-            let json: String = event;
-            let res = serde_json::from_str(&json);
-            debug!("Parsed json {} to: {:?}", json, res);
-            res.ok()
-        })
-    }).filter_map(|event| event)
-        .boxed()
+    receiver_into_event_stream(rx)
 }
 
 #[cfg(test)]

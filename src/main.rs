@@ -37,9 +37,6 @@ fn main() {
         .unwrap();
     info!("starting.");
 
-    // event loop
-    let mut core = tokio_core::reactor::Core::new().unwrap();
-
     // load or create a new bot
     let mut bot = match bot::Bot::load("state.json") {
         Ok(bot) => {
@@ -54,6 +51,9 @@ fn main() {
             bot::Bot::new()
         }
     };
+
+    // event loop
+    let mut core = tokio_core::reactor::Core::new().unwrap();
 
     // create spark message stream
     let spark_client = spark::SparkClient::new(&args);
@@ -94,10 +94,7 @@ fn main() {
         args.gerrit_port,
         args.gerrit_username,
         args.gerrit_priv_key_path,
-    ).map(gerrit::Event::into_action)
-        .map_err(|err| if let gerrit::StreamError::Terminated(reason) = err {
-            error!("Gerrit stream error: {}", reason);
-        }); // map error to ()
+    );
 
     // join spark and gerrit action stream into one and fold over actions with accumulator `bot`
     let handle = core.handle();
