@@ -60,6 +60,13 @@ fn main() {
         error!("Could not create spark client: {}", err);
         std::process::exit(1);
     });
+    if let Some(spark_webhook_url) = args.spark_webhook_url {
+        if let Err(err) = spark_client.replace_webhook_url(&spark_webhook_url) {
+            error!("{}", err);
+            std::process::exit(1);
+        };
+        info!("Registered Spark's webhook url: {}", spark_webhook_url)
+    };
 
     let remote = core.remote();
     let (tx, rx) = channel(1);
