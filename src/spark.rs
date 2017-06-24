@@ -55,40 +55,6 @@ where
         .send()
 }
 
-pub struct SparkClient {
-    url: String,
-    bot_token: String,
-    pub bot_id: String,
-}
-
-impl SparkClient {
-    pub fn new(args: &args::Args) -> SparkClient {
-        SparkClient {
-            url: args.spark_url.clone(),
-            bot_token: args.spark_bot_token.clone(),
-            bot_id: args.spark_bot_id.clone(),
-        }
-    }
-
-    pub fn reply(&self, person_id: &str, msg: &str) {
-        let json = json!({
-            "toPersonId": person_id,
-            "markdown": msg,
-        });
-        let res = post_with_token(&(self.url.clone() + "/messages"), &self.bot_token, &json);
-        if let Err(err) = res {
-            error!("Could not reply to gerrit: {:?}", err);
-        }
-    }
-
-    fn get_message_text(&self, message_id: &str) -> Result<hyper::client::Response, hyper::Error> {
-        get_json_with_token(
-            &(self.url.clone() + "/messages/" + message_id),
-            &self.bot_token,
-        )
-    }
-}
-
 /// Spark id of the user
 pub type PersonId = String;
 
@@ -127,6 +93,67 @@ pub struct Message {
     // a message contained in a post does not have text loaded
     #[serde(default)]
     text: String,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct PersonDetails {
+    id: String,
+    emails: Vec<String>,
+    display_name: String,
+    nick_name: Option<String>,
+    org_id: String,
+    created: String,
+    last_activity: Option<String>,
+    status: Option<String>,
+    #[serde(rename = "type")]
+    person_type: String,
+}
+
+pub struct SparkClient {
+    url: String,
+    bot_token: String,
+    pub bot_id: String,
+}
+
+impl SparkClient {
+    pub fn new(args: &args::Args) -> Result<SparkClient, String> {
+        let mut client = SparkClient {
+            url: args.spark_url.clone(),
+            bot_token: args.spark_bot_token.clone(),
+            bot_id: String::new(),
+        };
+        client.bot_id = client.get_bot_id()?;
+        debug!("Bot id: {}", client.bot_id);
+        Ok(client)
+    }
+
+    pub fn reply(&self, person_id: &str, msg: &str) {
+        let json = json!({
+            "toPersonId": person_id,
+            "markdown": msg,
+        });
+        let res = post_with_token(&(self.url.clone() + "/messages"), &self.bot_token, &json);
+        if let Err(err) = res {
+            error!("Could not reply to gerrit: {:?}", err);
+        }
+    }
+
+    fn get_bot_id(&self) -> Result<String, String> {
+        let resp = get_json_with_token(&(self.url.clone() + "/people/me"), &self.bot_token)
+            .map_err(|err| format!("Invalid response from spark: {}", err))?;
+        let details: PersonDetails = serde_json::from_reader(resp).map_err(|err| {
+            String::from(format!("Cannot parse person details: {}", err))
+        })?;
+        Ok(details.id)
+    }
+
+    fn get_message_text(&self, message_id: &str) -> Result<hyper::client::Response, hyper::Error> {
+        get_json_with_token(
+            &(self.url.clone() + "/messages/" + message_id),
+            &self.bot_token,
+        )
+    }
 }
 
 impl Message {

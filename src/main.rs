@@ -56,7 +56,11 @@ fn main() {
     let mut core = tokio_core::reactor::Core::new().unwrap();
 
     // create spark message stream
-    let spark_client = spark::SparkClient::new(&args);
+    let spark_client = spark::SparkClient::new(&args).unwrap_or_else(|err| {
+        error!("Could not create spark client: {}", err);
+        std::process::exit(1);
+    });
+
     let remote = core.remote();
     let (tx, rx) = channel(1);
     let mut router = Router::new();

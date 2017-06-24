@@ -10,7 +10,6 @@ pub struct Args {
     pub spark_url: String,
     pub spark_endpoint: String,
     pub spark_bot_token: String,
-    pub spark_bot_id: String,
     pub verbosity: usize,
     pub quiet: bool,
 }
@@ -24,7 +23,6 @@ const USAGE: &'static str = r#"
 --gerrit-priv-key-path=<PATH>     'Path to the private key for authentication in Gerrit. Note: Due to the limitations of `ssh2` crate only RSA and DSA are supported.'
 --spark-endpoint=[localhost:8888] 'Endpoint on which the bot will listen for incoming Spark messages.'
 --spark-bot-token=<TOKEN>         'Token of the Spark bot for authentication'
---spark-bot-id=<ID>               'Identity of the Spark bot for filtering own messages'
 
 -v...                             'Verbosity level'
 -q...                             'Quiet'
@@ -51,7 +49,6 @@ pub fn parse_args() -> Args {
             "localhost:8888",
         )),
         spark_bot_token: String::from(matches.value_of("spark-bot-token").unwrap()),
-        spark_bot_id: String::from(matches.value_of("spark-bot-id").unwrap()),
         verbosity: 2 + matches.occurrences_of("v") as usize,
         quiet: matches.is_present("q"),
     }
