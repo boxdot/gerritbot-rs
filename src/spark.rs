@@ -55,6 +55,17 @@ where
         .send()
 }
 
+/// Try to post json to the given url with basic token authorization.
+pub fn delete_with_token(url: &str, token: &str) -> Result<hyper::client::Response, hyper::Error> {
+    let client = new_client(url);
+    let auth = hyper::header::Authorization(String::from("Bearer ") + token);
+    client
+        .delete(url)
+        .header(hyper::header::ContentType::json())
+        .header(auth)
+        .send()
+}
+
 /// Spark id of the user
 pub type PersonId = String;
 
@@ -110,6 +121,28 @@ struct PersonDetails {
     person_type: String,
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct Webhook {
+    id: String,
+    name: String,
+    target_url: String,
+    resource: String,
+    event: String,
+    org_id: String,
+    created_by: String,
+    app_id: String,
+    owned_by: String,
+    status: String,
+    created: String,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct Webhooks {
+    items: Vec<Webhook>,
+}
+
 pub struct SparkClient {
     url: String,
     bot_token: String,
@@ -142,10 +175,70 @@ impl SparkClient {
     fn get_bot_id(&self) -> Result<String, String> {
         let resp = get_json_with_token(&(self.url.clone() + "/people/me"), &self.bot_token)
             .map_err(|err| format!("Invalid response from spark: {}", err))?;
-        let details: PersonDetails = serde_json::from_reader(resp).map_err(|err| {
-            String::from(format!("Cannot parse person details: {}", err))
-        })?;
+        let details: PersonDetails = serde_json::from_reader(resp).map_err(
+            |err| format!("Could not parse person details: {}", err),
+        )?;
         Ok(details.id)
+    }
+
+    fn register_webhook(&self, url: &str) -> Result<(), String> {
+        let json = json!({
+            "name": "gerritbot",
+            "targetUrl": String::from(url),
+            "resource": "messages",
+            "event": "created"
+        });
+        post_with_token(&(self.url.clone() + "/webhooks"), &self.bot_token, &json)
+            .map_err(
+                |err| format!("Could not register Spark's webhooks: {}", err),
+            )
+            .and_then(|resp| if resp.status != hyper::status::StatusCode::Ok {
+                Err(
+                    format!("Could not register Spark's webhook: {}", resp.status),
+                )
+            } else {
+                Ok(())
+            })
+    }
+
+    fn list_webhooks(&self) -> Result<Webhooks, String> {
+        let resp = get_json_with_token(&(self.url.clone() + "/webhooks"), &self.bot_token)
+            .map_err(|err| format!("Invalid response from spark: {}", err))?;
+        let webhooks: Webhooks = serde_json::from_reader(resp).map_err(
+            |err| format!("Could not parse webhooks list: {}", err),
+        )?;
+        Ok(webhooks)
+    }
+
+    fn delete_webhook(&self, id: &str) -> Result<(), String> {
+        delete_with_token(&(self.url.clone() + "/webhooks/" + id), &self.bot_token)
+            .map_err(|err| format!("Could not delete webhook: {}", err))
+            .and_then(|resp| if resp.status != hyper::status::StatusCode::Ok {
+                Err(format!("Could not delete webhook: {}", resp.status))
+            } else {
+                Ok(())
+            })
+    }
+
+    pub fn replace_webhook_url(&self, url: &str) -> Result<(), String> {
+        // remove all other webhooks
+        let webhooks = self.list_webhooks()?;
+        let to_remove = webhooks.items.into_iter().filter_map(
+            |webhook| if webhook.resource == "messages" &&
+                webhook.event == "created"
+            {
+                Some(webhook)
+            } else {
+                None
+            },
+        );
+        for webhook in to_remove {
+            self.delete_webhook(&webhook.id)?;
+            debug!("Removed webhook from Spark: {}", webhook.target_url);
+        }
+
+        // register new webhook
+        self.register_webhook(url)
     }
 
     fn get_message_text(&self, message_id: &str) -> Result<hyper::client::Response, hyper::Error> {
@@ -164,7 +257,7 @@ impl Message {
             |err| format!("Invalid response from spark: {}", err),
         )?;
         let msg: Message = serde_json::from_reader(resp).map_err(|err| {
-            String::from(format!("Cannot parse json: {}", err))
+            String::from(format!("Could not parse json: {}", err))
         })?;
         self.text = msg.text;
         Ok(())

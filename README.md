@@ -22,14 +22,17 @@ with the following arguments:
 ```
 --gerrit-hostname <URL>              Gerrit hostname
 --gerrit-port <PORT>                 Gerrit port
---gerrit-priv-key-path <PATH>        Path to the private key for authentication in Gerrit. Note:
-                                     Due to the limitations of `ssh2` crate only RSA and DSA are
-                                     supported.
+--gerrit-priv-key-path <PATH>
+    Path to the private key for authentication in Gerrit. Note: Due to the limitations of `ssh2`
+    crate only RSA and DSA are supported.
 --gerrit-username <USER>             Gerrit username
---spark-bot-id <ID>                  Identity of the Spark bot for filtering own messages
 --spark-bot-token <TOKEN>            Token of the Spark bot for authentication
---spark-endpoint <localhost:8888>    Endpoint on which the bot will listen for incoming Spark
-                                     messages.
+--spark-endpoint <localhost:8888>
+    Endpoint on which the bot will listen for incoming Spark messages.
+
+--spark-webhook-url <URL>
+    If specified, the URL will be registered in Spark as webhook endpoint. Note: this url will
+    replace all other registered webhooks.
 ```
 
 To be able to listen to Gerrit messages, you need to have a Gerrit user with `stream-api` access
@@ -42,7 +45,7 @@ running.
 
 ## Nice to have:
 
-- [ ] Automatic update of webhooks URL in Spark.
+- [x] Automatic update of webhooks URL in Spark.
 - [x] Use a more sophisticated command line parser.
 - [ ] Get rid of `libssh2` dependency.
 - [x] Proper configurable logging with verbosity mode.
