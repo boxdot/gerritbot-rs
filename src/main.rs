@@ -68,10 +68,11 @@ fn main() {
         },
         "post",
     );
+    info!("Listening to Spark on {}", args.spark_endpoint);
 
     let spark_stream = rx.filter(|msg| msg.person_id != spark_client.bot_id)
         .map(|mut msg| {
-            debug!("Loading text for message:\n{:?}", msg);
+            debug!("Loading text for message: {:?}", msg);
             if let Err(err) = msg.load_text(&spark_client) {
                 error!("Could not load post's text: {}", err);
                 return None;
@@ -135,7 +136,7 @@ fn main() {
             None
         })
         .for_each(|response| {
-            debug!("Replying with:\n{}", response.message);
+            debug!("Replying with: {}", response.message);
             spark_client.reply(&response.person_id, &response.message);
             Ok(())
         });
