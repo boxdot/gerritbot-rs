@@ -213,7 +213,7 @@ impl SparkClient {
     fn delete_webhook(&self, id: &str) -> Result<(), String> {
         delete_with_token(&(self.url.clone() + "/webhooks/" + id), &self.bot_token)
             .map_err(|err| format!("Could not delete webhook: {}", err))
-            .and_then(|resp| if resp.status != hyper::status::StatusCode::Ok {
+            .and_then(|resp| if resp.status != hyper::status::StatusCode::NoContent {
                 Err(format!("Could not delete webhook: {}", resp.status))
             } else {
                 Ok(())
