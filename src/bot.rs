@@ -55,9 +55,11 @@ fn format_approval_value(value: &str) -> String {
     // TODO: when Spark will allow to format text with different colors, set
     // green resp. red color here.
     if value > 0 {
-        format!("+{}", value)
+        format!("👍 +{}", value)
+    } else if value == 0 {
+        format!("👉 {}", value)
     } else {
-        format!("{}", value)
+        format!("👎 {}", value)
     }
 }
 
@@ -95,6 +97,7 @@ impl Bot {
         let author = event.author;
         let change = event.change;
         let approvals = event.approvals;
+        let comment = event.comment.unwrap();
 
         let approver = author.unwrap().username.clone();
         if approver == change.owner.username {
@@ -125,17 +128,17 @@ impl Bot {
                             })
                             .map(|approval| {
                                 format!(
-                                    "[{}]({}): {} ({}) from {}",
+                                    "[{}]({}) {} from {}\n\n`{}`",
                                     change.subject,
                                     change.url,
                                     format_approval_value(&approval.value),
-                                    approval.approval_type,
-                                    approver
+                                    approver,
+                                    comment
                                 )
                             })
                             .collect();
                         return if !msgs.is_empty() {
-                            Some((user, msgs.join("\n")))
+                            Some((user, msgs.join("\n\n"))) // two newlines since it is markdown
                         } else {
                             None
                         };

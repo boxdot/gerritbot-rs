@@ -201,7 +201,7 @@ fn new_ssh_channel<'a>(
     })?;
 
     ssh_channel
-        .exec("gerrit stream-events -s comment-added")
+        .exec("gerrit stream-events -s comment-added -s reviewer-added -s reviewer-deleted -s change-merged")
         .or_else(|err| {
             send_terminate_msg(
                 &tx.clone(),
