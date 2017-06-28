@@ -50,17 +50,22 @@ impl convert::From<serde_json::Error> for BotError {
     }
 }
 
-fn format_approval_value(value: &str) -> String {
+fn format_approval_value(value: &str, comment: &str) -> String {
     let value: i8 = value.parse().unwrap_or(0);
+    let sign = if value > 0 { "+" } else { "" };
+    let icon = if comment.contains("WaitForVerification-1") {
+        "⌛"
+    } else if value > 0 {
+        "👍"
+    } else if value == 0 {
+        "👉"
+    } else {
+        "👎"
+    };
+
     // TODO: when Spark will allow to format text with different colors, set
     // green resp. red color here.
-    if value > 0 {
-        format!("👍 +{}", value)
-    } else if value == 0 {
-        format!("👉 {}", value)
-    } else {
-        format!("👎 {}", value)
-    }
+    format!("{} {}{}", icon, sign, value)
 }
 
 impl Bot {
@@ -97,7 +102,7 @@ impl Bot {
         let author = event.author;
         let change = event.change;
         let approvals = event.approvals;
-        let comment = event.comment.unwrap();
+        let comment = event.comment.unwrap_or(String::new());
 
         let approver = author.unwrap().username.clone();
         if approver == change.owner.username {
@@ -128,12 +133,12 @@ impl Bot {
                             })
                             .map(|approval| {
                                 format!(
-                                    "[{}]({}) {} from {}\n\n`{}`",
+                                    "[{}]({}) {} ({}) from {}",
                                     change.subject,
                                     change.url,
-                                    format_approval_value(&approval.value),
-                                    approver,
-                                    comment
+                                    format_approval_value(&approval.value, &comment),
+                                    approval.approval_type,
+                                    approver
                                 )
                             })
                             .collect();
