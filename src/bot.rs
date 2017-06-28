@@ -50,10 +50,10 @@ impl convert::From<serde_json::Error> for BotError {
     }
 }
 
-fn format_approval_value(value: &str, comment: &str) -> String {
+fn format_approval_value(value: &str, approval_type: &str) -> String {
     let value: i8 = value.parse().unwrap_or(0);
     let sign = if value > 0 { "+" } else { "" };
-    let icon = if comment.contains("WaitForVerification-1") {
+    let icon = if approval_type.contains("WaitForVerification") {
         "⌛"
     } else if value > 0 {
         "👍"
@@ -104,7 +104,6 @@ impl Bot {
         let author = event.author;
         let change = event.change;
         let approvals = event.approvals;
-        let comment = event.comment.unwrap_or_default();
 
         let approver = author.unwrap().username.clone();
         if approver == change.owner.username {
@@ -138,7 +137,7 @@ impl Bot {
                                     "[{}]({}) {} ({}) from {}",
                                     change.subject,
                                     change.url,
-                                    format_approval_value(&approval.value, &comment),
+                                    format_approval_value(&approval.value, &approval.approval_type),
                                     approval.approval_type,
                                     approver
                                 )
