@@ -73,19 +73,21 @@ impl Bot {
         Bot { users: Vec::new() }
     }
 
+    fn add_user<'a>(&'a mut self, person_id: &str, email: &str) -> &'a mut User {
+        self.users.push(User::new(
+            String::from(person_id),
+            String::from(email),
+        ));
+        self.users.last_mut().unwrap()
+    }
+
     fn find_or_add_user<'a>(&'a mut self, person_id: &str, email: &str) -> &'a mut User {
         let pos = self.users.iter().position(
             |u| u.spark_person_id == person_id,
         );
         let user: &'a mut User = match pos {
             Some(pos) => &mut self.users[pos],
-            None => {
-                self.users.push(User::new(
-                    String::from(person_id),
-                    String::from(email),
-                ));
-                self.users.iter_mut().last().unwrap()
-            }
+            None => self.add_user(person_id, email),
         };
         user
     }
@@ -102,7 +104,7 @@ impl Bot {
         let author = event.author;
         let change = event.change;
         let approvals = event.approvals;
-        let comment = event.comment.unwrap_or(String::new());
+        let comment = event.comment.unwrap_or_default();
 
         let approver = author.unwrap().username.clone();
         if approver == change.owner.username {
@@ -175,6 +177,16 @@ impl Bot {
     pub fn num_users(&self) -> usize {
         self.users.len()
     }
+
+    pub fn status_for(&self, person_id: &str) -> String {
+        let user = self.users.iter().find(|u| u.spark_person_id == person_id);
+        let enabled = user.map_or(false, |u| u.enabled);
+        format!(
+            "Notification for you are **{}**. I am notifying {} user(s).",
+            if enabled { "enabled" } else { "disabled" },
+            self.num_users()
+        )
+    }
 }
 
 #[derive(Debug)]
@@ -184,6 +196,7 @@ pub enum Action {
     UpdateApprovals(gerrit::Event),
     Help(spark::PersonId),
     Unknown(spark::PersonId),
+    Status(spark::PersonId),
     NoOp,
 }
 
@@ -229,6 +242,8 @@ const HELP_MSG: &'static str = r#"Commands:
 
 `disable` I will stop notifying you.
 
+`status` Show if I am notifying you, and a little bit more information. 😉
+
 `help` This message
 "#;
 
@@ -268,6 +283,10 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
                 Response::new(person_id, String::from(GREETINGS_MSG)),
             ))
         }
+        Action::Status(person_id) => {
+            let status = bot.status_for(&person_id);
+            Some(Task::Reply(Response::new(person_id, status)))
+        }
         _ => None,
     };
     (bot, task)
@@ -276,6 +295,32 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
 #[cfg(test)]
 mod test {
     use super::{Bot, User};
+
+    #[test]
+    fn test_add_user() {
+        let mut bot = Bot::new();
+        bot.add_user("some_person_id", "some@example.com");
+        assert_eq!(bot.users.len(), 1);
+        assert_eq!(bot.users[0].spark_person_id, "some_person_id");
+        assert_eq!(bot.users[0].email, "some@example.com");
+        assert!(bot.users[0].enabled);
+    }
+
+    #[test]
+    fn test_status_for() {
+        let mut bot = Bot::new();
+        bot.add_user("some_person_id", "some@example.com");
+
+        let resp = bot.status_for("some_person_id");
+        assert!(resp.contains("enabled"));
+
+        bot.users[0].enabled = false;
+        let resp = bot.status_for("some_person_id");
+        assert!(resp.contains("disabled"));
+
+        let resp = bot.status_for("some_non_existent_id");
+        assert!(resp.contains("disabled"));
+    }
 
     #[test]
     fn enable_non_existent_user() {
