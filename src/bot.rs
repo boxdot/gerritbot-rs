@@ -81,6 +81,10 @@ impl Bot {
         self.users.last_mut().unwrap()
     }
 
+    fn find_user_by_email<'a>(&'a mut self, email: &str) -> Option<&'a mut User> {
+        self.users.iter_mut().find(|u| u.email == email)
+    }
+
     fn find_or_add_user<'a>(&'a mut self, person_id: &str, email: &str) -> &'a mut User {
         let pos = self.users.iter().position(
             |u| u.spark_person_id == person_id,
@@ -303,6 +307,22 @@ mod test {
         assert_eq!(bot.users[0].spark_person_id, "some_person_id");
         assert_eq!(bot.users[0].email, "some@example.com");
         assert!(bot.users[0].enabled);
+    }
+
+    #[test]
+    fn test_find_user_by_email() {
+        let mut bot = Bot::new();
+        bot.add_user("some_person_id", "some@example.com");
+        {
+            let user = bot.find_user_by_email("non_existent_user@example.com");
+            assert!(user.is_none());
+        }
+        {
+            let user = bot.find_user_by_email("some@example.com");
+            assert!(user.is_some());
+            let user = user.unwrap();
+            assert_eq!(user.email, "some@example.com");
+        }
     }
 
     #[test]
