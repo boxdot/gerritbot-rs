@@ -297,6 +297,9 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
 
 #[cfg(test)]
 mod test {
+    use serde_json;
+
+    use gerrit;
     use super::{Bot, User};
 
     #[test]
@@ -386,5 +389,46 @@ mod test {
         };
         test(true);
         test(false);
+    }
+
+    #[test]
+    fn test_get_approvals_msg() {
+        let event_json = r#"
+{"author":{"name":"Approver","username":"approver"},"approvals":[{"type":"Code-Review","description":"Code-Review","value":"2","oldValue":"-1"}],"comment":"Patch Set 1: Code-Review+2","patchSet":{"number":"1","revision":"49a65998c02eda928559f2d0b586c20bc8e37b10","parents":["fb1909b4eda306985d2bbce769310e5a50a98cf5"],"ref":"refs/changes/42/42/1","uploader":{"name":"Author","email":"author@example.com","username":"Author"},"createdOn":1494165142,"author":{"name":"Author","email":"author@example.com","username":"Author"},"isDraft":false,"kind":"REWORK","sizeInsertions":0,"sizeDeletions":0},"change":{"project":"demo-project","branch":"master","id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14","number":"49","subject":"Some review.","owner":{"name":"Author","email":"author@example.com","username":"author"},"url":"http://localhost/42","commitMessage":"Some review.\n\nChange-Id: Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14\n","status":"NEW"},"project":"demo-project","refName":"refs/heads/master","changeKey":{"id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14"},"type":"comment-added","eventCreatedOn":1499190282}"#;
+
+        let event: Result<gerrit::Event, _> = serde_json::from_str(&event_json);
+        assert!(event.is_ok());
+        let event = event.unwrap();
+
+        {
+            // bot does not have the user => no message
+            let bot = Bot::new();
+            let res = bot.get_approvals_msg(event.clone());
+            assert!(res.is_none());
+        }
+        {
+            // the approval is from the author => no message
+            let mut bot = Bot::new();
+            bot.add_user("approver_spark_id", "approver@example.com");
+            let res = bot.get_approvals_msg(event.clone());
+            assert!(res.is_none());
+        }
+        {
+            // the approval is for the user with disabled notifications
+            // => no message
+            let mut bot = Bot::new();
+            bot.add_user("author_spark_id", "author@example.com");
+            bot.users[0].enabled = false;
+            let res = bot.get_approvals_msg(event.clone());
+            assert!(res.is_none());
+        }
+        {
+            // the approval is for the user with enabled notifications
+            // => message
+            let mut bot = Bot::new();
+            bot.add_user("author_spark_id", "author@example.com");
+            let res = bot.get_approvals_msg(event.clone());
+            assert!(res.is_some());
+        }
     }
 }
