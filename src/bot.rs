@@ -81,10 +81,6 @@ impl Bot {
         self.users.last_mut().unwrap()
     }
 
-    fn find_user_by_email<'a>(&'a mut self, email: &str) -> Option<&'a mut User> {
-        self.users.iter_mut().find(|u| u.email == email)
-    }
-
     fn find_or_add_user<'a>(&'a mut self, person_id: &str, email: &str) -> &'a mut User {
         let pos = self.users.iter().position(
             |u| u.spark_person_id == person_id,
@@ -105,58 +101,56 @@ impl Bot {
     fn get_approvals_msg(&self, event: gerrit::Event) -> Option<(&User, String)> {
         debug!("Incoming approvals: {:?}", event);
 
-        let author = event.author;
+        let approvals = tryopt![event.approvals];
         let change = event.change;
-        let approvals = event.approvals;
-
-        let approver = author.unwrap().username.clone();
-        if approver == change.owner.username {
+        let approver = &event.author.as_ref().unwrap().username;
+        if approver == &change.owner.username {
             // No need to notify about user's own approvals.
             return None;
         }
+        let owner_email = tryopt![change.owner.email.as_ref()];
 
-        if let Some(ref owner_email) = change.owner.email {
-            // TODO: Fix linear search
-            let users = &self.users;
-            for user in users.iter() {
-                if &user.email == owner_email {
-                    if !user.enabled {
-                        break;
-                    }
+        // TODO: Fix linear search
+        let user_pos = tryopt![
+            self.users.iter().position(
+                |u| u.enabled && &u.email == owner_email
+            )// bug in rustfmt: it adds ',' automatically
+        ];
 
-                    if let Some(approvals) = approvals {
-                        let msgs: Vec<String> = approvals
-                            .iter()
-                            .filter(|approval| {
-                                let filtered = if let Some(ref old_value) = approval.old_value {
-                                    old_value != &approval.value && approval.value != "0"
-                                } else {
-                                    approval.value != "0"
-                                };
-                                debug!("Filtered approval: {:?}", !filtered);
-                                filtered
-                            })
-                            .map(|approval| {
-                                format!(
-                                    "[{}]({}) {} ({}) from {}",
-                                    change.subject,
-                                    change.url,
-                                    format_approval_value(&approval.value, &approval.approval_type),
-                                    approval.approval_type,
-                                    approver
-                                )
-                            })
-                            .collect();
-                        return if !msgs.is_empty() {
-                            Some((user, msgs.join("\n\n"))) // two newlines since it is markdown
-                        } else {
-                            None
-                        };
-                    }
+        let msgs: Vec<String> = approvals
+            .iter()
+            .filter_map(|approval| {
+                let filtered = !approval
+                    .old_value
+                    .as_ref()
+                    .map(|old_value| {
+                        old_value != &approval.value && approval.value != "0"
+                    })
+                    .unwrap_or(false);
+                debug!("Filtered approval: {:?}", filtered);
+                if !filtered {
+                    Some(format!(
+                        "[{}]({}) {} ({}) from {}",
+                        change.subject,
+                        change.url,
+                        format_approval_value(
+                            &approval.value,
+                            &approval.approval_type,
+                        ),
+                        approval.approval_type,
+                        approver
+                    ))
+                } else {
+                    None
                 }
-            }
+            })
+            .collect();
+
+        if !msgs.is_empty() {
+            Some((&self.users[user_pos], msgs.join("\n\n"))) // two newlines since it is markdown
+        } else {
+            None
         }
-        None
     }
 
     pub fn save<P>(self, filename: P) -> Result<(), BotError>
@@ -313,22 +307,6 @@ mod test {
     }
 
     #[test]
-    fn test_find_user_by_email() {
-        let mut bot = Bot::new();
-        bot.add_user("some_person_id", "some@example.com");
-        {
-            let user = bot.find_user_by_email("non_existent_user@example.com");
-            assert!(user.is_none());
-        }
-        {
-            let user = bot.find_user_by_email("some@example.com");
-            assert!(user.is_some());
-            let user = user.unwrap();
-            assert_eq!(user.email, "some@example.com");
-        }
-    }
-
-    #[test]
     fn test_status_for() {
         let mut bot = Bot::new();
         bot.add_user("some_person_id", "some@example.com");
@@ -429,6 +407,10 @@ mod test {
             bot.add_user("author_spark_id", "author@example.com");
             let res = bot.get_approvals_msg(event.clone());
             assert!(res.is_some());
+            let (user, msg) = res.unwrap();
+            assert_eq!(user.spark_person_id, "author_spark_id");
+            assert_eq!(user.email, "author@example.com");
+            assert!(msg.contains("Some review."));
         }
     }
 }
