@@ -2,7 +2,9 @@ use std::path::Path;
 use std::io;
 use std::fs::File;
 use std::convert;
+use std::time::Duration;
 
+use lru_time_cache::LruCache;
 use serde_json;
 
 use gerrit;
@@ -26,10 +28,43 @@ impl User {
     }
 }
 
+/// Cache line in LRU Cache containing last approval messages
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct MsgCacheLine {
+    /// position of the user in bots.user vector
+    user_ref: usize,
+    subject: String,
+    approver: String,
+    approval_type: String,
+    approval_value: String,
+}
+
+impl MsgCacheLine {
+    fn new(
+        user_ref: usize,
+        subject: String,
+        approver: String,
+        approval_type: String,
+        approval_value: String,
+    ) -> MsgCacheLine {
+        MsgCacheLine {
+            user_ref: user_ref,
+            subject: subject,
+            approver: approver,
+            approval_type: approval_type,
+            approval_value: approval_value,
+        }
+    }
+}
+
 /// Describes a state of the bot
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Bot {
     users: Vec<User>,
+    /// We use Option<Cache> here, to be able to create an empty bot without initializing the
+    /// cache.
+    #[serde(skip_serializing, skip_deserializing)]
+    msg_cache: Option<LruCache<MsgCacheLine, ()>>,
 }
 
 #[derive(Debug)]
@@ -70,7 +105,30 @@ fn format_approval_value(value: &str, approval_type: &str) -> String {
 
 impl Bot {
     pub fn new() -> Bot {
-        Bot { users: Vec::new() }
+        Bot {
+            users: Vec::new(),
+            msg_cache: None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn with_msg_cache(capacity: usize, expiration: Duration) -> Bot {
+        Bot {
+            users: Vec::new(),
+            msg_cache: Some(
+                LruCache::<MsgCacheLine, ()>::with_expiry_duration_and_capacity(
+                    expiration,
+                    capacity,
+                ),
+            ),
+        }
+    }
+
+    pub fn init_msg_cache(&mut self, capacity: usize, expiration: Duration) {
+        self.msg_cache =
+            Some(
+                LruCache::<MsgCacheLine, ()>::with_expiry_duration_and_capacity(expiration, capacity),
+            );
     }
 
     fn add_user<'a>(&'a mut self, person_id: &str, email: &str) -> &'a mut User {
@@ -98,7 +156,7 @@ impl Bot {
         user
     }
 
-    fn get_approvals_msg(&self, event: gerrit::Event) -> Option<(&User, String)> {
+    fn get_approvals_msg(&mut self, event: gerrit::Event) -> Option<(&User, String)> {
         debug!("Incoming approvals: {:?}", event);
 
         let approvals = tryopt![event.approvals];
@@ -120,6 +178,7 @@ impl Bot {
         let msgs: Vec<String> = approvals
             .iter()
             .filter_map(|approval| {
+                // filter if there was no previous value, or value did not change, or it is 0
                 let filtered = !approval
                     .old_value
                     .as_ref()
@@ -128,21 +187,43 @@ impl Bot {
                     })
                     .unwrap_or(false);
                 debug!("Filtered approval: {:?}", filtered);
-                if !filtered {
-                    Some(format!(
-                        "[{}]({}) {} ({}) from {}",
-                        change.subject,
-                        change.url,
-                        format_approval_value(
-                            &approval.value,
-                            &approval.approval_type,
-                        ),
-                        approval.approval_type,
-                        approver
-                    ))
-                } else {
-                    None
+                if filtered {
+                    return None;
                 }
+
+                // filter all messages that were already sent to the user recently
+                if let Some(cache) = self.msg_cache.as_mut() {
+                    let key = MsgCacheLine::new(
+                        user_pos,
+                        if change.topic.is_some() {
+                            change.topic.as_ref().unwrap().clone()
+                        } else {
+                            change.subject.clone()
+                        },
+                        approver.clone(),
+                        approval.approval_type.clone(),
+                        approval.value.clone(),
+                    );
+                    let hit = cache.get(&key).is_some();
+                    if hit {
+                        debug!("Filtered approval due to cache hit.");
+                        return None;
+                    } else {
+                        cache.insert(key, ());
+                    }
+                };
+
+                Some(format!(
+                    "[{}]({}) {} ({}) from {}",
+                    change.subject,
+                    change.url,
+                    format_approval_value(
+                        &approval.value,
+                        &approval.approval_type,
+                    ),
+                    approval.approval_type,
+                    approver
+                ))
             })
             .collect();
 
@@ -291,13 +372,16 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
 
 #[cfg(test)]
 mod test {
+    use std::time::Duration;
+    use std::thread;
+
     use serde_json;
 
     use gerrit;
     use super::{Bot, User};
 
     #[test]
-    fn test_add_user() {
+    fn add_user() {
         let mut bot = Bot::new();
         bot.add_user("some_person_id", "some@example.com");
         assert_eq!(bot.users.len(), 1);
@@ -307,7 +391,7 @@ mod test {
     }
 
     #[test]
-    fn test_status_for() {
+    fn status_for() {
         let mut bot = Bot::new();
         bot.add_user("some_person_id", "some@example.com");
 
@@ -369,48 +453,126 @@ mod test {
         test(false);
     }
 
-    #[test]
-    fn test_get_approvals_msg() {
-        let event_json = r#"
+    const EVENT_JSON : &'static str = r#"
 {"author":{"name":"Approver","username":"approver"},"approvals":[{"type":"Code-Review","description":"Code-Review","value":"2","oldValue":"-1"}],"comment":"Patch Set 1: Code-Review+2","patchSet":{"number":"1","revision":"49a65998c02eda928559f2d0b586c20bc8e37b10","parents":["fb1909b4eda306985d2bbce769310e5a50a98cf5"],"ref":"refs/changes/42/42/1","uploader":{"name":"Author","email":"author@example.com","username":"Author"},"createdOn":1494165142,"author":{"name":"Author","email":"author@example.com","username":"Author"},"isDraft":false,"kind":"REWORK","sizeInsertions":0,"sizeDeletions":0},"change":{"project":"demo-project","branch":"master","id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14","number":"49","subject":"Some review.","owner":{"name":"Author","email":"author@example.com","username":"author"},"url":"http://localhost/42","commitMessage":"Some review.\n\nChange-Id: Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14\n","status":"NEW"},"project":"demo-project","refName":"refs/heads/master","changeKey":{"id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14"},"type":"comment-added","eventCreatedOn":1499190282}"#;
 
-        let event: Result<gerrit::Event, _> = serde_json::from_str(&event_json);
+    fn get_event() -> gerrit::Event {
+        let event: Result<gerrit::Event, _> = serde_json::from_str(EVENT_JSON);
         assert!(event.is_ok());
-        let event = event.unwrap();
+        event.unwrap()
+    }
 
+    #[test]
+    fn get_approvals_msg_for_empty_bot() {
+        // bot does not have the user => no message
+        let mut bot = Bot::new();
+        let res = bot.get_approvals_msg(get_event());
+        assert!(res.is_none());
+    }
+
+    #[test]
+    fn get_approvals_msg_for_same_author_and_approver() {
+        // the approval is from the author => no message
+        let mut bot = Bot::new();
+        bot.add_user("approver_spark_id", "approver@example.com");
+        let res = bot.get_approvals_msg(get_event());
+        assert!(res.is_none());
+    }
+
+    #[test]
+    fn get_approvals_msg_for_user_with_disabled_notifications() {
+        // the approval is for the user with disabled notifications
+        // => no message
+        let mut bot = Bot::new();
+        bot.add_user("author_spark_id", "author@example.com");
+        bot.users[0].enabled = false;
+        let res = bot.get_approvals_msg(get_event());
+        assert!(res.is_none());
+    }
+
+    #[test]
+    fn get_approvals_msg_for_user_with_enabled_notifications() {
+        // the approval is for the user with enabled notifications
+        // => message
+        let mut bot = Bot::new();
+        bot.add_user("author_spark_id", "author@example.com");
+        let res = bot.get_approvals_msg(get_event());
+        assert!(res.is_some());
+        let (user, msg) = res.unwrap();
+        assert_eq!(user.spark_person_id, "author_spark_id");
+        assert_eq!(user.email, "author@example.com");
+        assert!(msg.contains("Some review."));
+    }
+
+    #[test]
+    fn get_approvals_msg_for_quickly_repeated_event() {
+        // same approval for the user with enabled notifications 2 times in less than 1 sec
+        // => first time get message, second time nothing
+        let mut bot = Bot::with_msg_cache(10, Duration::from_secs(1));
+        bot.add_user("author_spark_id", "author@example.com");
         {
-            // bot does not have the user => no message
-            let bot = Bot::new();
-            let res = bot.get_approvals_msg(event.clone());
-            assert!(res.is_none());
-        }
-        {
-            // the approval is from the author => no message
-            let mut bot = Bot::new();
-            bot.add_user("approver_spark_id", "approver@example.com");
-            let res = bot.get_approvals_msg(event.clone());
-            assert!(res.is_none());
-        }
-        {
-            // the approval is for the user with disabled notifications
-            // => no message
-            let mut bot = Bot::new();
-            bot.add_user("author_spark_id", "author@example.com");
-            bot.users[0].enabled = false;
-            let res = bot.get_approvals_msg(event.clone());
-            assert!(res.is_none());
-        }
-        {
-            // the approval is for the user with enabled notifications
-            // => message
-            let mut bot = Bot::new();
-            bot.add_user("author_spark_id", "author@example.com");
-            let res = bot.get_approvals_msg(event.clone());
+            let res = bot.get_approvals_msg(get_event());
             assert!(res.is_some());
             let (user, msg) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+        }
+        {
+            let res = bot.get_approvals_msg(get_event());
+            assert!(res.is_none());
+        }
+    }
+
+    #[test]
+    fn get_approvals_msg_for_slowly_repeated_event() {
+        // same approval for the user with enabled notifications 2 times in more than 100 msec
+        // => get message 2 times
+        let mut bot = Bot::with_msg_cache(10, Duration::from_millis(50));
+        bot.add_user("author_spark_id", "author@example.com");
+        {
+            let res = bot.get_approvals_msg(get_event());
+            assert!(res.is_some());
+            let (user, msg) = res.unwrap();
+            assert_eq!(user.spark_person_id, "author_spark_id");
+            assert_eq!(user.email, "author@example.com");
+            assert!(msg.contains("Some review."));
+        }
+        thread::sleep(Duration::from_millis(200));
+        {
+            let res = bot.get_approvals_msg(get_event());
+            assert!(res.is_some());
+            let (user, msg) = res.unwrap();
+            assert_eq!(user.spark_person_id, "author_spark_id");
+            assert_eq!(user.email, "author@example.com");
+            assert!(msg.contains("Some review."));
+        }
+    }
+
+    #[test]
+    fn get_approvals_msg_for_bot_with_low_msgs_capacity() {
+        // same approval for the user with enabled notifications 2 times in more less 100 msec
+        // but there is also another approval and bot's msg capacity is 1
+        // => get message 3 times
+        let mut bot = Bot::with_msg_cache(1, Duration::from_secs(1));
+        bot.add_user("author_spark_id", "author@example.com");
+        {
+            let mut event = get_event();
+            event.change.subject = String::from("A");
+            let res = bot.get_approvals_msg(event);
+            assert!(res.is_some());
+        }
+        {
+            let mut event = get_event();
+            event.change.subject = String::from("B");
+            let res = bot.get_approvals_msg(event);
+            assert!(res.is_some());
+        }
+        {
+            let mut event = get_event();
+            event.change.subject = String::from("A");
+            let res = bot.get_approvals_msg(event);
+            assert!(res.is_some());
         }
     }
 }

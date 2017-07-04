@@ -6,6 +6,7 @@ extern crate hyper_native_tls;
 extern crate iron;
 #[macro_use]
 extern crate log;
+extern crate lru_time_cache;
 extern crate router;
 extern crate serde;
 #[macro_use]
@@ -52,6 +53,9 @@ fn main() {
             warn!("Could not load bot from 'state.json': {:?}", err);
             bot::Bot::new()
         }
+    };
+    if args.bot_msg_expiration.as_secs() != 0 && args.bot_msg_capacity != 0 {
+        bot.init_msg_cache(args.bot_msg_capacity, args.bot_msg_expiration);
     };
 
     // event loop
