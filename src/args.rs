@@ -1,5 +1,6 @@
 use clap::{App, Arg};
 use std::path::PathBuf;
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct Args {
@@ -13,6 +14,8 @@ pub struct Args {
     pub spark_bot_token: String,
     pub verbosity: usize,
     pub quiet: bool,
+    pub bot_msg_expiration: Duration,
+    pub bot_msg_capacity: usize,
 }
 
 const SPARK_URL: &'static str = "https://api.ciscospark.com/v1";
@@ -64,6 +67,17 @@ pub fn parse_args() -> Args {
                 "--spark-bot-token=<TOKEN> 'Token of the Spark bot for authentication'",
             ).empty_values(false),
         )
+        .arg(Arg::from_usage(
+            "--approval-expiration=[2] 'Approvals that are arriving repeatedly faster than \
+                this value (in secs) will be dropped. This is useful when filtering approvals \
+                that are sent to multiple reviews in a topic at the same time. 0 disables this \
+                feature.'",
+        ))
+        .arg(Arg::from_usage(
+            "--approvals-count=[100] 'Numbers of approvals to store a LRU cache that will be \
+                consider for expiration. Cf. also --approval-expiration. 0 disables this \
+                feature.'",
+        ))
         .get_matches();
 
     Args {
@@ -83,5 +97,15 @@ pub fn parse_args() -> Args {
         spark_bot_token: String::from(matches.value_of("spark-bot-token").unwrap()),
         verbosity: 2 + matches.occurrences_of("v") as usize,
         quiet: matches.is_present("q"),
+        bot_msg_expiration: Duration::from_secs(if matches.is_present("approval-expiration") {
+            value_t_or_exit!(matches.value_of("approval-expiration"), u64)
+        } else {
+            2u64
+        }),
+        bot_msg_capacity: if matches.is_present("approvals-count") {
+            value_t_or_exit!(matches.value_of("approvals-count"), usize)
+        } else {
+            100 as usize
+        },
     }
 }

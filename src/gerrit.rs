@@ -57,6 +57,7 @@ pub struct Change {
     pub id: String,
     pub number: String,
     pub subject: String,
+    pub topic: Option<String>,
     pub owner: User,
     pub url: String,
     pub commit_message: String,
