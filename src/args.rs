@@ -105,8 +105,8 @@ pub fn parse_args() -> Args {
             None
         },
         spark_bot_token: String::from(matches.value_of("spark-bot-token").unwrap()),
-        verbosity: 2 + matches.occurrences_of("v") as usize,
-        quiet: matches.is_present("q"),
+        verbosity: 2 + matches.occurrences_of("verbose") as usize,
+        quiet: matches.is_present("quiet"),
         bot_msg_expiration: Duration::from_secs(if matches.is_present("approval-expiration") {
             value_t_or_exit!(matches.value_of("approval-expiration"), u64)
         } else {

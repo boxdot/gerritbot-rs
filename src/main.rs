@@ -55,6 +55,11 @@ fn main() {
         }
     };
     if args.bot_msg_expiration.as_secs() != 0 && args.bot_msg_capacity != 0 {
+        debug!(
+            "Approval LRU cache: capacity - {}, expiration - {} sec",
+            args.bot_msg_capacity,
+            args.bot_msg_expiration.as_secs()
+        );
         bot.init_msg_cache(args.bot_msg_capacity, args.bot_msg_expiration);
     };
 
