@@ -15,14 +15,14 @@ use bot;
 /// Gerrit username
 pub type Username = String;
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct User {
     pub name: Option<String>,
     pub username: Username,
     pub email: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Approval {
     #[serde(rename = "type")]
@@ -32,7 +32,7 @@ pub struct Approval {
     pub old_value: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PatchSet {
     pub number: String,
@@ -49,7 +49,7 @@ pub struct PatchSet {
     pub size_deletions: i32,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Change {
     pub project: String,
@@ -63,14 +63,14 @@ pub struct Change {
     pub status: String,
 }
 
-#[derive(Deserialize, Debug, Eq, PartialEq, Hash)]
+#[derive(Deserialize, Debug, Eq, PartialEq, Hash, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ChangeKey {
     pub id: String,
 }
 
 // Only specific events are accepted by this type by design!
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Event {
     pub author: Option<User>,

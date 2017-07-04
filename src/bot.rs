@@ -101,58 +101,56 @@ impl Bot {
     fn get_approvals_msg(&self, event: gerrit::Event) -> Option<(&User, String)> {
         debug!("Incoming approvals: {:?}", event);
 
-        let author = event.author;
+        let approvals = tryopt![event.approvals];
         let change = event.change;
-        let approvals = event.approvals;
-
-        let approver = author.unwrap().username.clone();
-        if approver == change.owner.username {
+        let approver = &event.author.as_ref().unwrap().username;
+        if approver == &change.owner.username {
             // No need to notify about user's own approvals.
             return None;
         }
+        let owner_email = tryopt![change.owner.email.as_ref()];
 
-        if let Some(ref owner_email) = change.owner.email {
-            // TODO: Fix linear search
-            let users = &self.users;
-            for user in users.iter() {
-                if &user.email == owner_email {
-                    if !user.enabled {
-                        break;
-                    }
+        // TODO: Fix linear search
+        let user_pos = tryopt![
+            self.users.iter().position(
+                |u| u.enabled && &u.email == owner_email
+            )// bug in rustfmt: it adds ',' automatically
+        ];
 
-                    if let Some(approvals) = approvals {
-                        let msgs: Vec<String> = approvals
-                            .iter()
-                            .filter(|approval| {
-                                let filtered = if let Some(ref old_value) = approval.old_value {
-                                    old_value != &approval.value && approval.value != "0"
-                                } else {
-                                    approval.value != "0"
-                                };
-                                debug!("Filtered approval: {:?}", !filtered);
-                                filtered
-                            })
-                            .map(|approval| {
-                                format!(
-                                    "[{}]({}) {} ({}) from {}",
-                                    change.subject,
-                                    change.url,
-                                    format_approval_value(&approval.value, &approval.approval_type),
-                                    approval.approval_type,
-                                    approver
-                                )
-                            })
-                            .collect();
-                        return if !msgs.is_empty() {
-                            Some((user, msgs.join("\n\n"))) // two newlines since it is markdown
-                        } else {
-                            None
-                        };
-                    }
+        let msgs: Vec<String> = approvals
+            .iter()
+            .filter_map(|approval| {
+                let filtered = !approval
+                    .old_value
+                    .as_ref()
+                    .map(|old_value| {
+                        old_value != &approval.value && approval.value != "0"
+                    })
+                    .unwrap_or(false);
+                debug!("Filtered approval: {:?}", filtered);
+                if !filtered {
+                    Some(format!(
+                        "[{}]({}) {} ({}) from {}",
+                        change.subject,
+                        change.url,
+                        format_approval_value(
+                            &approval.value,
+                            &approval.approval_type,
+                        ),
+                        approval.approval_type,
+                        approver
+                    ))
+                } else {
+                    None
                 }
-            }
+            })
+            .collect();
+
+        if !msgs.is_empty() {
+            Some((&self.users[user_pos], msgs.join("\n\n"))) // two newlines since it is markdown
+        } else {
+            None
         }
-        None
     }
 
     pub fn save<P>(self, filename: P) -> Result<(), BotError>
@@ -293,6 +291,9 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
 
 #[cfg(test)]
 mod test {
+    use serde_json;
+
+    use gerrit;
     use super::{Bot, User};
 
     #[test]
@@ -366,5 +367,50 @@ mod test {
         };
         test(true);
         test(false);
+    }
+
+    #[test]
+    fn test_get_approvals_msg() {
+        let event_json = r#"
+{"author":{"name":"Approver","username":"approver"},"approvals":[{"type":"Code-Review","description":"Code-Review","value":"2","oldValue":"-1"}],"comment":"Patch Set 1: Code-Review+2","patchSet":{"number":"1","revision":"49a65998c02eda928559f2d0b586c20bc8e37b10","parents":["fb1909b4eda306985d2bbce769310e5a50a98cf5"],"ref":"refs/changes/42/42/1","uploader":{"name":"Author","email":"author@example.com","username":"Author"},"createdOn":1494165142,"author":{"name":"Author","email":"author@example.com","username":"Author"},"isDraft":false,"kind":"REWORK","sizeInsertions":0,"sizeDeletions":0},"change":{"project":"demo-project","branch":"master","id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14","number":"49","subject":"Some review.","owner":{"name":"Author","email":"author@example.com","username":"author"},"url":"http://localhost/42","commitMessage":"Some review.\n\nChange-Id: Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14\n","status":"NEW"},"project":"demo-project","refName":"refs/heads/master","changeKey":{"id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14"},"type":"comment-added","eventCreatedOn":1499190282}"#;
+
+        let event: Result<gerrit::Event, _> = serde_json::from_str(&event_json);
+        assert!(event.is_ok());
+        let event = event.unwrap();
+
+        {
+            // bot does not have the user => no message
+            let bot = Bot::new();
+            let res = bot.get_approvals_msg(event.clone());
+            assert!(res.is_none());
+        }
+        {
+            // the approval is from the author => no message
+            let mut bot = Bot::new();
+            bot.add_user("approver_spark_id", "approver@example.com");
+            let res = bot.get_approvals_msg(event.clone());
+            assert!(res.is_none());
+        }
+        {
+            // the approval is for the user with disabled notifications
+            // => no message
+            let mut bot = Bot::new();
+            bot.add_user("author_spark_id", "author@example.com");
+            bot.users[0].enabled = false;
+            let res = bot.get_approvals_msg(event.clone());
+            assert!(res.is_none());
+        }
+        {
+            // the approval is for the user with enabled notifications
+            // => message
+            let mut bot = Bot::new();
+            bot.add_user("author_spark_id", "author@example.com");
+            let res = bot.get_approvals_msg(event.clone());
+            assert!(res.is_some());
+            let (user, msg) = res.unwrap();
+            assert_eq!(user.spark_person_id, "author_spark_id");
+            assert_eq!(user.email, "author@example.com");
+            assert!(msg.contains("Some review."));
+        }
     }
 }

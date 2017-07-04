@@ -21,6 +21,8 @@ use futures::sync::mpsc::channel;
 use iron::prelude::*;
 use router::Router;
 
+#[macro_use]
+mod utils;
 mod args;
 mod bot;
 mod gerrit;
