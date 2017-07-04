@@ -1,4 +1,4 @@
-use clap::{App, Arg};
+use clap::{App, AppSettings, Arg};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -21,8 +21,8 @@ pub struct Args {
 const SPARK_URL: &'static str = "https://api.ciscospark.com/v1";
 
 const USAGE: &'static str = r#"
--v...                             'Verbosity level'
--q...                             'Quiet'
+-v, --verbose... 'Verbosity level'
+-q, --quiet      'Quiet'
 "#;
 
 pub fn parse_args() -> Args {
@@ -33,6 +33,8 @@ pub fn parse_args() -> Args {
             "A Cisco Spark bot, which notifies you about new review approvals (i.e. +2/+1/-1/-2 \
             etc.) from Gerrit.",
         )
+        .setting(AppSettings::DeriveDisplayOrder)
+        .setting(AppSettings::NextLineHelp)
         .args_from_usage(USAGE)
         .arg(
             Arg::from_usage("--gerrit-hostname=<URL> 'Gerrit hostname'").empty_values(false),
@@ -67,22 +69,30 @@ pub fn parse_args() -> Args {
                 "--spark-bot-token=<TOKEN> 'Token of the Spark bot for authentication'",
             ).empty_values(false),
         )
-        .arg(Arg::from_usage(
-            "--approval-expiration=[2] 'Approvals that are arriving repeatedly faster than \
+        .arg(
+            Arg::from_usage(
+                "--approval-expiration=[2] 'Approvals that are arriving repeatedly faster than \
                 this value (in secs) will be dropped. This is useful when filtering approvals \
                 that are sent to multiple reviews in a topic at the same time. 0 disables this \
                 feature.'",
-        ))
-        .arg(Arg::from_usage(
-            "--approvals-count=[100] 'Numbers of approvals to store a LRU cache that will be \
+            ).empty_values(false),
+        )
+        .arg(
+            Arg::from_usage(
+                "--approvals-count=[100] 'Numbers of approvals to store a LRU cache that will be \
                 consider for expiration. Cf. also --approval-expiration. 0 disables this \
                 feature.'",
-        ))
+            ).empty_values(false),
+        )
         .get_matches();
 
     Args {
         gerrit_hostname: String::from(matches.value_of("gerrit-hostname").unwrap()),
-        gerrit_port: value_t_or_exit!(matches.value_of("gerrit-port"), u16),
+        gerrit_port: if matches.is_present("gerrit-port") {
+            value_t_or_exit!(matches.value_of("gerrit-port"), u16)
+        } else {
+            29418
+        },
         gerrit_username: String::from(matches.value_of("gerrit-username").unwrap()),
         gerrit_priv_key_path: PathBuf::from(matches.value_of("gerrit-priv-key-path").unwrap()),
         spark_url: String::from(SPARK_URL),
