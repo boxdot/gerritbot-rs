@@ -1,4 +1,4 @@
-use clap::App;
+use clap::{App, Arg};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -18,14 +18,6 @@ pub struct Args {
 const SPARK_URL: &'static str = "https://api.ciscospark.com/v1";
 
 const USAGE: &'static str = r#"
---gerrit-hostname=<URL>           'Gerrit hostname'
---gerrit-port=<PORT>              'Gerrit port'
---gerrit-username=<USER>          'Gerrit username'
---gerrit-priv-key-path=<PATH>     'Path to the private key for authentication in Gerrit. Note: Due to the limitations of `ssh2` crate only RSA and DSA are supported.'
---spark-endpoint=[localhost:8888] 'Endpoint on which the bot will listen for incoming Spark messages.'
---spark-webhook-url=[URL]         'If specified, the URL will be registered in Spark as webhook endpoint. Note: this url will replace all other registered webhooks.'
---spark-bot-token=<TOKEN>         'Token of the Spark bot for authentication'
-
 -v...                             'Verbosity level'
 -q...                             'Quiet'
 "#;
@@ -35,10 +27,43 @@ pub fn parse_args() -> Args {
         .version("0.1.1")
         .author("boxdot <d@zerovolt.org>")
         .about(
-            "A Cisco Spark bot, which notifies you about new review approvals (i.e. \
-                +2/+1/-1/-2 etc.) from Gerrit.",
+            "A Cisco Spark bot, which notifies you about new review approvals (i.e. +2/+1/-1/-2 \
+            etc.) from Gerrit.",
         )
         .args_from_usage(USAGE)
+        .arg(
+            Arg::from_usage("--gerrit-hostname=<URL> 'Gerrit hostname'").empty_values(false),
+        )
+        .arg(
+            Arg::from_usage("--gerrit-port=[29418] 'Gerrit port'").empty_values(false),
+        )
+        .arg(
+            Arg::from_usage("--gerrit-username=<USER> 'Gerrit username'").empty_values(false),
+        )
+        .arg(
+            Arg::from_usage(
+                "--gerrit-priv-key-path=<PATH> 'Path to the private key for authentication in \
+                Gerrit. Note: Due to the limitations of `ssh2` crate only RSA and DSA are \
+                supported.'",
+            ).empty_values(false),
+        )
+        .arg(
+            Arg::from_usage(
+                "--spark-endpoint=[localhost:8888] 'Endpoint on which the bot will listen for \
+                incoming Spark messages.'",
+            ).empty_values(false),
+        )
+        .arg(
+            Arg::from_usage(
+                "--spark-webhook-url=[URL] 'If specified, the URL will be registered in Spark as \
+                webhook endpoint. Note: this url will replace all other registered webhooks.'",
+            ).empty_values(false),
+        )
+        .arg(
+            Arg::from_usage(
+                "--spark-bot-token=<TOKEN> 'Token of the Spark bot for authentication'",
+            ).empty_values(false),
+        )
         .get_matches();
 
     Args {
