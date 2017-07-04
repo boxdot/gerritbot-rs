@@ -43,14 +43,6 @@ running.
 
 **This is my first Rust project. Any constructive criticism is welcome.**
 
-## Nice to have:
-
-- [x] Automatic update of webhooks URL in Spark.
-- [x] Use a more sophisticated command line parser.
-- [ ] Get rid of `libssh2` dependency.
-- [x] Proper configurable logging with verbosity mode.
-- [ ] Tests.
-
 ## License
 
  * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or
