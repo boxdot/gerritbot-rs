@@ -102,7 +102,7 @@ impl Event {
 }
 
 #[derive(Debug)]
-enum StreamError {
+pub enum StreamError {
     Io(io::Error),
     Parse(serde_json::Error),
     Terminated(String /* reason */),
@@ -219,7 +219,7 @@ fn new_ssh_channel<'a>(
 
 fn receiver_into_event_stream(
     rx: Receiver<Result<String, StreamError>>,
-) -> BoxStream<bot::Action, ()> {
+) -> BoxStream<bot::Action, String> {
     rx.then(|event| {
         // parse each json message as event (if we did not get an error)
         event.unwrap().map(|event| {
@@ -228,11 +228,8 @@ fn receiver_into_event_stream(
             debug!("Parsed json {} as:\n{:?}", json, res);
             res.ok()
         })
-    }).filter_map(|event| event)
-        .map(Event::into_action)
-        .map_err(|err| if let StreamError::Terminated(reason) = err {
-            error!("Gerrit stream error: {}", reason);
-        })
+    }).filter_map(|event| event.map(Event::into_action))
+        .map_err(|err| format!("Stream error from Gerrit: {:?}", err))
         .boxed()
 }
 
@@ -241,7 +238,7 @@ pub fn event_stream(
     port: u16,
     username: String,
     priv_key_path: PathBuf,
-) -> BoxStream<bot::Action, ()> {
+) -> BoxStream<bot::Action, String> {
     let hostport = format!("{}:{}", host, port);
     let pub_key_path = get_pub_key_path(&priv_key_path);
     debug!("Will use public key: {}", pub_key_path.to_str().unwrap());

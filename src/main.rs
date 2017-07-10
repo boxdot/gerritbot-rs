@@ -101,7 +101,8 @@ fn main() {
             }
             Some(msg)
         })
-        .filter_map(|msg| msg.map(spark::Message::into_action));
+        .filter_map(|msg| msg.map(spark::Message::into_action))
+        .map_err(|e| format!("Error from Spark: {:?}", e));
 
     // start listening for incoming messages on the webhook
     let spark_endpoint = args.spark_endpoint.clone();
@@ -156,6 +157,10 @@ fn main() {
                 return Some(response);
             }
             None
+        })
+        .or_else(|err| {
+            error!("Exit due to error: {:?}", err);
+            Err(())
         })
         .for_each(|response| {
             debug!("Replying with: {}", response.message);
