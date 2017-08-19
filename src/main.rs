@@ -8,6 +8,8 @@ extern crate iron;
 extern crate log;
 extern crate lru_time_cache;
 extern crate router;
+extern crate rusoto_core;
+extern crate rusoto_sqs;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
@@ -28,6 +30,7 @@ mod args;
 mod bot;
 mod gerrit;
 mod spark;
+mod sqs;
 
 fn main() {
     let args = args::parse_args();
