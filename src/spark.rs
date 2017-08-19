@@ -1,3 +1,5 @@
+use std::{error, fmt};
+
 use futures::future::Future;
 use futures::Sink;
 use futures::sync::mpsc::Sender;
@@ -149,8 +151,59 @@ pub struct SparkClient {
     pub bot_id: String,
 }
 
+#[derive(Debug)]
+pub enum Error {
+    HyperError(hyper::Error),
+    JsonError(serde_json::Error),
+    RegisterWebhook(String),
+    DeleteWebhook(String),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Error::HyperError(ref err) => fmt::Display::fmt(err, f),
+            Error::JsonError(ref err) => fmt::Display::fmt(err, f),
+            Error::RegisterWebhook(ref msg) => fmt::Display::fmt(msg, f),
+            Error::DeleteWebhook(ref msg) => fmt::Display::fmt(msg, f),
+        }
+    }
+}
+
+impl error::Error for Error {
+    fn description(&self) -> &str {
+        match *self {
+            Error::HyperError(ref err) => err.description(),
+            Error::JsonError(ref err) => err.description(),
+            Error::RegisterWebhook(ref msg) => msg,
+            Error::DeleteWebhook(ref msg) => msg,
+        }
+    }
+
+    fn cause(&self) -> Option<&error::Error> {
+        match *self {
+            Error::HyperError(ref err) => err.cause(),
+            Error::JsonError(ref err) => err.cause(),
+            Error::RegisterWebhook(_) => None,
+            Error::DeleteWebhook(_) => None,
+        }
+    }
+}
+
+impl From<hyper::Error> for Error {
+    fn from(err: hyper::Error) -> Self {
+        Error::HyperError(err)
+    }
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(err: serde_json::Error) -> Self {
+        Error::JsonError(err)
+    }
+}
+
 impl SparkClient {
-    pub fn new(args: &args::Args) -> Result<SparkClient, String> {
+    pub fn new(args: &args::Args) -> Result<SparkClient, Error> {
         let mut client = SparkClient {
             url: args.spark_url.clone(),
             bot_token: args.spark_bot_token.clone(),
@@ -172,16 +225,13 @@ impl SparkClient {
         }
     }
 
-    fn get_bot_id(&self) -> Result<String, String> {
-        let resp = get_json_with_token(&(self.url.clone() + "/people/me"), &self.bot_token)
-            .map_err(|err| format!("Invalid response from spark: {}", err))?;
-        let details: PersonDetails = serde_json::from_reader(resp).map_err(
-            |err| format!("Could not parse person details: {}", err),
-        )?;
+    fn get_bot_id(&self) -> Result<String, Error> {
+        let resp = get_json_with_token(&(self.url.clone() + "/people/me"), &self.bot_token)?;
+        let details: PersonDetails = serde_json::from_reader(resp)?;
         Ok(details.id)
     }
 
-    fn register_webhook(&self, url: &str) -> Result<(), String> {
+    fn register_webhook(&self, url: &str) -> Result<(), Error> {
         let json = json!({
             "name": "gerritbot",
             "targetUrl": String::from(url),
@@ -189,40 +239,37 @@ impl SparkClient {
             "event": "created"
         });
         post_with_token(&(self.url.clone() + "/webhooks"), &self.bot_token, &json)
-            .map_err(
-                |err| format!("Could not register Spark's webhooks: {}", err),
-            )
+            .map_err(Error::from)
             .and_then(|resp| if resp.status != hyper::status::StatusCode::Ok {
-                Err(
+                Err(Error::RegisterWebhook(
                     format!("Could not register Spark's webhook: {}", resp.status),
-                )
+                ))
             } else {
                 Ok(())
             })
     }
 
-    fn list_webhooks(&self) -> Result<Webhooks, String> {
-        let resp = get_json_with_token(&(self.url.clone() + "/webhooks"), &self.bot_token)
-            .map_err(|err| format!("Invalid response from spark: {}", err))?;
-        let webhooks: Webhooks = serde_json::from_reader(resp).map_err(
-            |err| format!("Could not parse webhooks list: {}", err),
-        )?;
+    fn list_webhooks(&self) -> Result<Webhooks, Error> {
+        let resp = get_json_with_token(&(self.url.clone() + "/webhooks"), &self.bot_token)?;
+        let webhooks: Webhooks = serde_json::from_reader(resp)?;
         Ok(webhooks)
     }
 
-    fn delete_webhook(&self, id: &str) -> Result<(), String> {
+    fn delete_webhook(&self, id: &str) -> Result<(), Error> {
         delete_with_token(&(self.url.clone() + "/webhooks/" + id), &self.bot_token)
-            .map_err(|err| format!("Could not delete webhook: {}", err))
+            .map_err(Error::from)
             .and_then(|resp| if resp.status !=
                 hyper::status::StatusCode::NoContent
             {
-                Err(format!("Could not delete webhook: {}", resp.status))
+                Err(Error::DeleteWebhook(
+                    format!("Could not delete webhook: {}", resp.status),
+                ))
             } else {
                 Ok(())
             })
     }
 
-    pub fn replace_webhook_url(&self, url: &str) -> Result<(), String> {
+    pub fn replace_webhook_url(&self, url: &str) -> Result<(), Error> {
         // remove all other webhooks
         let webhooks = self.list_webhooks()?;
         let to_remove = webhooks.items.into_iter().filter_map(
