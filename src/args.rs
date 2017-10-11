@@ -57,14 +57,16 @@ pub fn parse_args() -> Args {
             Arg::from_usage(
                 "--spark-endpoint=[localhost:8888] 'Endpoint on which the bot will listen for \
                 incoming Spark messages.'",
-            ).empty_values(false),
+            ).empty_values(false)
+                .conflicts_with("spark-sqs"),
         )
         .arg(
             Arg::from_usage(
                 "--spark-sqs=[URL] 'AWS SQS Endpoint which should be polled for new Spark message. \
                 Note: When using SQS, you need to setup the spark bot to send the messages to this \
                 queue (cf. --spark-webhook-url).'",
-            ).empty_values(false),
+            ).empty_values(false)
+                .conflicts_with("spark-endpoint"),
         )
         .arg(
             Arg::from_usage(
