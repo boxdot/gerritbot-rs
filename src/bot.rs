@@ -260,9 +260,13 @@ impl Bot {
         let user = self.users.iter().find(|u| u.spark_person_id == person_id);
         let enabled = user.map_or(false, |u| u.enabled);
         format!(
-            "Notifications for you are **{}**. Besides you, I am notifying another {} user(s).",
+            "Notifications for you are **{}**. I am notifying another {} user(s).",
             if enabled { "enabled" } else { "disabled" },
-            self.num_users() - 1
+            if self.num_users() == 0 {
+                0
+            } else {
+                self.num_users() - if enabled { 1 } else { 0 }
+            }
         )
     }
 }
