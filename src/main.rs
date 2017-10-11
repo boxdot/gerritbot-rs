@@ -67,20 +67,22 @@ fn main() {
     let mut core = tokio_core::reactor::Core::new().unwrap();
 
     // create spark client and event stream listener
-    let spark_client = spark::SparkClient::new(
-        args.spark_url,
-        args.spark_bot_token,
-        args.spark_webhook_url).unwrap_or_else(|err| {
-            error!("Could not create spark client: {}", err);
-            std::process::exit(1);
-        });
-    let spark_stream = spark::event_stream(
-        spark_client.clone(),
-        args.spark_endpoint,
-        core.remote()).unwrap_or_else(|err| {
-            error!("Could not start listening to spark: {}", err);
-            std::process::exit(1);
-        });
+    let spark_client =
+        spark::SparkClient::new(args.spark_url, args.spark_bot_token, args.spark_webhook_url)
+            .unwrap_or_else(|err| {
+                error!("Could not create spark client: {}", err);
+                std::process::exit(1);
+            });
+
+    let spark_stream = if !args.spark_sqs.is_empty() {
+        spark::sqs_event_stream(spark_client.clone(), args.spark_sqs)
+    } else {
+        spark::webhook_event_stream(spark_client.clone(), args.spark_endpoint, core.remote())
+    };
+    let spark_stream = spark_stream.unwrap_or_else(|err| {
+        error!("Could not start listening to spark: {}", err);
+        std::process::exit(1);
+    });
 
     // create gerrit event stream listener
     let gerrit_stream = gerrit::event_stream(

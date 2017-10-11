@@ -14,6 +14,7 @@ use serde_json;
 use tokio_core;
 
 use bot;
+use sqs;
 
 /// Create a new hyper client for the given url.
 fn new_client(url: &str) -> hyper::Client {
@@ -156,6 +157,7 @@ pub struct SparkClient {
 #[derive(Debug)]
 pub enum Error {
     HyperError(hyper::Error),
+    SqsError(sqs::Error),
     JsonError(serde_json::Error),
     RegisterWebhook(String),
     DeleteWebhook(String),
@@ -165,6 +167,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Error::HyperError(ref err) => fmt::Display::fmt(err, f),
+            Error::SqsError(ref err) => fmt::Display::fmt(err, f),
             Error::JsonError(ref err) => fmt::Display::fmt(err, f),
             Error::RegisterWebhook(ref msg) => fmt::Display::fmt(msg, f),
             Error::DeleteWebhook(ref msg) => fmt::Display::fmt(msg, f),
@@ -176,6 +179,7 @@ impl error::Error for Error {
     fn description(&self) -> &str {
         match *self {
             Error::HyperError(ref err) => err.description(),
+            Error::SqsError(ref err) => err.description(),
             Error::JsonError(ref err) => err.description(),
             Error::RegisterWebhook(ref msg) => msg,
             Error::DeleteWebhook(ref msg) => msg,
@@ -185,6 +189,7 @@ impl error::Error for Error {
     fn cause(&self) -> Option<&error::Error> {
         match *self {
             Error::HyperError(ref err) => err.cause(),
+            Error::SqsError(ref err) => err.cause(),
             Error::JsonError(ref err) => err.cause(),
             Error::RegisterWebhook(_) => None,
             Error::DeleteWebhook(_) => None,
@@ -195,6 +200,12 @@ impl error::Error for Error {
 impl From<hyper::Error> for Error {
     fn from(err: hyper::Error) -> Self {
         Error::HyperError(err)
+    }
+}
+
+impl From<sqs::Error> for Error {
+    fn from(err: sqs::Error) -> Self {
+        Error::SqsError(err)
     }
 }
 
@@ -356,10 +367,10 @@ pub fn webhook_handler(
     Ok(Response::with(status::Ok))
 }
 
-pub fn event_stream(
+pub fn webhook_event_stream(
     client: SparkClient,
     listen_url: String,
-    remote: tokio_core::reactor::Remote
+    remote: tokio_core::reactor::Remote,
 ) -> Result<BoxStream<bot::Action, String>, Error> {
     let (tx, rx) = channel(1);
     let mut router = Router::new();
@@ -396,4 +407,38 @@ pub fn event_stream(
     info!("Listening to Spark on {}", listen_url);
 
     Ok(stream)
+}
+
+pub fn sqs_event_stream(
+    client: SparkClient,
+    sqs_url: String,
+) -> Result<BoxStream<bot::Action, String>, Error> {
+    let bot_id = client.bot_id.clone();
+    let sqs_stream = sqs::sqs_receiver(sqs_url)?;
+    let sqs_stream = sqs_stream
+        .filter_map(|sqs_message| if let Some(body) = sqs_message.body {
+            let new_post: Post = match serde_json::from_str(&body) {
+                Ok(post) => post,
+                Err(err) => {
+                    error!("Could not parse post: {}", err);
+                    return None;
+                }
+            };
+            Some(new_post.data)
+        } else {
+            None
+        })
+        .filter(move |msg| msg.person_id != bot_id)
+        .map(move |mut msg| {
+            debug!("Loading text for message: {:?}", msg);
+            if let Err(err) = msg.load_text(&client) {
+                error!("Could not load post's text: {}", err);
+                return None;
+            }
+            Some(msg)
+        })
+        .filter_map(|msg| msg.map(Message::into_action))
+        .map_err(|err| format!("Error from Spark: {:?}", err))
+        .boxed();
+    Ok(sqs_stream)
 }

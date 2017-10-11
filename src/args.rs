@@ -10,6 +10,7 @@ pub struct Args {
     pub gerrit_priv_key_path: PathBuf,
     pub spark_url: String,
     pub spark_endpoint: String,
+    pub spark_sqs: String,
     pub spark_webhook_url: Option<String>,
     pub spark_bot_token: String,
     pub verbosity: usize,
@@ -60,6 +61,13 @@ pub fn parse_args() -> Args {
         )
         .arg(
             Arg::from_usage(
+                "--spark-sqs=[URL] 'AWS SQS Endpoint which should be polled for new Spark message. \
+                Note: When using SQS, you need to setup the spark bot to send the messages to this \
+                queue (cf. --spark-webhook-url).'",
+            ).empty_values(false),
+        )
+        .arg(
+            Arg::from_usage(
                 "--spark-webhook-url=[URL] 'If specified, the URL will be registered in Spark as \
                 webhook endpoint. Note: this url will replace all other registered webhooks.'",
             ).empty_values(false),
@@ -96,9 +104,9 @@ pub fn parse_args() -> Args {
         gerrit_username: String::from(matches.value_of("gerrit-username").unwrap()),
         gerrit_priv_key_path: PathBuf::from(matches.value_of("gerrit-priv-key-path").unwrap()),
         spark_url: String::from(SPARK_URL),
-        spark_endpoint: String::from(matches.value_of("spark-endpoint").unwrap_or(
-            "localhost:8888",
-        )),
+        // TODO: Do not allow to set both endpoint and sqs
+        spark_endpoint: String::from(matches.value_of("spark-endpoint").unwrap_or("")),
+        spark_sqs: String::from(matches.value_of("spark-sqs").unwrap_or("")),
         spark_webhook_url: if matches.is_present("spark-webhook-url") {
             Some(String::from(matches.value_of("spark-webhook-url").unwrap()))
         } else {
