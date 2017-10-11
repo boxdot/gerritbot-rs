@@ -1,17 +1,18 @@
-use std::{error, fmt};
+use std::{error, fmt, thread};
 
 use futures::future::Future;
-use futures::Sink;
-use futures::sync::mpsc::Sender;
+use futures::{Sink, Stream};
+use futures::sync::mpsc::{channel, Sender};
+use futures::stream::BoxStream;
 use hyper;
 use hyper_native_tls;
 use iron::prelude::*;
 use iron::status;
+use router::Router;
 use serde;
 use serde_json;
 use tokio_core;
 
-use args;
 use bot;
 
 /// Create a new hyper client for the given url.
@@ -145,6 +146,7 @@ struct Webhooks {
     items: Vec<Webhook>,
 }
 
+#[derive(Debug, Clone)]
 pub struct SparkClient {
     url: String,
     bot_token: String,
@@ -203,14 +205,24 @@ impl From<serde_json::Error> for Error {
 }
 
 impl SparkClient {
-    pub fn new(args: &args::Args) -> Result<SparkClient, Error> {
+    pub fn new(
+        spark_api_url: String,
+        bot_token: String,
+        webhook_url: Option<String>,
+    ) -> Result<SparkClient, Error> {
         let mut client = SparkClient {
-            url: args.spark_url.clone(),
-            bot_token: args.spark_bot_token.clone(),
+            url: spark_api_url,
+            bot_token: bot_token,
             bot_id: String::new(),
         };
         client.bot_id = client.get_bot_id()?;
         debug!("Bot id: {}", client.bot_id);
+
+        if let Some(webhook_url) = webhook_url {
+            client.replace_webhook_url(&webhook_url)?;
+            info!("Registered Spark's webhook url: {}", webhook_url);
+        }
+
         Ok(client)
     }
 
@@ -342,4 +354,46 @@ pub fn webhook_handler(
     remote.spawn(move |_| tx.send(msg).map_err(|_| ()).map(|_| ()));
 
     Ok(Response::with(status::Ok))
+}
+
+pub fn event_stream(
+    client: SparkClient,
+    listen_url: String,
+    remote: tokio_core::reactor::Remote
+) -> Result<BoxStream<bot::Action, String>, Error> {
+    let (tx, rx) = channel(1);
+    let mut router = Router::new();
+    router.post(
+        "/",
+        move |req: &mut Request| {
+            debug!("Incoming webhook post request");
+            webhook_handler(req, &remote, tx.clone())
+        },
+        "post",
+    );
+
+    let bot_id = client.bot_id.clone();
+    let stream = rx.filter(move |msg| msg.person_id != bot_id)
+        .map(move |mut msg| {
+            debug!("Loading text for message: {:?}", msg);
+            if let Err(err) = msg.load_text(&client) {
+                error!("Could not load post's text: {}", err);
+                return None;
+            }
+            Some(msg)
+        })
+        .filter_map(|msg| msg.map(Message::into_action))
+        .map_err(|err| format!("Error from Spark: {:?}", err))
+        .boxed();
+
+    // start listening
+    let listen_url_clone = listen_url.clone();
+    thread::spawn(move || {
+        let mut iron = Iron::new(Chain::new(router));
+        iron.threads = 2;
+        iron.http(&listen_url_clone).unwrap()
+    });
+    info!("Listening to Spark on {}", listen_url);
+
+    Ok(stream)
 }

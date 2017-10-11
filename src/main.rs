@@ -20,9 +20,6 @@ extern crate stderrlog;
 extern crate tokio_core;
 
 use futures::Stream;
-use futures::sync::mpsc::channel;
-use iron::prelude::*;
-use router::Router;
 
 #[macro_use]
 mod utils;
@@ -69,51 +66,21 @@ fn main() {
     // event loop
     let mut core = tokio_core::reactor::Core::new().unwrap();
 
-    // create spark message stream
-    let spark_client = spark::SparkClient::new(&args).unwrap_or_else(|err| {
-        error!("Could not create spark client: {}", err);
-        std::process::exit(1);
-    });
-    if let Some(spark_webhook_url) = args.spark_webhook_url {
-        if let Err(err) = spark_client.replace_webhook_url(&spark_webhook_url) {
-            error!("{}", err);
+    // create spark client and event stream listener
+    let spark_client = spark::SparkClient::new(
+        args.spark_url,
+        args.spark_bot_token,
+        args.spark_webhook_url).unwrap_or_else(|err| {
+            error!("Could not create spark client: {}", err);
             std::process::exit(1);
-        };
-        info!("Registered Spark's webhook url: {}", spark_webhook_url)
-    };
-
-    let remote = core.remote();
-    let (tx, rx) = channel(1);
-    let mut router = Router::new();
-    router.post(
-        "/",
-        move |req: &mut Request| {
-            debug!("Incoming webhook post request");
-            spark::webhook_handler(req, &remote, tx.clone())
-        },
-        "post",
-    );
-    info!("Listening to Spark on {}", args.spark_endpoint);
-
-    let spark_stream = rx.filter(|msg| msg.person_id != spark_client.bot_id)
-        .map(|mut msg| {
-            debug!("Loading text for message: {:?}", msg);
-            if let Err(err) = msg.load_text(&spark_client) {
-                error!("Could not load post's text: {}", err);
-                return None;
-            }
-            Some(msg)
-        })
-        .filter_map(|msg| msg.map(spark::Message::into_action))
-        .map_err(|e| format!("Error from Spark: {:?}", e));
-
-    // start listening for incoming messages on the webhook
-    let spark_endpoint = args.spark_endpoint.clone();
-    std::thread::spawn(move || {
-        let mut iron = Iron::new(Chain::new(router));
-        iron.threads = 2;
-        iron.http(&spark_endpoint).unwrap()
-    });
+        });
+    let spark_stream = spark::event_stream(
+        spark_client.clone(),
+        args.spark_endpoint,
+        core.remote()).unwrap_or_else(|err| {
+            error!("Could not start listening to spark: {}", err);
+            std::process::exit(1);
+        });
 
     // create gerrit event stream listener
     let gerrit_stream = gerrit::event_stream(
