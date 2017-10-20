@@ -39,6 +39,7 @@ fn main() {
         .init()
         .unwrap();
     info!("Starting");
+    debug!("Arguments: {:?}", args);
 
     // load or create a new bot
     let mut bot = match bot::Bot::load("state.json") {
@@ -75,7 +76,7 @@ fn main() {
             });
 
     let spark_stream = if !args.spark_sqs.is_empty() {
-        spark::sqs_event_stream(spark_client.clone(), args.spark_sqs)
+        spark::sqs_event_stream(spark_client.clone(), args.spark_sqs, args.spark_sqs_region)
     } else {
         spark::webhook_event_stream(spark_client.clone(), args.spark_endpoint, core.remote())
     };

@@ -1,6 +1,7 @@
 use clap::{App, AppSettings, Arg};
 use std::path::PathBuf;
 use std::time::Duration;
+use rusoto_core::Region;
 
 #[derive(Debug, Clone)]
 pub struct Args {
@@ -11,6 +12,7 @@ pub struct Args {
     pub spark_url: String,
     pub spark_endpoint: String,
     pub spark_sqs: String,
+    pub spark_sqs_region: Region,
     pub spark_webhook_url: Option<String>,
     pub spark_bot_token: String,
     pub verbosity: usize,
@@ -70,6 +72,13 @@ pub fn parse_args() -> Args {
         )
         .arg(
             Arg::from_usage(
+                "--spark-sqs-region=[REGION] 'AWS SQS Region, e.g. us-east-1, eu-central-1, ...'",
+            ).empty_values(false)
+                .conflicts_with("spark-endpoint")
+                .default_value("us-east-1"),
+        )
+        .arg(
+            Arg::from_usage(
                 "--spark-webhook-url=[URL] 'If specified, the URL will be registered in Spark as \
                 webhook endpoint. Note: this url will replace all other registered webhooks.'",
             ).empty_values(false),
@@ -106,9 +115,9 @@ pub fn parse_args() -> Args {
         gerrit_username: String::from(matches.value_of("gerrit-username").unwrap()),
         gerrit_priv_key_path: PathBuf::from(matches.value_of("gerrit-priv-key-path").unwrap()),
         spark_url: String::from(SPARK_URL),
-        // TODO: Do not allow to set both endpoint and sqs
         spark_endpoint: String::from(matches.value_of("spark-endpoint").unwrap_or("")),
         spark_sqs: String::from(matches.value_of("spark-sqs").unwrap_or("")),
+        spark_sqs_region: value_t_or_exit!(matches.value_of("spark-sqs-region"), Region),
         spark_webhook_url: if matches.is_present("spark-webhook-url") {
             Some(String::from(matches.value_of("spark-webhook-url").unwrap()))
         } else {
