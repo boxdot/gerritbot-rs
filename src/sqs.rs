@@ -48,9 +48,12 @@ impl From<rusoto_core::TlsError> for Error {
     }
 }
 
-fn sqs_delete_worker(queue_url: String) -> Result<Sender<String /* sqs receipt handle */>, Error> {
+fn sqs_delete_worker(
+    queue_url: String,
+    queue_region: Region,
+) -> Result<Sender<String /* sqs receipt handle */>, Error> {
     let aws_credentials = DefaultCredentialsProvider::new()?;
-    let sqs_client = SqsClient::new(default_tls_client()?, aws_credentials, Region::UsEast1);
+    let sqs_client = SqsClient::new(default_tls_client()?, aws_credentials, queue_region);
 
     let (del_tx, del_rx) = channel(1);
     let del_th_queue_url = queue_url.clone();
@@ -76,11 +79,14 @@ fn sqs_delete_worker(queue_url: String) -> Result<Sender<String /* sqs receipt h
     Ok(del_tx)
 }
 
-pub fn sqs_receiver(queue_url: String) -> Result<Receiver<rusoto_sqs::Message>, Error> {
-    let del_tx = sqs_delete_worker(queue_url.clone())?;
+pub fn sqs_receiver(
+    queue_url: String,
+    queue_region: Region,
+) -> Result<Receiver<rusoto_sqs::Message>, Error> {
+    let del_tx = sqs_delete_worker(queue_url.clone(), queue_region)?;
 
     let aws_credentials = DefaultCredentialsProvider::new()?;
-    let sqs_client = SqsClient::new(default_tls_client()?, aws_credentials, Region::UsEast1);
+    let sqs_client = SqsClient::new(default_tls_client()?, aws_credentials, queue_region);
     let mut receive_req = ReceiveMessageRequest::default();
     receive_req.queue_url = queue_url.clone();
     receive_req.wait_time_seconds = Some(10);

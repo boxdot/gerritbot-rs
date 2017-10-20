@@ -12,6 +12,7 @@ use router::Router;
 use serde;
 use serde_json;
 use tokio_core;
+use rusoto_core;
 
 use bot;
 use sqs;
@@ -412,9 +413,10 @@ pub fn webhook_event_stream(
 pub fn sqs_event_stream(
     client: SparkClient,
     sqs_url: String,
+    sqs_region: rusoto_core::Region,
 ) -> Result<BoxStream<bot::Action, String>, Error> {
     let bot_id = client.bot_id.clone();
-    let sqs_stream = sqs::sqs_receiver(sqs_url)?;
+    let sqs_stream = sqs::sqs_receiver(sqs_url, sqs_region)?;
     let sqs_stream = sqs_stream
         .filter_map(|sqs_message| if let Some(body) = sqs_message.body {
             let new_post: Post = match serde_json::from_str(&body) {
