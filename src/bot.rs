@@ -156,12 +156,50 @@ impl Bot {
         user
     }
 
+    fn format_msg(event: &gerrit::Event, approval: &gerrit::Approval) -> String {
+        let approver = &event.author.as_ref().unwrap().username;
+        let comment = &event.comment;
+        let change = &event.change;
+
+        let extra_message = if &approval.value == "-1" && approval.approval_type == "Verified" &&
+            comment.is_some()
+        {
+            let comment = comment.clone().unwrap();
+            let lines: Vec<&str> = comment.split("\n\n").collect();
+            format!(
+                "\n\n> {}",
+                lines[2..]
+                    .iter()
+                    .cloned()
+                    .filter(|l| !l.contains("SUCCESS"))
+                    .collect::<Vec<&str>>()
+                    .join("\n")
+            )
+        } else {
+            String::new()
+        };
+
+        format!(
+            "[{}]({}) {} ({}) from {}{}",
+            change.subject,
+            change.url,
+            format_approval_value(&approval.value, &approval.approval_type),
+            approval.approval_type,
+            approver,
+            extra_message
+        )
+    }
+
     fn get_approvals_msg(&mut self, event: gerrit::Event) -> Option<(&User, String)> {
         debug!("Incoming approvals: {:?}", event);
 
-        let approvals = tryopt![event.approvals];
-        let change = event.change;
-        let approver = &event.author.as_ref().unwrap().username;
+        if event.approvals.is_none() {
+            return None;
+        }
+
+        let approvals = tryopt![event.approvals.as_ref()];
+        let change = &event.change;
+        let approver = &tryopt![event.author.as_ref()].username;
         if approver == &change.owner.username {
             // No need to notify about user's own approvals.
             return None;
@@ -213,17 +251,7 @@ impl Bot {
                     }
                 };
 
-                Some(format!(
-                    "[{}]({}) {} ({}) from {}",
-                    change.subject,
-                    change.url,
-                    format_approval_value(
-                        &approval.value,
-                        &approval.approval_type,
-                    ),
-                    approval.approval_type,
-                    approver
-                ))
+                Some(Self::format_msg(&event, &approval))
             })
             .collect();
 
@@ -578,5 +606,17 @@ mod test {
             let res = bot.get_approvals_msg(event);
             assert!(res.is_some());
         }
+    }
+
+    #[test]
+    fn test_format_msg() {
+        let mut bot = Bot::new();
+        bot.add_user("author_spark_id", "author@example.com");
+        let event = get_event();
+        let res = Bot::format_msg(&event, &event.approvals.as_ref().unwrap()[0]);
+        assert_eq!(
+            res,
+            "[Some review.](http://localhost/42) 👍 +2 (Code-Review) from approver"
+        );
     }
 }
