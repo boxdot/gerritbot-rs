@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use lru_time_cache::LruCache;
 use serde_json;
+use hlua::{Lua, LuaFunction};
 
 use gerrit;
 use spark;
@@ -85,24 +86,6 @@ impl convert::From<serde_json::Error> for BotError {
     }
 }
 
-fn format_approval_value(value: &str, approval_type: &str) -> String {
-    let value: i8 = value.parse().unwrap_or(0);
-    let sign = if value > 0 { "+" } else { "" };
-    let icon = if approval_type.contains("WaitForVerification") {
-        "⌛"
-    } else if value > 0 {
-        "👍"
-    } else if value == 0 {
-        "👉"
-    } else {
-        "👎"
-    };
-
-    // TODO: when Spark will allow to format text with different colors, set
-    // green resp. red color here.
-    format!("{} {}{}", icon, sign, value)
-}
-
 impl Bot {
     pub fn new() -> Bot {
         Bot {
@@ -157,37 +140,22 @@ impl Bot {
     }
 
     fn format_msg(event: &gerrit::Event, approval: &gerrit::Approval) -> String {
-        let approver = &event.author.as_ref().unwrap().username;
-        let comment = &event.comment;
-        let change = &event.change;
+        let filename = String::from("scripts/format.lua");
+        let script = File::open(&Path::new(&filename)).unwrap();
 
-        let extra_message = if &approval.value == "-1" && approval.approval_type == "Verified" &&
-            comment.is_some()
-        {
-            let comment = comment.clone().unwrap();
-            let lines: Vec<&str> = comment.split("\n\n").collect();
-            format!(
-                "\n\n> {}",
-                lines[2..]
-                    .iter()
-                    .cloned()
-                    .filter(|l| !l.contains("SUCCESS"))
-                    .collect::<Vec<&str>>()
-                    .join("\n")
-            )
-        } else {
-            String::new()
-        };
+        let mut lua = Lua::new();
+        lua.openlibs();
+        lua.execute_from_reader::<(), _>(&script).unwrap();
+        let mut f: LuaFunction<_> = lua.get("main").unwrap();
 
-        format!(
-            "[{}]({}) {} ({}) from {}{}",
-            change.subject,
-            change.url,
-            format_approval_value(&approval.value, &approval.approval_type),
-            approval.approval_type,
-            approver,
-            extra_message
-        )
+        f.call_with_args((
+            event.author.as_ref().unwrap().username.clone(), // approver
+            event.comment.clone(),
+            approval.value.parse().unwrap_or(0),
+            approval.approval_type.clone(),
+            event.change.url.clone(),
+            event.change.subject.clone(),
+        )).unwrap()
     }
 
     fn get_approvals_msg(&mut self, event: gerrit::Event) -> Option<(&User, String)> {
@@ -486,7 +454,7 @@ mod test {
     }
 
     const EVENT_JSON : &'static str = r#"
-{"author":{"name":"Approver","username":"approver"},"approvals":[{"type":"Code-Review","description":"Code-Review","value":"2","oldValue":"-1"}],"comment":"Patch Set 1: Code-Review+2","patchSet":{"number":"1","revision":"49a65998c02eda928559f2d0b586c20bc8e37b10","parents":["fb1909b4eda306985d2bbce769310e5a50a98cf5"],"ref":"refs/changes/42/42/1","uploader":{"name":"Author","email":"author@example.com","username":"Author"},"createdOn":1494165142,"author":{"name":"Author","email":"author@example.com","username":"Author"},"isDraft":false,"kind":"REWORK","sizeInsertions":0,"sizeDeletions":0},"change":{"project":"demo-project","branch":"master","id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14","number":"49","subject":"Some review.","owner":{"name":"Author","email":"author@example.com","username":"author"},"url":"http://localhost/42","commitMessage":"Some review.\n\nChange-Id: Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14\n","status":"NEW"},"project":"demo-project","refName":"refs/heads/master","changeKey":{"id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14"},"type":"comment-added","eventCreatedOn":1499190282}"#;
+{"author":{"name":"Approver","username":"approver"},"approvals":[{"type":"Code-Review","description":"Code-Review","value":"2","oldValue":"-1"}],"comment":"Patch Set 1: Code-Review+2\n\nJust a buggy script. FAILURE\n\nAnd more problems. FAILURE","patchSet":{"number":"1","revision":"49a65998c02eda928559f2d0b586c20bc8e37b10","parents":["fb1909b4eda306985d2bbce769310e5a50a98cf5"],"ref":"refs/changes/42/42/1","uploader":{"name":"Author","email":"author@example.com","username":"Author"},"createdOn":1494165142,"author":{"name":"Author","email":"author@example.com","username":"Author"},"isDraft":false,"kind":"REWORK","sizeInsertions":0,"sizeDeletions":0},"change":{"project":"demo-project","branch":"master","id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14","number":"49","subject":"Some review.","owner":{"name":"Author","email":"author@example.com","username":"author"},"url":"http://localhost/42","commitMessage":"Some review.\n\nChange-Id: Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14\n","status":"NEW"},"project":"demo-project","refName":"refs/heads/master","changeKey":{"id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14"},"type":"comment-added","eventCreatedOn":1499190282}"#;
 
     fn get_event() -> gerrit::Event {
         let event: Result<gerrit::Event, _> = serde_json::from_str(EVENT_JSON);
@@ -616,7 +584,7 @@ mod test {
         let res = Bot::format_msg(&event, &event.approvals.as_ref().unwrap()[0]);
         assert_eq!(
             res,
-            "[Some review.](http://localhost/42) 👍 +2 (Code-Review) from approver"
+            "[Some review.](http://localhost/42) 👍 +2 (Code-Review) from approver\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE"
         );
     }
 }

@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate clap;
 extern crate futures;
+extern crate hlua;
 extern crate hyper;
 extern crate hyper_native_tls;
 extern crate iron;
