@@ -9,33 +9,68 @@ A [Cisco Spark](https://www.ciscospark.com) bot, which notifies you about new re
 
 1. Register a developer account at https://developer.ciscospark.com.
 2. Create a new bot and write down its **api key**.
-3. Register a new webhook listener at https://developer.ciscospark.com/resource-webhooks.html. You
-   need to provide a url there, on which the bot will be listening for the new Spark messages.
-4. Build and run the bot
+3. Build and run the bot in direct or SQS mode (cf. below).
 
 ```shell
 $ cargo run -- <arguments>
 ```
 
-with the following arguments:
+The bot can run in two modes.
 
+### Direct mode
+
+The bot is listening on a specified endpoint for incoming incoming Spark messages. For that, you
+need to provide the endpoint url to the bot by using the argument `--spark-webhook-url`. The bot
+will register the url for you through the Cisco Spask API. Alternatively, you can also register the
+url yourself at [https://developer.ciscospark.com](https://developer.ciscospark.com). In that case,
+do not provide the option `--spark-webhook-url`, since otherwise it will overwrite you manually
+configured url.
+
+Example:
+
+```shell
+$ cargo run -- \
+    --spark-webhook-url https://endpoint.example.org \
+    --spark-endpoint localhost:8888 \
+    --spark-bot-token <API_KEY> \
+    --gerrit-hostname localhost \
+    --gerrit-priv-key-path ~/.ssh/id_rsa \
+    --gerrit-username gerritbot
 ```
---gerrit-hostname <URL>              Gerrit hostname
---gerrit-port <PORT>                 Gerrit port
---gerrit-priv-key-path <PATH>
-    Path to the private key for authentication in Gerrit. Note: Due to the limitations of `ssh2`
-    crate only RSA and DSA are supported.
---gerrit-username <USER>             Gerrit username
---spark-bot-token <TOKEN>            Token of the Spark bot for authentication
---spark-endpoint <localhost:8888>
-    Endpoint on which the bot will listen for incoming Spark messages.
 
---spark-webhook-url <URL>
-    If specified, the URL will be registered in Spark as webhook endpoint. Note: this url will
-    replace all other registered webhooks.
+In this setup, the bot is listening for the incoming messages at `localhost:8888`, where Spark will
+send the messages to the endpoint `https://endpoint.example.org`. This is useful to test the bot in
+a local environment. For an easy way to get a public url connected to a local endpoint cf.
+[https://ngrok.com](https://ngrok.com).
+
+
+### AWS SQS mode
+
+The bot is polling the Cisco Spark messages from an AWS SQS queue provided by the
+arguments `--spark-sqs` and `--spark-sqs-region`. The url of the queue can be registered in Spark in
+the same way as in direct mode.
+
+Example:
+
+```shell
+$ cargo run -- \
+    --spark-webhook-url https://gateway-to-sqs.amazonaws.com/prod
+    --spark-sqs https://sqs.region.amazonaws.com/account/sqs-name \
+    --spark-sqs-region region \
+    --spark-bot-token <API_KEY> \
+    --gerrit-hostname localhost \
+    --gerrit-priv-key-path ~/.ssh/id_rsa \
+    --gerrit-username gerritbot
 ```
 
-To be able to listen to Gerrit messages, you need to have a Gerrit user with `stream-api` access
+This is useful, when the bot is running in a private network and does not have a connection to the
+internet. SQS is playing the role of a gateway between the internet and the internal traffic.
+
+To forward the Spark messages to a SQS use an AWS API Gateway.
+
+## Gerrit
+
+To listen to Gerrit messages, you need to have a Gerrit user with `stream-api` access
 capabilities. Admins and Non-interactive users should have such.
 
 The state of the bot is stored in the `state.json` file in the same directory, where the bot is
