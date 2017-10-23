@@ -1,4 +1,10 @@
+-- Filter and format messages
+-- return empty string to filter the message
 function main(approver, comment, value, type, url, subject)
+    if type ~= "Code-Review" and type ~= "WaitForVerification" and type ~= "Verified" then
+        return ""
+    end
+
     if string.match(type, "WaitForVerification") then
         icon = "⌛"
     elseif value > 0 then

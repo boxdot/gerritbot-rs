@@ -219,7 +219,8 @@ impl Bot {
                     }
                 };
 
-                Some(Self::format_msg(&event, &approval))
+                let msg = Self::format_msg(&event, &approval);
+                if !msg.is_empty() { Some(msg) } else { None }
             })
             .collect();
 
@@ -586,5 +587,15 @@ mod test {
             res,
             "[Some review.](http://localhost/42) 👍 +2 (Code-Review) from approver\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE"
         );
+    }
+
+    #[test]
+    fn format_msg_filters_specific_messages() {
+        let mut bot = Bot::new();
+        bot.add_user("author_spark_id", "author@example.com");
+        let mut event = get_event();
+        event.approvals.as_mut().unwrap()[0].approval_type = String::from("Some new type");
+        let res = Bot::format_msg(&event, &event.approvals.as_ref().unwrap()[0]);
+        assert!(res.is_empty());
     }
 }
