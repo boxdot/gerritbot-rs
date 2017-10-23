@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use lru_time_cache::LruCache;
 use serde_json;
+use hlua::{Lua, LuaFunction};
 
 use gerrit;
 use spark;
@@ -85,24 +86,6 @@ impl convert::From<serde_json::Error> for BotError {
     }
 }
 
-fn format_approval_value(value: &str, approval_type: &str) -> String {
-    let value: i8 = value.parse().unwrap_or(0);
-    let sign = if value > 0 { "+" } else { "" };
-    let icon = if approval_type.contains("WaitForVerification") {
-        "⌛"
-    } else if value > 0 {
-        "👍"
-    } else if value == 0 {
-        "👉"
-    } else {
-        "👎"
-    };
-
-    // TODO: when Spark will allow to format text with different colors, set
-    // green resp. red color here.
-    format!("{} {}{}", icon, sign, value)
-}
-
 impl Bot {
     pub fn new() -> Bot {
         Bot {
@@ -156,12 +139,35 @@ impl Bot {
         user
     }
 
+    fn format_msg(event: &gerrit::Event, approval: &gerrit::Approval) -> String {
+        let filename = String::from("scripts/format.lua");
+        let script = File::open(&Path::new(&filename)).unwrap();
+
+        let mut lua = Lua::new();
+        lua.openlibs();
+        lua.execute_from_reader::<(), _>(&script).unwrap();
+        let mut f: LuaFunction<_> = lua.get("main").unwrap();
+
+        f.call_with_args((
+            event.author.as_ref().unwrap().username.clone(), // approver
+            event.comment.clone(),
+            approval.value.parse().unwrap_or(0),
+            approval.approval_type.clone(),
+            event.change.url.clone(),
+            event.change.subject.clone(),
+        )).unwrap()
+    }
+
     fn get_approvals_msg(&mut self, event: gerrit::Event) -> Option<(&User, String)> {
         debug!("Incoming approvals: {:?}", event);
 
-        let approvals = tryopt![event.approvals];
-        let change = event.change;
-        let approver = &event.author.as_ref().unwrap().username;
+        if event.approvals.is_none() {
+            return None;
+        }
+
+        let approvals = tryopt![event.approvals.as_ref()];
+        let change = &event.change;
+        let approver = &tryopt![event.author.as_ref()].username;
         if approver == &change.owner.username {
             // No need to notify about user's own approvals.
             return None;
@@ -213,17 +219,8 @@ impl Bot {
                     }
                 };
 
-                Some(format!(
-                    "[{}]({}) {} ({}) from {}",
-                    change.subject,
-                    change.url,
-                    format_approval_value(
-                        &approval.value,
-                        &approval.approval_type,
-                    ),
-                    approval.approval_type,
-                    approver
-                ))
+                let msg = Self::format_msg(&event, &approval);
+                if !msg.is_empty() { Some(msg) } else { None }
             })
             .collect();
 
@@ -458,7 +455,7 @@ mod test {
     }
 
     const EVENT_JSON : &'static str = r#"
-{"author":{"name":"Approver","username":"approver"},"approvals":[{"type":"Code-Review","description":"Code-Review","value":"2","oldValue":"-1"}],"comment":"Patch Set 1: Code-Review+2","patchSet":{"number":"1","revision":"49a65998c02eda928559f2d0b586c20bc8e37b10","parents":["fb1909b4eda306985d2bbce769310e5a50a98cf5"],"ref":"refs/changes/42/42/1","uploader":{"name":"Author","email":"author@example.com","username":"Author"},"createdOn":1494165142,"author":{"name":"Author","email":"author@example.com","username":"Author"},"isDraft":false,"kind":"REWORK","sizeInsertions":0,"sizeDeletions":0},"change":{"project":"demo-project","branch":"master","id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14","number":"49","subject":"Some review.","owner":{"name":"Author","email":"author@example.com","username":"author"},"url":"http://localhost/42","commitMessage":"Some review.\n\nChange-Id: Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14\n","status":"NEW"},"project":"demo-project","refName":"refs/heads/master","changeKey":{"id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14"},"type":"comment-added","eventCreatedOn":1499190282}"#;
+{"author":{"name":"Approver","username":"approver"},"approvals":[{"type":"Code-Review","description":"Code-Review","value":"2","oldValue":"-1"}],"comment":"Patch Set 1: Code-Review+2\n\nJust a buggy script. FAILURE\n\nAnd more problems. FAILURE","patchSet":{"number":"1","revision":"49a65998c02eda928559f2d0b586c20bc8e37b10","parents":["fb1909b4eda306985d2bbce769310e5a50a98cf5"],"ref":"refs/changes/42/42/1","uploader":{"name":"Author","email":"author@example.com","username":"Author"},"createdOn":1494165142,"author":{"name":"Author","email":"author@example.com","username":"Author"},"isDraft":false,"kind":"REWORK","sizeInsertions":0,"sizeDeletions":0},"change":{"project":"demo-project","branch":"master","id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14","number":"49","subject":"Some review.","owner":{"name":"Author","email":"author@example.com","username":"author"},"url":"http://localhost/42","commitMessage":"Some review.\n\nChange-Id: Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14\n","status":"NEW"},"project":"demo-project","refName":"refs/heads/master","changeKey":{"id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14"},"type":"comment-added","eventCreatedOn":1499190282}"#;
 
     fn get_event() -> gerrit::Event {
         let event: Result<gerrit::Event, _> = serde_json::from_str(EVENT_JSON);
@@ -578,5 +575,27 @@ mod test {
             let res = bot.get_approvals_msg(event);
             assert!(res.is_some());
         }
+    }
+
+    #[test]
+    fn test_format_msg() {
+        let mut bot = Bot::new();
+        bot.add_user("author_spark_id", "author@example.com");
+        let event = get_event();
+        let res = Bot::format_msg(&event, &event.approvals.as_ref().unwrap()[0]);
+        assert_eq!(
+            res,
+            "[Some review.](http://localhost/42) 👍 +2 (Code-Review) from approver\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE"
+        );
+    }
+
+    #[test]
+    fn format_msg_filters_specific_messages() {
+        let mut bot = Bot::new();
+        bot.add_user("author_spark_id", "author@example.com");
+        let mut event = get_event();
+        event.approvals.as_mut().unwrap()[0].approval_type = String::from("Some new type");
+        let res = Bot::format_msg(&event, &event.approvals.as_ref().unwrap()[0]);
+        assert!(res.is_empty());
     }
 }
