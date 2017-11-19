@@ -204,7 +204,7 @@ impl Bot {
         let user_pos = tryopt![
             self.users.iter().position(
                 |u| u.enabled && &u.email == owner_email
-            )// bug in rustfmt: it adds ',' automatically
+            ) // bug in rustfmt: it adds ',' automatically
         ];
 
         let msgs: Vec<String> = approvals
@@ -220,6 +220,11 @@ impl Bot {
                     .unwrap_or(false);
                 debug!("Filtered approval: {:?}", filtered);
                 if filtered {
+                    return None;
+                }
+
+                // if user has configured and enabled a filter try to apply it
+                if self.is_filtered(user_pos, &event) {
                     return None;
                 }
 
@@ -366,6 +371,26 @@ impl Bot {
             None => Err(AddFilterResult::UserNotFound),
         }
     }
+
+    fn is_filtered(&self, user_ref: usize, event: &gerrit::Event) -> bool {
+        let user = &self.users[user_ref];
+        if let Some(filter) = user.filter.as_ref() {
+            if filter.enabled {
+                if let Ok(re) = Regex::new(&filter.regex) {
+                    if let Some(comment) = event.comment.as_ref() {
+                        return re.is_match(comment);
+                    }
+                } else {
+                    warn!(
+                        "User {} has configured invalid filter regex: {}",
+                        user.spark_person_id,
+                        filter.regex
+                    );
+                }
+            }
+        }
+        return false;
+    }
 }
 
 #[derive(Debug)]
@@ -410,7 +435,7 @@ pub enum Task {
 const GREETINGS_MSG: &'static str =
     r#"Hi. I am GerritBot (**in a beta phase**). I can watch Gerrit reviews for you, and notify you about new +1/-1's.
 
-To enable notifications, just type in 'enable'. A small note: your email in Spark and in Gerrit has to be the same. Otherwise, I can't match your accounts.
+To enable notifications, just type in **enable**. A small note: your email in Spark and in Gerrit has to be the same. Otherwise, I can't match your accounts.
 
 For more information, type in **help**.
 
@@ -424,13 +449,15 @@ and is licensed by
 
 const HELP_MSG: &'static str = r#"Commands:
 
-`enable` I will start notifying you.
+`enable` -- I will start notifying you.
 
-`disable` I will stop notifying you.
+`disable` -- I will stop notifying you.
 
-`status` Show if I am notifying you, and a little bit more information. 😉
+`filter [<regex>|enable|disable]` -- Add a `regex` to filter messages by applying the regex to Gerrit *comments*. `enable` and `disable` options enable resp. disable a configured filter. `filter` command without options shows if a filter is configured, and if it is enabled. Note: When adding a filter regex, wrap the regex with ``.
 
-`help` This message
+`status` -- Show if I am notifying you, and a little bit more information. 😉
+
+`help` -- This message
 "#;
 
 /// Action controller
@@ -710,6 +737,43 @@ mod test {
         assert_eq!(user.spark_person_id, "author_spark_id");
         assert_eq!(user.email, "author@example.com");
         assert!(msg.contains("Some review."));
+    }
+
+    #[test]
+    fn get_approvals_msg_for_user_with_enabled_notifications_and_filter() {
+        // the approval is for the user with enabled notifications
+        // => message
+        let mut bot = Bot::new();
+        bot.add_user("author_spark_id", "author@example.com");
+
+        {
+            let res = bot.add_filter("author_spark_id", ".*Code-Review\\+2.*");
+            assert!(res.is_ok());
+            let res = bot.get_approvals_msg(get_event());
+            assert!(res.is_none());
+        }
+        {
+            let res = bot.enable_filter("author_spark_id", false);
+            assert!(res.is_ok());
+            let res = bot.get_approvals_msg(get_event());
+            assert!(res.is_some());
+            let (user, msg) = res.unwrap();
+            assert_eq!(user.spark_person_id, "author_spark_id");
+            assert_eq!(user.email, "author@example.com");
+            assert!(msg.contains("Some review."));
+        }
+        {
+            let res = bot.enable_filter("author_spark_id", true);
+            assert!(res.is_ok());
+            let res = bot.add_filter("author_spark_id", "some_non_matching_filter");
+            assert!(res.is_ok());
+            let res = bot.get_approvals_msg(get_event());
+            assert!(res.is_some());
+            let (user, msg) = res.unwrap();
+            assert_eq!(user.spark_person_id, "author_spark_id");
+            assert_eq!(user.email, "author@example.com");
+            assert!(msg.contains("Some review."));
+        }
     }
 
     #[test]
