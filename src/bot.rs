@@ -14,14 +14,14 @@ use spark;
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Filter {
-    pub filter: String,
+    pub regex: String,
     pub enabled: bool,
 }
 
 impl Filter {
-    pub fn new<A: Into<String>>(filter: A) -> Self {
+    pub fn new<A: Into<String>>(regex: A) -> Self {
         Self {
-            filter: filter.into(),
+            regex: regex.into(),
             enabled: true,
         }
     }
@@ -353,11 +353,11 @@ impl Bot {
                 } else {
                     match user.filter.as_mut() {
                         Some(filter) => {
-                            if Regex::new(&filter.filter).is_err() {
+                            if Regex::new(&filter.regex).is_err() {
                                 return Err(AddFilterResult::InvalidFilter);
                             }
                             filter.enabled = enabled;
-                            Ok(filter.filter.clone())
+                            Ok(filter.regex.clone())
                         }
                         None => Err(AddFilterResult::FilterNotConfigured),
                     }
@@ -464,7 +464,7 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
                 Ok(Some(ref filter)) => {
                     format!(
                         "The following filter is configured for you: `{}`. It is **{}**.",
-                        filter.filter,
+                        filter.regex,
                         if filter.enabled {
                             "enabled"
                         } else {
@@ -863,7 +863,7 @@ mod test {
         );
         {
             let filter = bot.get_filter("some_person_id").unwrap().unwrap();
-            assert_eq!(filter.filter, ".*some_word.*");
+            assert_eq!(filter.regex, ".*some_word.*");
             assert_eq!(filter.enabled, false);
         }
         let res = bot.enable_filter("some_person_id", true);
