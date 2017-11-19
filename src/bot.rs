@@ -223,11 +223,6 @@ impl Bot {
                     return None;
                 }
 
-                // if user has configured and enabled a filter try to apply it
-                if self.is_filtered(user_pos, &event) {
-                    return None;
-                }
-
                 // filter all messages that were already sent to the user recently
                 if let Some(cache) = self.msg_cache.as_mut() {
                     let key = MsgCacheLine::new(
@@ -251,6 +246,10 @@ impl Bot {
                 };
 
                 let msg = Self::format_msg(&event, &approval);
+                // if user has configured and enabled a filter try to apply it
+                if self.is_filtered(user_pos, &msg) {
+                    return None;
+                }
                 if !msg.is_empty() { Some(msg) } else { None }
             })
             .collect();
@@ -372,14 +371,12 @@ impl Bot {
         }
     }
 
-    fn is_filtered(&self, user_ref: usize, event: &gerrit::Event) -> bool {
+    fn is_filtered(&self, user_ref: usize, msg: &str) -> bool {
         let user = &self.users[user_ref];
         if let Some(filter) = user.filter.as_ref() {
             if filter.enabled {
                 if let Ok(re) = Regex::new(&filter.regex) {
-                    if let Some(comment) = event.comment.as_ref() {
-                        return re.is_match(comment);
-                    }
+                    return re.is_match(msg);
                 } else {
                     warn!(
                         "User {} has configured invalid filter regex: {}",
@@ -453,7 +450,7 @@ const HELP_MSG: &'static str = r#"Commands:
 
 `disable` -- I will stop notifying you.
 
-`filter [<regex>|enable|disable]` -- Add a `regex` to filter messages by applying the regex to Gerrit *comments*. `enable` and `disable` options enable resp. disable a configured filter. `filter` command without options shows if a filter is configured, and if it is enabled. Note: When adding a filter regex, wrap the regex with ``.
+`filter [<regex>|enable|disable]` -- Add a `regex` to filter messages by applying the regex to the message sent to Spark, that is, you can filter whatever you like in the response from me. `enable` and `disable` options enable resp. disable a configured filter. The `filter` command without options shows if a filter is configured, and if it is enabled. Note: When adding a filter regex, wrap the regex with ``, otherwise Spark will eat all special characters.
 
 `status` -- Show if I am notifying you, and a little bit more information. 😉
 
@@ -747,7 +744,7 @@ mod test {
         bot.add_user("author_spark_id", "author@example.com");
 
         {
-            let res = bot.add_filter("author_spark_id", ".*Code-Review\\+2.*");
+            let res = bot.add_filter("author_spark_id", ".*Code-Review.*");
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(get_event());
             assert!(res.is_none());
