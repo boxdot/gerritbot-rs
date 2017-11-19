@@ -492,79 +492,91 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
             }
         }
         Action::FilterAdd(person_id, filter) => {
-            let resp = match bot.add_filter(&person_id, filter) {
-                Ok(()) => "Filter successfully added and enabled.",
+            Some(match bot.add_filter(&person_id, filter) {
+                Ok(()) => Task::ReplyAndSave(Response::new(
+                    person_id,
+                    "Filter successfully added and enabled.")),
                 Err(err) => {
-                    match err {
-                        AddFilterResult::UserDisabled => {
-                            "Notification for you are disabled. Please enable notifications first, and then add a filter."
-                        }
-                        AddFilterResult::InvalidFilter => {
-                            "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
-                        }
-                        AddFilterResult::UserNotFound => {
-                            "Notification for you are disabled. Please enable notifications first, and then add a filter."
-                        }
-                        AddFilterResult::FilterNotConfigured => {
-                            assert!(false, "this should not be possible");
-                            ""
-                        }
-                    }
+                    Task::Reply(Response::new(
+                        person_id,
+                        match err {
+                            AddFilterResult::UserDisabled => {
+                                "Notification for you are disabled. Please enable notifications first, and then add a filter."
+                            }
+                            AddFilterResult::InvalidFilter => {
+                                "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
+                            }
+                            AddFilterResult::UserNotFound => {
+                                "Notification for you are disabled. Please enable notifications first, and then add a filter."
+                            }
+                            AddFilterResult::FilterNotConfigured => {
+                                assert!(false, "this should not be possible");
+                                ""
+                            }
+                        },
+                    ))
                 }
-            };
-            Some(Task::Reply(Response::new(person_id, resp)))
+            })
         }
         Action::FilterEnable(person_id) => {
-            let resp: String = match bot.enable_filter(&person_id, true) {
+            Some(match bot.enable_filter(&person_id, true) {
                 Ok(filter) => {
-                    format!(
-                        "Filter successfully enabled. The following filter is configured: {}",
-                        filter
-                    )
+                    Task::ReplyAndSave(Response::new(
+                        person_id,
+                        format!(
+                            "Filter successfully enabled. The following filter is configured: {}",
+                            filter
+                        ),
+                    ))
                 }
                 Err(err) => {
-                    match err {
-                        AddFilterResult::UserDisabled => {
-                            "Notification for you are disabled. Please enable notifications first, and then add a filter.".into()
-                        }
-                        AddFilterResult::InvalidFilter => {
-                            "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax".into()
-                        }
-                        AddFilterResult::UserNotFound => {
-                            "Notification for you are disabled. Please enable notifications first, and then add a filter.".into()
-                        }
-                        AddFilterResult::FilterNotConfigured => {
-                            "Cannot enable filter since there is none configured. User `filter <regex>` to add a new filter.".into()
-                        }
-                    }
+                    Task::Reply(Response::new(
+                        person_id,
+                        match err {
+                            AddFilterResult::UserDisabled => {
+                                "Notification for you are disabled. Please enable notifications first, and then add a filter."
+                            }
+                            AddFilterResult::InvalidFilter => {
+                                "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
+                            }
+                            AddFilterResult::UserNotFound => {
+                                "Notification for you are disabled. Please enable notifications first, and then add a filter."
+                            }
+                            AddFilterResult::FilterNotConfigured => {
+                                "Cannot enable filter since there is none configured. User `filter <regex>` to add a new filter."
+                            }
+                        },
+                    ))
                 }
-            };
-            Some(Task::Reply(Response::new(person_id, resp)))
+            })
         }
         Action::FilterDisable(person_id) => {
-            let resp = match bot.enable_filter(&person_id, false) {
-                Ok(_) => "Filter successfully disabled.",
+            Some(match bot.enable_filter(&person_id, false) {
+                Ok(_) => Task::ReplyAndSave(
+                    Response::new(person_id, "Filter successfully disabled."),
+                ),
                 Err(err) => {
-                    match err {
-                        AddFilterResult::UserDisabled => {
-                            "Notification for you are disabled. No need to disable the filter."
-                        }
-                        AddFilterResult::InvalidFilter => {
-                            "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
-                        }
-                        AddFilterResult::UserNotFound => {
-                            "Notification for you are disabled. No need to disable the filter."
-                        }
-                        AddFilterResult::FilterNotConfigured => {
-                            "No need to disable the filter since there is none configured."
-                        }
-                    }
+                    Task::Reply(Response::new(
+                        person_id,
+                        match err {
+                            AddFilterResult::UserDisabled => {
+                                "Notification for you are disabled. No need to disable the filter."
+                            }
+                            AddFilterResult::InvalidFilter => {
+                                "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
+                            }
+                            AddFilterResult::UserNotFound => {
+                                "Notification for you are disabled. No need to disable the filter."
+                            }
+                            AddFilterResult::FilterNotConfigured => {
+                                "No need to disable the filter since there is none configured."
+                            }
+                        },
+                    ))
                 }
-            };
-            Some(Task::Reply(Response::new(person_id, resp)))
+            })
         }
-
-        _ => None,
+        Action::NoOp => None,
     };
     (bot, task)
 }
