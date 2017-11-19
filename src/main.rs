@@ -8,6 +8,7 @@ extern crate iron;
 #[macro_use]
 extern crate log;
 extern crate lru_time_cache;
+extern crate regex;
 extern crate router;
 extern crate rusoto_core;
 extern crate rusoto_sqs;

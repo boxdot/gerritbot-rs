@@ -7,9 +7,25 @@ use std::time::Duration;
 use lru_time_cache::LruCache;
 use serde_json;
 use hlua::{Lua, LuaFunction};
+use regex::Regex;
 
 use gerrit;
 use spark;
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct Filter {
+    filter: String,
+    enabled: bool,
+}
+
+impl Filter {
+    pub fn new<A: Into<String>>(filter: A) -> Self {
+        Self {
+            filter: filter.into(),
+            enabled: true,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct User {
@@ -17,13 +33,15 @@ struct User {
     /// email of the user; assumed to be the same in Spark and Gerrit
     email: spark::Email,
     enabled: bool,
+    filter: Option<Filter>,
 }
 
 impl User {
-    fn new(person_id: spark::PersonId, email: spark::Email) -> User {
-        User {
-            spark_person_id: person_id,
-            email: email,
+    fn new<A: Into<String>>(person_id: A, email: A) -> Self {
+        Self {
+            spark_person_id: person_id.into(),
+            email: email.into(),
+            filter: None,
             enabled: true,
         }
     }
@@ -84,6 +102,14 @@ impl convert::From<serde_json::Error> for BotError {
     fn from(err: serde_json::Error) -> BotError {
         BotError::Serialization(err)
     }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum AddFilterResult {
+    UserNotFound,
+    UserDisabled,
+    InvalidFilter,
+    FilterNotConfigured,
 }
 
 impl Bot {
@@ -266,6 +292,63 @@ impl Bot {
             }
         )
     }
+
+    fn find_user<'a>(&'a mut self, person_id: &str) -> Option<&'a mut User> {
+        // TODO: Fix linear search
+        // TODO: Use this function everywhere
+        self.users.iter_mut().find(
+            |u| u.spark_person_id == person_id,
+        )
+    }
+
+    pub fn add_filter<A>(&mut self, person_id: &str, filter: A) -> Result<(), AddFilterResult>
+    where
+        A: Into<String>,
+    {
+        let user = self.find_user(person_id);
+        match user {
+            Some(user) => {
+                if user.enabled == false {
+                    Err(AddFilterResult::UserDisabled)
+                } else {
+                    let filter: String = filter.into();
+                    if Regex::new(&filter).is_err() {
+                        return Err(AddFilterResult::InvalidFilter);
+                    }
+                    user.filter = Some(Filter::new(filter));
+                    Ok(())
+                }
+            }
+            None => Err(AddFilterResult::UserNotFound),
+        }
+    }
+
+    pub fn enable_filter(
+        &mut self,
+        person_id: &str,
+        enabled: bool,
+    ) -> Result<String /* filter */, AddFilterResult> {
+        let user = self.find_user(person_id);
+        match user {
+            Some(user) => {
+                if user.enabled == false {
+                    Err(AddFilterResult::UserDisabled)
+                } else {
+                    match user.filter.as_mut() {
+                        Some(filter) => {
+                            if Regex::new(&filter.filter).is_err() {
+                                return Err(AddFilterResult::InvalidFilter);
+                            }
+                            filter.enabled = enabled;
+                            Ok(filter.filter.clone())
+                        }
+                        None => Err(AddFilterResult::FilterNotConfigured),
+                    }
+                }
+            }
+            None => Err(AddFilterResult::UserNotFound),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -276,6 +359,9 @@ pub enum Action {
     Help(spark::PersonId),
     Unknown(spark::PersonId),
     Status(spark::PersonId),
+    FilterAdd(spark::PersonId, String /* filter */),
+    FilterEnable(spark::PersonId),
+    FilterDisable(spark::PersonId),
     NoOp,
 }
 
@@ -355,6 +441,79 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
             let status = bot.status_for(&person_id);
             Some(Task::Reply(Response::new(person_id, status)))
         }
+        Action::FilterAdd(person_id, filter) => {
+            let resp = match bot.add_filter(&person_id, filter) {
+                Ok(()) => "Filter successfully added and enabled.",
+                Err(err) => {
+                    match err {
+                        AddFilterResult::UserDisabled => {
+                            "Notification for you are disabled. Please enable notifications first, and then add a filter."
+                        }
+                        AddFilterResult::InvalidFilter => {
+                            "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
+                        }
+                        AddFilterResult::UserNotFound => {
+                            "Notification for you are disabled. Please enable notifications first, and then add a filter."
+                        }
+                        AddFilterResult::FilterNotConfigured => {
+                            assert!(false, "this should not be possible");
+                            ""
+                        }
+                    }
+                }
+            };
+            Some(Task::Reply(Response::new(person_id, resp)))
+        }
+        Action::FilterEnable(person_id) => {
+            let resp: String = match bot.enable_filter(&person_id, true) {
+                Ok(filter) => {
+                    format!(
+                        "Filter successfully enabled. The following filter is configured: {}",
+                        filter
+                    )
+                }
+                Err(err) => {
+                    match err {
+                        AddFilterResult::UserDisabled => {
+                            "Notification for you are disabled. Please enable notifications first, and then add a filter.".into()
+                        }
+                        AddFilterResult::InvalidFilter => {
+                            "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax".into()
+                        }
+                        AddFilterResult::UserNotFound => {
+                            "Notification for you are disabled. Please enable notifications first, and then add a filter.".into()
+                        }
+                        AddFilterResult::FilterNotConfigured => {
+                            "Cannot enable filter since there is none configured. User `filter <regex>` to add a new filter.".into()
+                        }
+                    }
+                }
+            };
+            Some(Task::Reply(Response::new(person_id, resp)))
+        }
+        Action::FilterDisable(person_id) => {
+            let resp = match bot.enable_filter(&person_id, false) {
+                Ok(_) => "Filter successfully disabled.",
+                Err(err) => {
+                    match err {
+                        AddFilterResult::UserDisabled => {
+                            "Notification for you are disabled. No need to disable the filter."
+                        }
+                        AddFilterResult::InvalidFilter => {
+                            "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
+                        }
+                        AddFilterResult::UserNotFound => {
+                            "Notification for you are disabled. No need to disable the filter."
+                        }
+                        AddFilterResult::FilterNotConfigured => {
+                            "No need to disable the filter since there is none configured."
+                        }
+                    }
+                }
+            };
+            Some(Task::Reply(Response::new(person_id, resp)))
+        }
+
         _ => None,
     };
     (bot, task)
@@ -368,7 +527,7 @@ mod test {
     use serde_json;
 
     use gerrit;
-    use super::{Bot, User};
+    use super::*;
 
     #[test]
     fn add_user() {
@@ -421,10 +580,7 @@ mod test {
     fn enable_existent_user() {
         let test = |enable| {
             let mut bot = Bot::new();
-            bot.users.push(User::new(
-                String::from("some_person_id"),
-                String::from("some@example.com"),
-            ));
+            bot.add_user("some_person_id", "some@example.com");
             let num_users = bot.num_users();
 
             bot.enable("some_person_id", "some@example.com", enable);
@@ -586,5 +742,117 @@ mod test {
         event.approvals.as_mut().unwrap()[0].approval_type = String::from("Some new type");
         let res = Bot::format_msg(&event, &event.approvals.as_ref().unwrap()[0]);
         assert!(res.is_empty());
+    }
+
+    #[test]
+    fn add_invalid_filter_for_existing_user() {
+        let mut bot = Bot::new();
+        bot.add_user("some_person_id", "some@example.com");
+
+        let res = bot.add_filter("some_person_id", ".some_weard_regex/[");
+        assert_eq!(res, Err(AddFilterResult::InvalidFilter));
+        assert!(
+            bot.users
+                .iter()
+                .position(|u| {
+                    u.spark_person_id == "some_person_id" && u.email == "some@example.com" &&
+                        u.filter == None
+                })
+                .is_some()
+        );
+
+        let res = bot.enable_filter("some_person_id", true);
+        assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
+        let res = bot.enable_filter("some_person_id", false);
+        assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
+    }
+
+    #[test]
+    fn add_valid_filter_for_existing_user() {
+        let mut bot = Bot::new();
+        bot.add_user("some_person_id", "some@example.com");
+
+        let res = bot.add_filter("some_person_id", ".*some_word.*");
+        assert!(res.is_ok());
+        assert!(
+            bot.users
+                .iter()
+                .position(|u| {
+                    u.spark_person_id == "some_person_id" && u.email == "some@example.com" &&
+                        u.filter == Some(Filter::new(".*some_word.*"))
+                })
+                .is_some()
+        );
+
+        let res = bot.enable_filter("some_person_id", false);
+        assert_eq!(res, Ok(String::from(".*some_word.*")));
+        assert!(
+            bot.users
+                .iter()
+                .position(|u| {
+                    u.spark_person_id == "some_person_id" && u.email == "some@example.com" &&
+                        u.filter.as_ref().map(|f| f.enabled) == Some(false)
+                })
+                .is_some()
+        );
+        let res = bot.enable_filter("some_person_id", true);
+        assert_eq!(res, Ok(String::from(".*some_word.*")));
+        assert!(
+            bot.users
+                .iter()
+                .position(|u| {
+                    u.spark_person_id == "some_person_id" && u.email == "some@example.com" &&
+                        u.filter.as_ref().map(|f| f.enabled) == Some(true)
+                })
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn add_valid_filter_for_non_existing_user() {
+        let mut bot = Bot::new();
+        let res = bot.add_filter("some_person_id", ".*some_word.*");
+        assert_eq!(res, Err(AddFilterResult::UserNotFound));
+        let res = bot.enable_filter("some_person_id", true);
+        assert_eq!(res, Err(AddFilterResult::UserNotFound));
+        let res = bot.enable_filter("some_person_id", false);
+        assert_eq!(res, Err(AddFilterResult::UserNotFound));
+    }
+
+    #[test]
+    fn add_valid_filter_for_disabled_user() {
+        let mut bot = Bot::new();
+        bot.add_user("some_person_id", "some@example.com");
+        bot.users[0].enabled = false;
+
+        let res = bot.add_filter("some_person_id", ".*some_word.*");
+        assert_eq!(res, Err(AddFilterResult::UserDisabled));
+        let res = bot.enable_filter("some_person_id", true);
+        assert_eq!(res, Err(AddFilterResult::UserDisabled));
+        let res = bot.enable_filter("some_person_id", false);
+        assert_eq!(res, Err(AddFilterResult::UserDisabled));
+    }
+
+    #[test]
+    fn enable_non_configured_filter_for_existing_user() {
+        let mut bot = Bot::new();
+        bot.add_user("some_person_id", "some@example.com");
+
+        let res = bot.enable_filter("some_person_id", true);
+        assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
+        let res = bot.enable_filter("some_person_id", false);
+        assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
+    }
+
+    #[test]
+    fn enable_invalid_filter_for_existing_user() {
+        let mut bot = Bot::new();
+        bot.add_user("some_person_id", "some@example.com");
+        bot.users[0].filter = Some(Filter::new("invlide_filter_set_from_outside["));
+
+        let res = bot.enable_filter("some_person_id", true);
+        assert_eq!(res, Err(AddFilterResult::InvalidFilter));
+        let res = bot.enable_filter("some_person_id", false);
+        assert_eq!(res, Err(AddFilterResult::InvalidFilter));
     }
 }
