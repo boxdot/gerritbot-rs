@@ -13,9 +13,9 @@ use gerrit;
 use spark;
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq)]
-struct Filter {
-    filter: String,
-    enabled: bool,
+pub struct Filter {
+    pub filter: String,
+    pub enabled: bool,
 }
 
 impl Filter {
@@ -293,7 +293,7 @@ impl Bot {
         )
     }
 
-    fn find_user<'a>(&'a mut self, person_id: &str) -> Option<&'a mut User> {
+    fn find_user_mut<'a>(&'a mut self, person_id: &str) -> Option<&'a mut User> {
         // TODO: Fix linear search
         // TODO: Use this function everywhere
         self.users.iter_mut().find(
@@ -301,11 +301,17 @@ impl Bot {
         )
     }
 
+    fn find_user<'a>(&'a self, person_id: &str) -> Option<&'a User> {
+        // TODO: Fix linear search
+        // TODO: Use this function everywhere
+        self.users.iter().find(|u| u.spark_person_id == person_id)
+    }
+
     pub fn add_filter<A>(&mut self, person_id: &str, filter: A) -> Result<(), AddFilterResult>
     where
         A: Into<String>,
     {
-        let user = self.find_user(person_id);
+        let user = self.find_user_mut(person_id);
         match user {
             Some(user) => {
                 if user.enabled == false {
@@ -323,12 +329,23 @@ impl Bot {
         }
     }
 
+    pub fn get_filter<'a>(
+        &'a self,
+        person_id: &str,
+    ) -> Result<Option<&'a Filter>, AddFilterResult> {
+        let user = self.find_user(person_id);
+        match user {
+            Some(user) => Ok(user.filter.as_ref()),
+            None => Err(AddFilterResult::UserNotFound),
+        }
+    }
+
     pub fn enable_filter(
         &mut self,
         person_id: &str,
         enabled: bool,
     ) -> Result<String /* filter */, AddFilterResult> {
-        let user = self.find_user(person_id);
+        let user = self.find_user_mut(person_id);
         match user {
             Some(user) => {
                 if user.enabled == false {
@@ -359,6 +376,7 @@ pub enum Action {
     Help(spark::PersonId),
     Unknown(spark::PersonId),
     Status(spark::PersonId),
+    FilterStatus(spark::PersonId),
     FilterAdd(spark::PersonId, String /* filter */),
     FilterEnable(spark::PersonId),
     FilterDisable(spark::PersonId),
@@ -440,6 +458,38 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
         Action::Status(person_id) => {
             let status = bot.status_for(&person_id);
             Some(Task::Reply(Response::new(person_id, status)))
+        }
+        Action::FilterStatus(person_id) => {
+            let resp: String = match bot.get_filter(&person_id) {
+                Ok(Some(ref filter)) => {
+                    format!(
+                        "The following filter is configured for you: `{}`. It is **{}**.",
+                        filter.filter,
+                        if filter.enabled {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    )
+                }
+                Ok(None) => "No filter is configured for you.".into(),
+                Err(err) => {
+                    match err {
+                        AddFilterResult::UserNotFound => {
+                            "Notification for you are disabled. Please enable notifications first, and then add a filter.".into()
+                        }
+                        _ => {
+                            error!("Invalid action arm with Error: {:?}", err);
+                            "".into()
+                        }
+                    }
+                }
+            };
+            if !resp.is_empty() {
+                Some(Task::Reply(Response::new(person_id, resp)))
+            } else {
+                None
+            }
         }
         Action::FilterAdd(person_id, filter) => {
             let resp = match bot.add_filter(&person_id, filter) {
@@ -784,6 +834,10 @@ mod test {
                 .is_some()
         );
 
+        {
+            let filter = bot.get_filter("some_person_id");
+            assert_eq!(filter, Ok(Some(&Filter::new(".*some_word.*"))));
+        }
         let res = bot.enable_filter("some_person_id", false);
         assert_eq!(res, Ok(String::from(".*some_word.*")));
         assert!(
@@ -795,6 +849,11 @@ mod test {
                 })
                 .is_some()
         );
+        {
+            let filter = bot.get_filter("some_person_id").unwrap().unwrap();
+            assert_eq!(filter.filter, ".*some_word.*");
+            assert_eq!(filter.enabled, false);
+        }
         let res = bot.enable_filter("some_person_id", true);
         assert_eq!(res, Ok(String::from(".*some_word.*")));
         assert!(
@@ -806,6 +865,10 @@ mod test {
                 })
                 .is_some()
         );
+        {
+            let filter = bot.get_filter("some_person_id");
+            assert_eq!(filter, Ok(Some(&Filter::new(".*some_word.*"))));
+        }
     }
 
     #[test]

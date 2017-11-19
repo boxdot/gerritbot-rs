@@ -6,6 +6,8 @@ extern crate hyper;
 extern crate hyper_native_tls;
 extern crate iron;
 #[macro_use]
+extern crate lazy_static;
+#[macro_use]
 extern crate log;
 extern crate lru_time_cache;
 extern crate regex;
