@@ -1,7 +1,8 @@
-use std::path::Path;
-use std::io;
-use std::fs::File;
+use std::collections::HashMap;
 use std::convert;
+use std::fs::File;
+use std::io;
+use std::path::Path;
 use std::time::Duration;
 
 use lru_time_cache::LruCache;
@@ -84,6 +85,10 @@ pub struct Bot {
     /// cache.
     #[serde(skip_serializing, skip_deserializing)]
     msg_cache: Option<LruCache<MsgCacheLine, ()>>,
+    #[serde(skip_serializing, skip_deserializing)]
+    person_id_index: HashMap<String, usize>,
+    #[serde(skip_serializing, skip_deserializing)]
+    email_index: HashMap<String, usize>,
 }
 
 #[derive(Debug)]
@@ -117,6 +122,8 @@ impl Bot {
         Bot {
             users: Vec::new(),
             msg_cache: None,
+            person_id_index: HashMap::new(),
+            email_index: HashMap::new(),
         }
     }
 
@@ -130,6 +137,8 @@ impl Bot {
                     capacity,
                 ),
             ),
+            person_id_index: HashMap::new(),
+            email_index: HashMap::new(),
         }
     }
 
@@ -140,15 +149,31 @@ impl Bot {
             );
     }
 
+    fn index_users(&mut self) {
+        for (user_pos, user) in self.users.iter().enumerate() {
+            self.person_id_index.insert(
+                user.spark_person_id.clone(),
+                user_pos,
+            );
+            self.email_index.insert(user.email.clone(), user_pos);
+        }
+    }
+
+    // Note: This method is not idempotent, and in particular, when adding the same user twice,
+    // it will completely mess up the indexes.
     fn add_user<'a>(&'a mut self, person_id: &str, email: &str) -> &'a mut User {
-        self.users.push(User::new(
-            String::from(person_id),
-            String::from(email),
-        ));
+        let user_pos = self.users.len();
+        self.users.push(User::new(person_id, email));
+        self.person_id_index.insert(person_id.into(), user_pos);
+        self.email_index.insert(email.into(), user_pos);
         self.users.last_mut().unwrap()
     }
 
-    fn find_or_add_user<'a>(&'a mut self, person_id: &str, email: &str) -> &'a mut User {
+    fn find_or_add_user_by_person_id<'a>(
+        &'a mut self,
+        person_id: &str,
+        email: &str,
+    ) -> &'a mut User {
         let pos = self.users.iter().position(
             |u| u.spark_person_id == person_id,
         );
@@ -159,8 +184,22 @@ impl Bot {
         user
     }
 
+    fn find_user_mut<'a>(&'a mut self, person_id: &str) -> Option<&'a mut User> {
+        self.person_id_index.get(person_id).cloned().map(
+            move |pos| {
+                &mut self.users[pos]
+            },
+        )
+    }
+
+    fn find_user<'a>(&'a self, person_id: &str) -> Option<&'a User> {
+        self.person_id_index.get(person_id).cloned().map(|pos| {
+            &self.users[pos]
+        })
+    }
+
     fn enable<'a>(&'a mut self, person_id: &str, email: &str, enabled: bool) -> &'a User {
-        let user: &'a mut User = self.find_or_add_user(person_id, email);
+        let user: &'a mut User = self.find_or_add_user_by_person_id(person_id, email);
         user.enabled = enabled;
         user
     }
@@ -200,12 +239,11 @@ impl Bot {
         }
         let owner_email = tryopt![change.owner.email.as_ref()];
 
-        // TODO: Fix linear search
-        let user_pos = tryopt![
-            self.users.iter().position(
-                |u| u.enabled && &u.email == owner_email
-            ) // bug in rustfmt: it adds ',' automatically
-        ];
+        // try to find the use and check it is enabled
+        let user_pos = *tryopt![self.email_index.get(owner_email)];
+        if !self.users[user_pos].enabled {
+            return None;
+        }
 
         let msgs: Vec<String> = approvals
             .iter()
@@ -275,7 +313,8 @@ impl Bot {
         P: AsRef<Path>,
     {
         let f = File::open(filename)?;
-        let bot: Bot = serde_json::from_reader(f)?;
+        let mut bot: Bot = serde_json::from_reader(f)?;
+        bot.index_users();
         Ok(bot)
     }
 
@@ -284,7 +323,7 @@ impl Bot {
     }
 
     pub fn status_for(&self, person_id: &str) -> String {
-        let user = self.users.iter().find(|u| u.spark_person_id == person_id);
+        let user = self.find_user(person_id);
         let enabled = user.map_or(false, |u| u.enabled);
         format!(
             "Notifications for you are **{}**. I am notifying another {} user(s).",
@@ -295,20 +334,6 @@ impl Bot {
                 self.num_users() - if enabled { 1 } else { 0 }
             }
         )
-    }
-
-    fn find_user_mut<'a>(&'a mut self, person_id: &str) -> Option<&'a mut User> {
-        // TODO: Fix linear search
-        // TODO: Use this function everywhere
-        self.users.iter_mut().find(
-            |u| u.spark_person_id == person_id,
-        )
-    }
-
-    fn find_user<'a>(&'a self, person_id: &str) -> Option<&'a User> {
-        // TODO: Fix linear search
-        // TODO: Use this function everywhere
-        self.users.iter().find(|u| u.spark_person_id == person_id)
     }
 
     pub fn add_filter<A>(&mut self, person_id: &str, filter: A) -> Result<(), AddFilterResult>
@@ -371,8 +396,8 @@ impl Bot {
         }
     }
 
-    fn is_filtered(&self, user_ref: usize, msg: &str) -> bool {
-        let user = &self.users[user_ref];
+    fn is_filtered(&self, user_pos: usize, msg: &str) -> bool {
+        let user = &self.users[user_pos];
         if let Some(filter) = user.filter.as_ref() {
             if filter.enabled {
                 if let Ok(re) = Regex::new(&filter.regex) {
@@ -692,6 +717,38 @@ mod test {
         let event: Result<gerrit::Event, _> = serde_json::from_str(EVENT_JSON);
         assert!(event.is_ok());
         event.unwrap()
+    }
+
+    #[test]
+    fn test_add_user() {
+        let mut bot = Bot::new();
+        bot.add_user("some_person_id", "some@example.com");
+        assert_eq!(bot.users.len(), 1);
+        assert_eq!(bot.person_id_index.len(), 1);
+        assert_eq!(bot.email_index.len(), 1);
+        assert_eq!(bot.users[0].spark_person_id, "some_person_id");
+        assert_eq!(bot.users[0].email, "some@example.com");
+        assert_eq!(bot.person_id_index.get("some_person_id"), Some(&0));
+        assert_eq!(bot.email_index.get("some@example.com"), Some(&0));
+
+        bot.add_user("some_person_id_2", "some_2@example.com");
+        assert_eq!(bot.users.len(), 2);
+        assert_eq!(bot.person_id_index.len(), 2);
+        assert_eq!(bot.email_index.len(), 2);
+        assert_eq!(bot.users[1].spark_person_id, "some_person_id_2");
+        assert_eq!(bot.users[1].email, "some_2@example.com");
+        assert_eq!(bot.person_id_index.get("some_person_id_2"), Some(&1));
+        assert_eq!(bot.email_index.get("some_2@example.com"), Some(&1));
+
+        let user = bot.find_user("some_person_id");
+        assert!(user.is_some());
+        assert_eq!(user.unwrap().spark_person_id, "some_person_id");
+        assert_eq!(user.unwrap().email, "some@example.com");
+
+        let user = bot.find_user("some_person_id_2");
+        assert!(user.is_some());
+        assert_eq!(user.unwrap().spark_person_id, "some_person_id_2");
+        assert_eq!(user.unwrap().email, "some_2@example.com");
     }
 
     #[test]
