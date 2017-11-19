@@ -8,6 +8,7 @@ use hyper;
 use hyper_native_tls;
 use iron::prelude::*;
 use iron::status;
+use regex::Regex;
 use router::Router;
 use serde;
 use serde_json;
@@ -338,12 +339,26 @@ impl Message {
 
     /// Convert Spark message to bot action
     pub fn into_action(self) -> bot::Action {
+        lazy_static!(
+            static ref FILTER_REGEX: Regex = Regex::new(
+                r"^filter (.*)$"
+            ).unwrap();
+        );
+
         match &self.text.trim().to_lowercase()[..] {
             "enable" => bot::Action::Enable(self.person_id, self.person_email),
             "disable" => bot::Action::Disable(self.person_id, self.person_email),
             "status" => bot::Action::Status(self.person_id),
             "help" => bot::Action::Help(self.person_id),
-            _ => bot::Action::Unknown(self.person_id),
+            "filter" => bot::Action::FilterStatus(self.person_id),
+            "filter enable" => bot::Action::FilterEnable(self.person_id),
+            "filter disable" => bot::Action::FilterDisable(self.person_id),
+            text => {
+                match FILTER_REGEX.captures(text).and_then(|cap| cap.get(1)) {
+                    Some(m) => bot::Action::FilterAdd(self.person_id, String::from(m.as_str())),
+                    None => bot::Action::Unknown(self.person_id),
+                }
+            }
         }
     }
 }
