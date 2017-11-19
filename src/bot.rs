@@ -286,10 +286,13 @@ pub struct Response {
 }
 
 impl Response {
-    pub fn new(person_id: spark::PersonId, message: String) -> Response {
+    pub fn new<A>(person_id: spark::PersonId, message: A) -> Response
+    where
+        A: Into<String>,
+    {
         Response {
             person_id: person_id,
-            message: message,
+            message: message.into(),
         }
     }
 }
@@ -333,18 +336,12 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
     let task = match action {
         Action::Enable(person_id, email) => {
             bot.enable(&person_id, &email, true);
-            let task = Task::ReplyAndSave(Response::new(
-                person_id,
-                String::from("Got it! Happy reviewing!"),
-            ));
+            let task = Task::ReplyAndSave(Response::new(person_id, "Got it! Happy reviewing!"));
             Some(task)
         }
         Action::Disable(person_id, email) => {
             bot.enable(&person_id, &email, false);
-            let task = Task::ReplyAndSave(Response::new(
-                person_id,
-                String::from("Got it! I will stay silent."),
-            ));
+            let task = Task::ReplyAndSave(Response::new(person_id, "Got it! I will stay silent."));
             Some(task)
         }
         Action::UpdateApprovals(event) => {
@@ -352,16 +349,8 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
                 Task::Reply(Response::new(user.spark_person_id.clone(), message))
             })
         }
-        Action::Help(person_id) => {
-            Some(Task::Reply(
-                Response::new(person_id, String::from(HELP_MSG)),
-            ))
-        }
-        Action::Unknown(person_id) => {
-            Some(Task::Reply(
-                Response::new(person_id, String::from(GREETINGS_MSG)),
-            ))
-        }
+        Action::Help(person_id) => Some(Task::Reply(Response::new(person_id, HELP_MSG))),
+        Action::Unknown(person_id) => Some(Task::Reply(Response::new(person_id, GREETINGS_MSG))),
         Action::Status(person_id) => {
             let status = bot.status_for(&person_id);
             Some(Task::Reply(Response::new(person_id, status)))
