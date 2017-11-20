@@ -170,7 +170,7 @@ impl fmt::Display for Error {
             Error::HyperError(ref err) => fmt::Display::fmt(err, f),
             Error::SqsError(ref err) => fmt::Display::fmt(err, f),
             Error::JsonError(ref err) => fmt::Display::fmt(err, f),
-            Error::RegisterWebhook(ref msg) => fmt::Display::fmt(msg, f),
+            Error::RegisterWebhook(ref msg) |
             Error::DeleteWebhook(ref msg) => fmt::Display::fmt(msg, f),
         }
     }
@@ -182,7 +182,7 @@ impl error::Error for Error {
             Error::HyperError(ref err) => err.description(),
             Error::SqsError(ref err) => err.description(),
             Error::JsonError(ref err) => err.description(),
-            Error::RegisterWebhook(ref msg) => msg,
+            Error::RegisterWebhook(ref msg) |
             Error::DeleteWebhook(ref msg) => msg,
         }
     }
@@ -192,7 +192,7 @@ impl error::Error for Error {
             Error::HyperError(ref err) => err.cause(),
             Error::SqsError(ref err) => err.cause(),
             Error::JsonError(ref err) => err.cause(),
-            Error::RegisterWebhook(_) => None,
+            Error::RegisterWebhook(_) |
             Error::DeleteWebhook(_) => None,
         }
     }
@@ -329,9 +329,9 @@ impl Message {
         let resp = client.get_message_text(&self.id).map_err(
             |err| format!("Invalid response from spark: {}", err),
         )?;
-        let msg: Message = serde_json::from_reader(resp).map_err(|err| {
-            String::from(format!("Could not parse json: {}", err))
-        })?;
+        let msg: Message = serde_json::from_reader(resp).map_err(
+            |err| format!("Could not parse json: {}", err),
+        )?;
         self.text = msg.text;
         Ok(())
     }
@@ -386,7 +386,7 @@ pub fn webhook_handler(
 
 pub fn webhook_event_stream(
     client: SparkClient,
-    listen_url: String,
+    listen_url: &str,
     remote: tokio_core::reactor::Remote,
 ) -> Result<Box<Stream<Item = bot::Action, Error = String>>, Error> {
     let (tx, rx) = channel(1);
@@ -414,11 +414,11 @@ pub fn webhook_event_stream(
         .map_err(|err| format!("Error from Spark: {:?}", err));
 
     // start listening
-    let listen_url_clone = listen_url.clone();
+    let listen_url_string = listen_url.to_string();
     thread::spawn(move || {
         let mut iron = Iron::new(Chain::new(router));
         iron.threads = 2;
-        iron.http(&listen_url_clone).unwrap()
+        iron.http(&listen_url_string).unwrap()
     });
     info!("Listening to Spark on {}", listen_url);
 

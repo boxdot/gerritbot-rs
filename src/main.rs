@@ -82,7 +82,7 @@ fn main() {
     let spark_stream = if !args.spark_sqs.is_empty() {
         spark::sqs_event_stream(spark_client.clone(), args.spark_sqs, args.spark_sqs_region)
     } else {
-        spark::webhook_event_stream(spark_client.clone(), args.spark_endpoint, core.remote())
+        spark::webhook_event_stream(spark_client.clone(), &args.spark_endpoint, core.remote())
     };
     let spark_stream = spark_stream.unwrap_or_else(|err| {
         error!("Could not start listening to spark: {}", err);

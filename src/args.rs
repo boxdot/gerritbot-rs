@@ -21,9 +21,9 @@ pub struct Args {
     pub bot_msg_capacity: usize,
 }
 
-const SPARK_URL: &'static str = "https://api.ciscospark.com/v1";
+const SPARK_URL: &str = "https://api.ciscospark.com/v1";
 
-const USAGE: &'static str = r#"
+const USAGE: &str = r#"
 -v, --verbose... 'Verbosity level'
 -q, --quiet      'Quiet'
 "#;
@@ -109,7 +109,7 @@ pub fn parse_args() -> Args {
         gerrit_port: if matches.is_present("gerrit-port") {
             value_t_or_exit!(matches.value_of("gerrit-port"), u16)
         } else {
-            29418
+            29_418
         },
         gerrit_username: String::from(matches.value_of("gerrit-username").unwrap()),
         gerrit_priv_key_path: PathBuf::from(matches.value_of("gerrit-priv-key-path").unwrap()),

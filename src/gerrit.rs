@@ -94,9 +94,10 @@ pub struct Event {
 impl Event {
     pub fn into_action(self) -> bot::Action {
         if self.approvals.is_some() {
-            return bot::Action::UpdateApprovals(self);
+            bot::Action::UpdateApprovals(Box::new(self))
+        } else {
+            bot::Action::NoOp
         }
-        bot::Action::NoOp
     }
 }
 
