@@ -6,7 +6,6 @@ use std::thread;
 use ssh2;
 use serde_json;
 
-use futures::stream::BoxStream;
 use futures::sync::mpsc::{channel, Receiver, Sender};
 use futures::{Future, Sink, Stream};
 
@@ -219,8 +218,8 @@ fn new_ssh_channel<'a>(
 
 fn receiver_into_event_stream(
     rx: Receiver<Result<String, StreamError>>,
-) -> BoxStream<bot::Action, String> {
-    rx.then(|event| {
+) -> Box<Stream<Item = bot::Action, Error = String>> {
+    let stream = rx.then(|event| {
         // parse each json message as event (if we did not get an error)
         event.unwrap().map(|event| {
             let json: String = event;
@@ -229,8 +228,8 @@ fn receiver_into_event_stream(
             res.ok()
         })
     }).filter_map(|event| event.map(Event::into_action))
-        .map_err(|err| format!("Stream error from Gerrit: {:?}", err))
-        .boxed()
+        .map_err(|err| format!("Stream error from Gerrit: {:?}", err));
+    Box::new(stream)
 }
 
 pub fn event_stream(
@@ -238,7 +237,7 @@ pub fn event_stream(
     port: u16,
     username: String,
     priv_key_path: PathBuf,
-) -> BoxStream<bot::Action, String> {
+) -> Box<Stream<Item = bot::Action, Error = String>> {
     let hostport = format!("{}:{}", host, port);
     let pub_key_path = get_pub_key_path(&priv_key_path);
     debug!("Will use public key: {}", pub_key_path.to_str().unwrap());
