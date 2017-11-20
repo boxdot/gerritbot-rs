@@ -68,7 +68,7 @@ pub fn sqs_receiver(
                 Ok(resp) => {
                     if let Some(messages) = resp.messages {
                         let mut tx_loop = tx.clone();
-                        for msg in messages.into_iter() {
+                        for msg in messages {
                             match tx_loop.clone().send(msg.clone()).wait() {
                                 Ok(s) => {
                                     tx_loop = s;

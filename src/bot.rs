@@ -223,7 +223,7 @@ impl Bot {
         )).unwrap()
     }
 
-    fn get_approvals_msg(&mut self, event: gerrit::Event) -> Option<(&User, String)> {
+    fn get_approvals_msg(&mut self, event: &gerrit::Event) -> Option<(&User, String)> {
         debug!("Incoming approvals: {:?}", event);
 
         if event.approvals.is_none() {
@@ -283,7 +283,7 @@ impl Bot {
                     }
                 };
 
-                let msg = Self::format_msg(&event, &approval);
+                let msg = Self::format_msg(event, approval);
                 // if user has configured and enabled a filter try to apply it
                 if self.is_filtered(user_pos, &msg) {
                     return None;
@@ -343,7 +343,7 @@ impl Bot {
         let user = self.find_user_mut(person_id);
         match user {
             Some(user) => {
-                if user.enabled == false {
+                if !user.enabled {
                     Err(AddFilterResult::UserDisabled)
                 } else {
                     let filter: String = filter.into();
@@ -377,7 +377,7 @@ impl Bot {
         let user = self.find_user_mut(person_id);
         match user {
             Some(user) => {
-                if user.enabled == false {
+                if !user.enabled {
                     Err(AddFilterResult::UserDisabled)
                 } else {
                     match user.filter.as_mut() {
@@ -411,7 +411,7 @@ impl Bot {
                 }
             }
         }
-        return false;
+        false
     }
 }
 
@@ -419,7 +419,7 @@ impl Bot {
 pub enum Action {
     Enable(spark::PersonId, spark::Email),
     Disable(spark::PersonId, spark::Email),
-    UpdateApprovals(gerrit::Event),
+    UpdateApprovals(Box<gerrit::Event>),
     Help(spark::PersonId),
     Unknown(spark::PersonId),
     Status(spark::PersonId),
@@ -454,8 +454,8 @@ pub enum Task {
     ReplyAndSave(Response),
 }
 
-const GREETINGS_MSG: &'static str =
-    r#"Hi. I am GerritBot (**in a beta phase**). I can watch Gerrit reviews for you, and notify you about new +1/-1's.
+const GREETINGS_MSG: &str =
+r#"Hi. I am GerritBot (**in a beta phase**). I can watch Gerrit reviews for you, and notify you about new +1/-1's.
 
 To enable notifications, just type in **enable**. A small note: your email in Spark and in Gerrit has to be the same. Otherwise, I can't match your accounts.
 
@@ -469,7 +469,7 @@ and is licensed by
 [ CC 3.0 BY](http://creativecommons.org/licenses/by/3.0/).
 "#;
 
-const HELP_MSG: &'static str = r#"Commands:
+const HELP_MSG: &str = r#"Commands:
 
 `enable` -- I will start notifying you.
 
@@ -502,7 +502,7 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
             Some(task)
         }
         Action::UpdateApprovals(event) => {
-            bot.get_approvals_msg(event).map(|(user, message)| {
+            bot.get_approvals_msg(&event).map(|(user, message)| {
                 Task::Reply(Response::new(user.spark_person_id.clone(), message))
             })
         }
@@ -514,7 +514,7 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
         }
         Action::FilterStatus(person_id) => {
             let resp: String = match bot.get_filter(&person_id) {
-                Ok(Some(ref filter)) => {
+                Ok(Some(filter)) => {
                     format!(
                         "The following filter is configured for you: `{}`. It is **{}**.",
                         filter.regex,
@@ -553,14 +553,12 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
                     Task::Reply(Response::new(
                         person_id,
                         match err {
-                            AddFilterResult::UserDisabled => {
+                            AddFilterResult::UserDisabled |
+                            AddFilterResult::UserNotFound => {
                                 "Notification for you are disabled. Please enable notifications first, and then add a filter."
                             }
                             AddFilterResult::InvalidFilter => {
                                 "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
-                            }
-                            AddFilterResult::UserNotFound => {
-                                "Notification for you are disabled. Please enable notifications first, and then add a filter."
                             }
                             AddFilterResult::FilterNotConfigured => {
                                 assert!(false, "this should not be possible");
@@ -586,14 +584,12 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
                     Task::Reply(Response::new(
                         person_id,
                         match err {
-                            AddFilterResult::UserDisabled => {
+                            AddFilterResult::UserDisabled |
+                            AddFilterResult::UserNotFound => {
                                 "Notification for you are disabled. Please enable notifications first, and then add a filter."
                             }
                             AddFilterResult::InvalidFilter => {
                                 "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
-                            }
-                            AddFilterResult::UserNotFound => {
-                                "Notification for you are disabled. Please enable notifications first, and then add a filter."
                             }
                             AddFilterResult::FilterNotConfigured => {
                                 "Cannot enable filter since there is none configured. User `filter <regex>` to add a new filter."
@@ -612,14 +608,12 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
                     Task::Reply(Response::new(
                         person_id,
                         match err {
-                            AddFilterResult::UserDisabled => {
+                            AddFilterResult::UserDisabled |
+                            AddFilterResult::UserNotFound => {
                                 "Notification for you are disabled. No need to disable the filter."
                             }
                             AddFilterResult::InvalidFilter => {
                                 "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
-                            }
-                            AddFilterResult::UserNotFound => {
-                                "Notification for you are disabled. No need to disable the filter."
                             }
                             AddFilterResult::FilterNotConfigured => {
                                 "No need to disable the filter since there is none configured."
@@ -759,7 +753,7 @@ mod test {
     fn get_approvals_msg_for_empty_bot() {
         // bot does not have the user => no message
         let mut bot = Bot::new();
-        let res = bot.get_approvals_msg(get_event());
+        let res = bot.get_approvals_msg(&get_event());
         assert!(res.is_none());
     }
 
@@ -768,7 +762,7 @@ mod test {
         // the approval is from the author => no message
         let mut bot = Bot::new();
         bot.add_user("approver_spark_id", "approver@example.com");
-        let res = bot.get_approvals_msg(get_event());
+        let res = bot.get_approvals_msg(&get_event());
         assert!(res.is_none());
     }
 
@@ -779,7 +773,7 @@ mod test {
         let mut bot = Bot::new();
         bot.add_user("author_spark_id", "author@example.com");
         bot.users[0].enabled = false;
-        let res = bot.get_approvals_msg(get_event());
+        let res = bot.get_approvals_msg(&get_event());
         assert!(res.is_none());
     }
 
@@ -789,7 +783,7 @@ mod test {
         // => message
         let mut bot = Bot::new();
         bot.add_user("author_spark_id", "author@example.com");
-        let res = bot.get_approvals_msg(get_event());
+        let res = bot.get_approvals_msg(&get_event());
         assert!(res.is_some());
         let (user, msg) = res.unwrap();
         assert_eq!(user.spark_person_id, "author_spark_id");
@@ -807,13 +801,13 @@ mod test {
         {
             let res = bot.add_filter("author_spark_id", ".*Code-Review.*");
             assert!(res.is_ok());
-            let res = bot.get_approvals_msg(get_event());
+            let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_none());
         }
         {
             let res = bot.enable_filter("author_spark_id", false);
             assert!(res.is_ok());
-            let res = bot.get_approvals_msg(get_event());
+            let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
             let (user, msg) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
@@ -825,7 +819,7 @@ mod test {
             assert!(res.is_ok());
             let res = bot.add_filter("author_spark_id", "some_non_matching_filter");
             assert!(res.is_ok());
-            let res = bot.get_approvals_msg(get_event());
+            let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
             let (user, msg) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
@@ -841,7 +835,7 @@ mod test {
         let mut bot = Bot::with_msg_cache(10, Duration::from_secs(1));
         bot.add_user("author_spark_id", "author@example.com");
         {
-            let res = bot.get_approvals_msg(get_event());
+            let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
             let (user, msg) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
@@ -849,7 +843,7 @@ mod test {
             assert!(msg.contains("Some review."));
         }
         {
-            let res = bot.get_approvals_msg(get_event());
+            let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_none());
         }
     }
@@ -861,7 +855,7 @@ mod test {
         let mut bot = Bot::with_msg_cache(10, Duration::from_millis(50));
         bot.add_user("author_spark_id", "author@example.com");
         {
-            let res = bot.get_approvals_msg(get_event());
+            let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
             let (user, msg) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
@@ -870,7 +864,7 @@ mod test {
         }
         thread::sleep(Duration::from_millis(200));
         {
-            let res = bot.get_approvals_msg(get_event());
+            let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
             let (user, msg) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
@@ -889,19 +883,19 @@ mod test {
         {
             let mut event = get_event();
             event.change.subject = String::from("A");
-            let res = bot.get_approvals_msg(event);
+            let res = bot.get_approvals_msg(&event);
             assert!(res.is_some());
         }
         {
             let mut event = get_event();
             event.change.subject = String::from("B");
-            let res = bot.get_approvals_msg(event);
+            let res = bot.get_approvals_msg(&event);
             assert!(res.is_some());
         }
         {
             let mut event = get_event();
             event.change.subject = String::from("A");
-            let res = bot.get_approvals_msg(event);
+            let res = bot.get_approvals_msg(&event);
             assert!(res.is_some());
         }
     }
