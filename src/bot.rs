@@ -475,7 +475,11 @@ const HELP_MSG: &'static str = r#"Commands:
 
 `disable` -- I will stop notifying you.
 
-`filter [<regex>|enable|disable]` -- Add a `regex` to filter messages by applying the regex to the message sent to Spark, that is, you can filter whatever you like in the response from me. `enable` and `disable` options enable resp. disable a configured filter. The `filter` command without options shows if a filter is configured, and if it is enabled. Note: When adding a filter regex, wrap the regex with ``, otherwise Spark will eat all special characters.
+`filter <regex>` -- Filter all messages by applying the specified regex pattern. If the pattern matches, the message is filtered. The pattern is applied to the full text I send to you. Be aware, to send this command **not** in markdown mode, otherwise, Spark would eat some special characters in the pattern. For regex specification, cf. https://doc.rust-lang.org/regex/regex/index.html#syntax.
+
+`filter enable` -- Enable the filtering of messages with the configured filter.
+
+`filter disable` -- Disable the filtering of messages with the configured filter.
 
 `status` -- Show if I am notifying you, and a little bit more information. 😉
 

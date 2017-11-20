@@ -341,7 +341,7 @@ impl Message {
     pub fn into_action(self) -> bot::Action {
         lazy_static!(
             static ref FILTER_REGEX: Regex = Regex::new(
-                r"^filter (.*)$"
+                r"(?i)^filter (.*)$"
             ).unwrap();
         );
 
@@ -353,8 +353,10 @@ impl Message {
             "filter" => bot::Action::FilterStatus(self.person_id),
             "filter enable" => bot::Action::FilterEnable(self.person_id),
             "filter disable" => bot::Action::FilterDisable(self.person_id),
-            text => {
-                match FILTER_REGEX.captures(text).and_then(|cap| cap.get(1)) {
+            _ => {
+                match FILTER_REGEX.captures(&self.text.trim()[..]).and_then(
+                    |cap| cap.get(1),
+                ) {
                     Some(m) => bot::Action::FilterAdd(self.person_id, String::from(m.as_str())),
                     None => bot::Action::Unknown(self.person_id),
                 }
