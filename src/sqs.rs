@@ -2,7 +2,6 @@ use std::{error, fmt, thread};
 
 use futures::{Sink, Future, Stream};
 use futures::sync::mpsc::channel;
-use futures::stream::BoxStream;
 use rusoto_core::{self, default_tls_client, DefaultCredentialsProvider, Region};
 use rusoto_sqs::{self, Sqs, SqsClient, ReceiveMessageRequest, DeleteMessageRequest};
 
@@ -52,10 +51,10 @@ impl From<rusoto_core::TlsError> for Error {
 pub fn sqs_receiver(
     queue_url: String,
     queue_region: Region,
-) -> Result<BoxStream<rusoto_sqs::Message, ()>, Error> {
+) -> Result<Box<Stream<Item = rusoto_sqs::Message, Error = ()>>, Error> {
     // receive messages
     let aws_credentials = DefaultCredentialsProvider::new()?;
-    let sqs_client = SqsClient::new(default_tls_client()?, aws_credentials, queue_region);
+    let sqs_client = SqsClient::new(default_tls_client()?, aws_credentials, queue_region.clone());
 
     let mut receive_req = ReceiveMessageRequest::default();
     receive_req.queue_url = queue_url.clone();
@@ -107,5 +106,5 @@ pub fn sqs_receiver(
         Ok(msg)
     });
 
-    Ok(rx.boxed())
+    Ok(Box::new(rx))
 }

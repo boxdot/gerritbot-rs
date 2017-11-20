@@ -3,7 +3,6 @@ use std::{error, fmt, thread};
 use futures::future::Future;
 use futures::{Sink, Stream};
 use futures::sync::mpsc::{channel, Sender};
-use futures::stream::BoxStream;
 use hyper;
 use hyper_native_tls;
 use iron::prelude::*;
@@ -389,7 +388,7 @@ pub fn webhook_event_stream(
     client: SparkClient,
     listen_url: String,
     remote: tokio_core::reactor::Remote,
-) -> Result<BoxStream<bot::Action, String>, Error> {
+) -> Result<Box<Stream<Item = bot::Action, Error = String>>, Error> {
     let (tx, rx) = channel(1);
     let mut router = Router::new();
     router.post(
@@ -412,8 +411,7 @@ pub fn webhook_event_stream(
             Some(msg)
         })
         .filter_map(|msg| msg.map(Message::into_action))
-        .map_err(|err| format!("Error from Spark: {:?}", err))
-        .boxed();
+        .map_err(|err| format!("Error from Spark: {:?}", err));
 
     // start listening
     let listen_url_clone = listen_url.clone();
@@ -424,14 +422,14 @@ pub fn webhook_event_stream(
     });
     info!("Listening to Spark on {}", listen_url);
 
-    Ok(stream)
+    Ok(Box::new(stream))
 }
 
 pub fn sqs_event_stream(
     client: SparkClient,
     sqs_url: String,
     sqs_region: rusoto_core::Region,
-) -> Result<BoxStream<bot::Action, String>, Error> {
+) -> Result<Box<Stream<Item = bot::Action, Error = String>>, Error> {
     let bot_id = client.bot_id.clone();
     let sqs_stream = sqs::sqs_receiver(sqs_url, sqs_region)?;
     let sqs_stream = sqs_stream
@@ -457,7 +455,6 @@ pub fn sqs_event_stream(
             Some(msg)
         })
         .filter_map(|msg| msg.map(Message::into_action))
-        .map_err(|err| format!("Error from Spark: {:?}", err))
-        .boxed();
-    Ok(sqs_stream)
+        .map_err(|err| format!("Error from Spark: {:?}", err));
+    Ok(Box::new(sqs_stream))
 }
