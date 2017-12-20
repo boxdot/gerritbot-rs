@@ -299,6 +299,25 @@ impl Bot {
         }
     }
 
+    fn get_reviewer_added_msg(&self, event: &gerrit::Event) -> Option<(&User, String)> {
+        let reviewer = event.reviewer.as_ref()?.clone();
+        let reviewer_email = reviewer.email.as_ref()?;
+        let user_pos = *self.email_index.get(reviewer_email)?;
+        let user = &self.users[user_pos];
+        if !user.enabled {
+            return None;
+        }
+        Some((
+            user,
+            format!(
+                "[{}]({}) ({}) 👓 Added as reviewer",
+                event.change.subject,
+                event.change.url,
+                event.change.owner.username
+            ),
+        ))
+    }
+
     pub fn save<P>(self, filename: P) -> Result<(), BotError>
     where
         P: AsRef<Path>,
@@ -427,6 +446,7 @@ pub enum Action {
     FilterAdd(spark::PersonId, String /* filter */),
     FilterEnable(spark::PersonId),
     FilterDisable(spark::PersonId),
+    ReviewerAdded(Box<gerrit::Event>),
     NoOp,
 }
 
@@ -621,6 +641,11 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
                         },
                     ))
                 }
+            })
+        }
+        Action::ReviewerAdded(event) => {
+            bot.get_reviewer_added_msg(&event).map(|(user, message)| {
+                Task::Reply(Response::new(user.spark_person_id.clone(), message))
             })
         }
         Action::NoOp => None,
