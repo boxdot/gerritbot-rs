@@ -69,6 +69,14 @@ pub struct ChangeKey {
     pub id: String,
 }
 
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub enum EventType {
+    #[serde(rename = "reviewer-added")]
+    ReviewerAdded,
+    #[serde(rename = "comment-added")]
+    CommentAdded,
+}
+
 // Only specific events are accepted by this type by design!
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -76,6 +84,7 @@ pub struct Event {
     pub author: Option<User>,
     pub uploader: Option<User>,
     pub approvals: Option<Vec<Approval>>,
+    pub reviewer: Option<User>,
     pub comment: Option<String>,
     #[serde(rename = "patchSet")]
     pub patchset: PatchSet,
@@ -86,15 +95,17 @@ pub struct Event {
     #[serde(rename = "changeKey")]
     pub changekey: ChangeKey,
     #[serde(rename = "type")]
-    pub event_type: String,
+    pub event_type: EventType,
     #[serde(rename = "eventCreatedOn")]
     pub created_on: u32,
 }
 
 impl Event {
     pub fn into_action(self) -> bot::Action {
-        if self.approvals.is_some() {
+        if self.event_type == EventType::CommentAdded && self.approvals.is_some() {
             bot::Action::UpdateApprovals(Box::new(self))
+        } else if self.event_type == EventType::ReviewerAdded {
+            bot::Action::ReviewerAdded(Box::new(self))
         } else {
             bot::Action::NoOp
         }
@@ -203,12 +214,12 @@ fn new_ssh_channel<'a>(
 
     // .exec("gerrit stream-events -s comment-added -s reviewer-added -s reviewer-deleted -s change-merged")
     ssh_channel
-        .exec("gerrit stream-events -s comment-added")
+        .exec("gerrit stream-events -s comment-added -s reviewer-added")
         .or_else(|err| {
             send_terminate_msg(
                 &tx.clone(),
                 format!(
-                    "Could not execture gerrit stream-event command over ssh: {:?}",
+                    "Could not execute gerrit stream-event command over ssh: {:?}",
                     err
                 ),
             )
