@@ -50,29 +50,39 @@ impl User {
 
 /// Cache line in LRU Cache containing last approval messages
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct MsgCacheLine {
-    /// position of the user in bots.user vector
-    user_ref: usize,
-    subject: String,
-    approver: String,
-    approval_type: String,
-    approval_value: String,
+enum MsgCacheLine {
+    Approval {
+        /// position of the user in bots.user vector
+        user_ref: usize,
+        subject: String,
+        approver: String,
+        approval_type: String,
+        approval_value: String,
+    },
+    ReviewerAdded { user_ref: usize, subject: String },
 }
 
 impl MsgCacheLine {
-    fn new(
+    fn new_approval(
         user_ref: usize,
         subject: String,
         approver: String,
         approval_type: String,
         approval_value: String,
     ) -> MsgCacheLine {
-        MsgCacheLine {
+        MsgCacheLine::Approval {
             user_ref: user_ref,
             subject: subject,
             approver: approver,
             approval_type: approval_type,
             approval_value: approval_value,
+        }
+    }
+
+    fn new_reviewer_added(user_ref: usize, subject: String) -> MsgCacheLine {
+        MsgCacheLine::ReviewerAdded {
+            user_ref: user_ref,
+            subject: subject,
         }
     }
 }
@@ -198,6 +208,19 @@ impl Bot {
         })
     }
 
+    fn is_cached(&mut self, key: MsgCacheLine) -> bool {
+        if let Some(cache) = self.msg_cache.as_mut() {
+            let hit = cache.get(&key).is_some();
+            if hit {
+                return true;
+            } else {
+                cache.insert(key, ());
+                return false;
+            }
+        };
+        return false;
+    }
+
     fn enable<'a>(&'a mut self, person_id: &str, email: &str, enabled: bool) -> &'a User {
         let user: &'a mut User = self.find_or_add_user_by_person_id(person_id, email);
         user.enabled = enabled;
@@ -262,26 +285,21 @@ impl Bot {
                 }
 
                 // filter all messages that were already sent to the user recently
-                if let Some(cache) = self.msg_cache.as_mut() {
-                    let key = MsgCacheLine::new(
-                        user_pos,
-                        if change.topic.is_some() {
-                            change.topic.as_ref().unwrap().clone()
-                        } else {
-                            change.subject.clone()
-                        },
-                        approver.clone(),
-                        approval.approval_type.clone(),
-                        approval.value.clone(),
-                    );
-                    let hit = cache.get(&key).is_some();
-                    if hit {
-                        debug!("Filtered approval due to cache hit.");
-                        return None;
+                if self.is_cached(MsgCacheLine::new_approval(
+                    user_pos,
+                    if change.topic.is_some() {
+                        change.topic.as_ref().unwrap().clone()
                     } else {
-                        cache.insert(key, ());
-                    }
-                };
+                        change.subject.clone()
+                    },
+                    approver.clone(),
+                    approval.approval_type.clone(),
+                    approval.value.clone(),
+                ))
+                {
+                    debug!("Filtered approval due to cache hit.");
+                    return None;
+                }
 
                 let msg = Self::format_msg(event, approval);
                 // if user has configured and enabled a filter try to apply it
@@ -299,16 +317,31 @@ impl Bot {
         }
     }
 
-    fn get_reviewer_added_msg(&self, event: &gerrit::Event) -> Option<(&User, String)> {
+    fn get_reviewer_added_msg(&mut self, event: &gerrit::Event) -> Option<(&User, String)> {
         let reviewer = event.reviewer.as_ref()?.clone();
         let reviewer_email = reviewer.email.as_ref()?;
         let user_pos = *self.email_index.get(reviewer_email)?;
-        let user = &self.users[user_pos];
-        if !user.enabled {
+        if !self.users[user_pos].enabled {
             return None;
         }
+        let change = &event.change;
+
+        // filter all messages that were already sent to the user recently
+        if self.is_cached(MsgCacheLine::new_reviewer_added(
+            user_pos,
+            if change.topic.is_some() {
+                change.topic.as_ref().unwrap().clone()
+            } else {
+                change.subject.clone()
+            },
+        ))
+        {
+            debug!("Filtered reviewer-added due to cache hit.");
+            return None;
+        }
+
         Some((
-            user,
+            &self.users[user_pos],
             format!(
                 "[{}]({}) ({}) 👓 Added as reviewer",
                 event.change.subject,

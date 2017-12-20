@@ -89,17 +89,16 @@ pub fn parse_args() -> Args {
         )
         .arg(
             Arg::from_usage(
-                "--approval-expiration=[2] 'Approvals that are arriving repeatedly faster than \
-                this value (in secs) will be dropped. This is useful when filtering approvals \
-                that are sent to multiple reviews in a topic at the same time. 0 disables this \
-                feature.'",
+                "--cache-expiration=[2] 'Approvals and reviewer notifications that are arriving \
+                repeatedly faster than this value (in secs) will be dropped. This is useful when \
+                filtering notifications that are sent to multiple reviews in a topic at the same \
+                time. 0 disables this feature.'",
             ).empty_values(false),
         )
         .arg(
             Arg::from_usage(
-                "--approvals-count=[100] 'Numbers of approvals to store a LRU cache that will be \
-                consider for expiration. Cf. also --approval-expiration. 0 disables this \
-                feature.'",
+                "--cache-size=[100] 'Size of the LRU cache that is used for expiration. Cf. also \
+                --cache-expiration. 0 disables this feature.'",
             ).empty_values(false),
         )
         .get_matches();
