@@ -3,6 +3,7 @@ use std::{error, fmt, thread};
 use futures::future::Future;
 use futures::{Sink, Stream};
 use futures::sync::mpsc::{channel, Sender};
+use futures::stream;
 use hyper;
 use hyper_native_tls;
 use iron::prelude::*;
@@ -150,7 +151,7 @@ struct Webhooks {
     items: Vec<Webhook>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SparkClient {
     url: String,
     bot_token: String,
@@ -240,6 +241,10 @@ impl SparkClient {
     }
 
     pub fn reply(&self, person_id: &str, msg: &str) {
+        if self.bot_token.is_empty() {
+            info!("Would send to Spark to {}: {}", person_id, msg);
+            return;
+        }
         let json = json!({
             "toPersonId": person_id,
             "markdown": msg,
@@ -460,4 +465,8 @@ pub fn sqs_event_stream(
         .filter_map(|msg| msg.map(Message::into_action))
         .map_err(|err| format!("Error from Spark: {:?}", err));
     Ok(Box::new(sqs_stream))
+}
+
+pub fn empty_stream() -> Result<Box<Stream<Item = bot::Action, Error = String>>, Error> {
+    Ok(Box::new(stream::empty()))
 }

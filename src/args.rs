@@ -85,7 +85,7 @@ pub fn parse_args() -> Args {
         .arg(
             Arg::from_usage(
                 "--spark-bot-token=<TOKEN> 'Token of the Spark bot for authentication'",
-            ).empty_values(false),
+            ).empty_values(false).required(false),
         )
         .arg(
             Arg::from_usage(
@@ -129,7 +129,7 @@ pub fn parse_args() -> Args {
         } else {
             None
         },
-        spark_bot_token: String::from(matches.value_of("spark-bot-token").unwrap()),
+        spark_bot_token: String::from(matches.value_of("spark-bot-token").unwrap_or("")),
         verbosity: 2 + matches.occurrences_of("verbose") as usize,
         quiet: matches.is_present("quiet"),
         bot_msg_expiration: Duration::from_secs(if matches.is_present("approval-expiration") {
