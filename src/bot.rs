@@ -513,15 +513,11 @@ r#"Hi. I am GerritBot. I can watch Gerrit reviews for you, and notify you about 
 
 To enable notifications, just type in **enable**. A small note: your email in Spark and in Gerrit has to be the same. Otherwise, I can't match your accounts.
 
-For more information, type in **help**.
+For more information, type in **help** or whatever comes to your mind.
 
-By the way, my icon is made by
-[ Madebyoliver ](http://www.flaticon.com/authors/madebyoliver)
-from
-[ www.flaticon.com ](http://www.flaticon.com)
-and is licensed by
-[ CC 3.0 BY](http://creativecommons.org/licenses/by/3.0/).
-"#;
+My source code is available on [Github](https://github.com/boxdot/gerritbot-rs). Feel free to contribute!
+
+If you have any requests or found a bug, please file an issue in the [Issue Tracker](https://github.com/boxdot/gerritbot-rs/issues)."#;
 
 const HELP_MSG: &str = r#"Commands:
 
