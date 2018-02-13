@@ -59,7 +59,10 @@ enum MsgCacheLine {
         approval_type: String,
         approval_value: String,
     },
-    ReviewerAdded { user_ref: usize, subject: String },
+    ReviewerAdded {
+        user_ref: usize,
+        subject: String,
+    },
 }
 
 impl MsgCacheLine {
@@ -153,18 +156,15 @@ impl Bot {
     }
 
     pub fn init_msg_cache(&mut self, capacity: usize, expiration: Duration) {
-        self.msg_cache =
-            Some(
-                LruCache::<MsgCacheLine, ()>::with_expiry_duration_and_capacity(expiration, capacity),
-            );
+        self.msg_cache = Some(
+            LruCache::<MsgCacheLine, ()>::with_expiry_duration_and_capacity(expiration, capacity),
+        );
     }
 
     fn index_users(&mut self) {
         for (user_pos, user) in self.users.iter().enumerate() {
-            self.person_id_index.insert(
-                user.spark_person_id.clone(),
-                user_pos,
-            );
+            self.person_id_index
+                .insert(user.spark_person_id.clone(), user_pos);
             self.email_index.insert(user.email.clone(), user_pos);
         }
     }
@@ -184,9 +184,9 @@ impl Bot {
         person_id: &str,
         email: &str,
     ) -> &'a mut User {
-        let pos = self.users.iter().position(
-            |u| u.spark_person_id == person_id,
-        );
+        let pos = self.users
+            .iter()
+            .position(|u| u.spark_person_id == person_id);
         let user: &'a mut User = match pos {
             Some(pos) => &mut self.users[pos],
             None => self.add_user(person_id, email),
@@ -195,17 +195,17 @@ impl Bot {
     }
 
     fn find_user_mut<'a>(&'a mut self, person_id: &str) -> Option<&'a mut User> {
-        self.person_id_index.get(person_id).cloned().map(
-            move |pos| {
-                &mut self.users[pos]
-            },
-        )
+        self.person_id_index
+            .get(person_id)
+            .cloned()
+            .map(move |pos| &mut self.users[pos])
     }
 
     fn find_user<'a>(&'a self, person_id: &str) -> Option<&'a User> {
-        self.person_id_index.get(person_id).cloned().map(|pos| {
-            &self.users[pos]
-        })
+        self.person_id_index
+            .get(person_id)
+            .cloned()
+            .map(|pos| &self.users[pos])
     }
 
     fn is_cached(&mut self, key: MsgCacheLine) -> bool {
@@ -275,9 +275,7 @@ impl Bot {
                 let filtered = !approval
                     .old_value
                     .as_ref()
-                    .map(|old_value| {
-                        old_value != &approval.value && approval.value != "0"
-                    })
+                    .map(|old_value| old_value != &approval.value && approval.value != "0")
                     .unwrap_or(false);
                 debug!("Filtered approval: {:?}", filtered);
                 if filtered {
@@ -295,8 +293,7 @@ impl Bot {
                     approver.clone(),
                     approval.approval_type.clone(),
                     approval.value.clone(),
-                ))
-                {
+                )) {
                     debug!("Filtered approval due to cache hit.");
                     return None;
                 }
@@ -306,7 +303,11 @@ impl Bot {
                 if self.is_filtered(user_pos, &msg) {
                     return None;
                 }
-                if !msg.is_empty() { Some(msg) } else { None }
+                if !msg.is_empty() {
+                    Some(msg)
+                } else {
+                    None
+                }
             })
             .collect();
 
@@ -334,8 +335,7 @@ impl Bot {
             } else {
                 change.subject.clone()
             },
-        ))
-        {
+        )) {
             debug!("Filtered reviewer-added due to cache hit.");
             return None;
         }
@@ -344,9 +344,7 @@ impl Bot {
             &self.users[user_pos],
             format!(
                 "[{}]({}) ({}) 👓 Added as reviewer",
-                event.change.subject,
-                event.change.url,
-                event.change.owner.username
+                event.change.subject, event.change.url, event.change.owner.username
             ),
         ))
     }
@@ -457,8 +455,7 @@ impl Bot {
                 } else {
                     warn!(
                         "User {} has configured invalid filter regex: {}",
-                        user.spark_person_id,
-                        filter.regex
+                        user.spark_person_id, filter.regex
                     );
                 }
             }
@@ -731,10 +728,9 @@ mod test {
             assert!(
                 bot.users
                     .iter()
-                    .position(|u| {
-                        u.spark_person_id == "some_person_id" && u.email == "some@example.com" &&
-                            u.enabled == enable
-                    })
+                    .position(|u| u.spark_person_id == "some_person_id"
+                        && u.email == "some@example.com"
+                        && u.enabled == enable)
                     .is_some()
             );
             assert!(bot.num_users() == num_users + 1);
@@ -754,10 +750,9 @@ mod test {
             assert!(
                 bot.users
                     .iter()
-                    .position(|u| {
-                        u.spark_person_id == "some_person_id" && u.email == "some@example.com" &&
-                            u.enabled == enable
-                    })
+                    .position(|u| u.spark_person_id == "some_person_id"
+                        && u.email == "some@example.com"
+                        && u.enabled == enable)
                     .is_some()
             );
             assert!(bot.num_users() == num_users);
@@ -990,10 +985,10 @@ mod test {
         assert!(
             bot.users
                 .iter()
-                .position(|u| {
-                    u.spark_person_id == "some_person_id" && u.email == "some@example.com" &&
-                        u.filter == None
-                })
+                .position(
+                    |u| u.spark_person_id == "some_person_id" && u.email == "some@example.com"
+                        && u.filter == None
+                )
                 .is_some()
         );
 
@@ -1013,10 +1008,10 @@ mod test {
         assert!(
             bot.users
                 .iter()
-                .position(|u| {
-                    u.spark_person_id == "some_person_id" && u.email == "some@example.com" &&
-                        u.filter == Some(Filter::new(".*some_word.*"))
-                })
+                .position(
+                    |u| u.spark_person_id == "some_person_id" && u.email == "some@example.com"
+                        && u.filter == Some(Filter::new(".*some_word.*"))
+                )
                 .is_some()
         );
 
@@ -1029,10 +1024,10 @@ mod test {
         assert!(
             bot.users
                 .iter()
-                .position(|u| {
-                    u.spark_person_id == "some_person_id" && u.email == "some@example.com" &&
-                        u.filter.as_ref().map(|f| f.enabled) == Some(false)
-                })
+                .position(
+                    |u| u.spark_person_id == "some_person_id" && u.email == "some@example.com"
+                        && u.filter.as_ref().map(|f| f.enabled) == Some(false)
+                )
                 .is_some()
         );
         {
@@ -1045,10 +1040,10 @@ mod test {
         assert!(
             bot.users
                 .iter()
-                .position(|u| {
-                    u.spark_person_id == "some_person_id" && u.email == "some@example.com" &&
-                        u.filter.as_ref().map(|f| f.enabled) == Some(true)
-                })
+                .position(
+                    |u| u.spark_person_id == "some_person_id" && u.email == "some@example.com"
+                        && u.filter.as_ref().map(|f| f.enabled) == Some(true)
+                )
                 .is_some()
         );
         {

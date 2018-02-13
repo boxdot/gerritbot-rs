@@ -113,9 +113,11 @@ pub fn parse_args() -> Args {
         gerrit_username: String::from(matches.value_of("gerrit-username").unwrap()),
         gerrit_priv_key_path: PathBuf::from(matches.value_of("gerrit-priv-key-path").unwrap()),
         spark_url: String::from(SPARK_URL),
-        spark_endpoint: String::from(matches.value_of("spark-endpoint").unwrap_or(
-            "localhost:8888",
-        )),
+        spark_endpoint: String::from(
+            matches
+                .value_of("spark-endpoint")
+                .unwrap_or("localhost:8888"),
+        ),
         spark_sqs: String::from(matches.value_of("spark-sqs").unwrap_or("")),
         spark_sqs_region: if matches.is_present("spark-sqs-region") {
             value_t_or_exit!(matches.value_of("spark-sqs-region"), Region)
