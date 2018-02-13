@@ -261,7 +261,7 @@ impl Bot {
         f.call::<_, String>(lua_event).unwrap()
     }
 
-    fn get_approvals_msg(&mut self, event: &gerrit::Event) -> Option<(&User, String)> {
+    fn get_approvals_msg(&mut self, event: &gerrit::Event) -> Option<(&User, String, bool)> {
         debug!("Incoming approvals: {:?}", event);
 
         if event.approvals.is_none() {
@@ -282,6 +282,8 @@ impl Bot {
         if !self.users[user_pos].enabled {
             return None;
         }
+
+        let is_human = !approver.to_lowercase().contains("bot");
 
         let msgs: Vec<String> = approvals
             .iter()
@@ -318,6 +320,7 @@ impl Bot {
                 if self.is_filtered(user_pos, &msg) {
                     return None;
                 }
+
                 if !msg.is_empty() {
                     Some(msg)
                 } else {
@@ -327,7 +330,7 @@ impl Bot {
             .collect();
 
         if !msgs.is_empty() {
-            Some((&self.users[user_pos], msgs.join("\n\n"))) // two newlines since it is markdown
+            Some((&self.users[user_pos], msgs.join("\n\n"), is_human)) // two newlines since it is markdown
         } else {
             None
         }
@@ -517,6 +520,7 @@ impl Response {
 pub enum Task {
     Reply(Response),
     ReplyAndSave(Response),
+    FetchComments(String, String, String),
 }
 
 const GREETINGS_MSG: &str =
@@ -567,8 +571,12 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
             Some(task)
         }
         Action::UpdateApprovals(event) => {
-            bot.get_approvals_msg(&event).map(|(user, message)| {
-                Task::Reply(Response::new(user.spark_person_id.clone(), message))
+            bot.get_approvals_msg(&event).map(|(user, message, is_human)| {
+                if is_human {
+                    Task::FetchComments(user.spark_person_id.clone(), event.change.id, message)
+                } else {
+                    Task::Reply(Response::new(user.spark_person_id.clone(), message))
+                }
             })
         }
         Action::Help(person_id) => Some(Task::Reply(Response::new(person_id, HELP_MSG))),
@@ -853,10 +861,11 @@ mod test {
         bot.add_user("author_spark_id", "author@example.com");
         let res = bot.get_approvals_msg(&get_event());
         assert!(res.is_some());
-        let (user, msg) = res.unwrap();
+        let (user, msg, is_human) = res.unwrap();
         assert_eq!(user.spark_person_id, "author_spark_id");
         assert_eq!(user.email, "author@example.com");
         assert!(msg.contains("Some review."));
+        assert!(is_human);
     }
 
     #[test]
@@ -877,10 +886,11 @@ mod test {
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
         {
             let res = bot.enable_filter("author_spark_id", true);
@@ -889,10 +899,11 @@ mod test {
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
     }
 
@@ -905,10 +916,11 @@ mod test {
         {
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
         {
             let res = bot.get_approvals_msg(&get_event());
@@ -925,19 +937,21 @@ mod test {
         {
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
         thread::sleep(Duration::from_millis(200));
         {
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
     }
 

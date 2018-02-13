@@ -3,6 +3,7 @@ extern crate futures;
 extern crate hyper;
 extern crate hyper_native_tls;
 extern crate iron;
+extern crate itertools;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
@@ -25,6 +26,8 @@ extern crate tokio_core;
 
 use futures::Stream;
 use std::time::Duration;
+use itertools::Itertools;
+use std::cmp::Ord;
 
 #[macro_use]
 mod utils;
@@ -114,7 +117,7 @@ fn main() {
             bot::Action::NoOp => false,
             _ => true,
         })
-        .filter_map(|action| {
+        .filter_map(move |action| {
             debug!("Handle action: {:?}", action);
 
             // fold over actions
@@ -138,6 +141,61 @@ fn main() {
                             Ok(())
                         });
                         response
+                    }
+                    bot::Task::FetchComments(user, change_id, message) => {
+                        let args = args.clone();
+                        let gerrit_hostname = args.gerrit_hostname.clone();
+                        let gerrit_change = match gerrit::query(
+                            args.gerrit_hostname,
+                            args.gerrit_port,
+                            args.gerrit_username,
+                            args.gerrit_priv_key_path,
+                            change_id,
+                        ) {
+                            Ok(value) => value,
+                            Err(_) => {
+                                return Some(bot::Response::new(user, message));
+                            }
+                        };
+                        let gerrit_change_number = gerrit_change.number;
+                        let additional_message = gerrit_change
+                            .current_patch_set
+                            .map(|patch_set| {
+                                let patch_set_number = patch_set.number;
+                                let mut comments = patch_set.comments.unwrap_or(vec![]);
+                                comments.sort_by(|a, b| a.file.cmp(&b.file));
+
+                                comments
+                                    .into_iter()
+                                    .group_by(|c| c.file.clone())
+                                    .into_iter()
+                                    .map(|(file, comments)| -> String {
+                                        let line_comments = comments
+                                            .map(|comment| {
+                                                let url = format!(
+                                                    "https://{}/#/c/{}/{}/{}@{}",
+                                                    gerrit_hostname,
+                                                    gerrit_change_number,
+                                                    patch_set_number,
+                                                    comment.file,
+                                                    comment.line
+                                                );
+                                                format!(
+                                                    "> [Line {}]({}): {}",
+                                                    comment.line, url, comment.message
+                                                )
+                                            })
+                                            .intersperse("\n".into())
+                                            .collect::<Vec<_>>()
+                                            .concat();
+                                        format!("`{}`\n\n{}", file, line_comments)
+                                    })
+                                    .intersperse("\n\n".into())
+                                    .collect::<Vec<_>>()
+                                    .concat()
+                            })
+                            .unwrap_or_else(String::new);
+                        bot::Response::new(user, format!("{}\n\n{}", message, additional_message))
                     }
                 };
                 return Some(response);
