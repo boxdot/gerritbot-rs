@@ -509,7 +509,7 @@ pub enum Task {
 }
 
 const GREETINGS_MSG: &str =
-r#"Hi. I am GerritBot (**in a beta phase**). I can watch Gerrit reviews for you, and notify you about new +1/-1's.
+r#"Hi. I am GerritBot. I can watch Gerrit reviews for you, and notify you about new +1/-1's.
 
 To enable notifications, just type in **enable**. A small note: your email in Spark and in Gerrit has to be the same. Otherwise, I can't match your accounts.
 
