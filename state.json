@@ -1,0 +1,10 @@
+{
+  "users": [
+    {
+      "spark_person_id": "xxxx",
+      "email": "john.doe@localhost",
+      "enabled": true,
+      "filter": null
+    }
+  ]
+}
