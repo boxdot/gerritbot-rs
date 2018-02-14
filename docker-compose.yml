@@ -1,0 +1,19 @@
+version: "3.0"
+
+services:
+  gerrit:
+    build:
+      context: testing
+      dockerfile: Dockerfile.gerrit
+    ports:
+      - 8080:8080
+      - 29418:29418
+    volumes:
+      - ./:/root/src
+    environment:
+      - USER_NAME=gerrit
+      - USER_EMAIL=gerrit@localhost
+      - WEBURL=http://localhost:8080
+      - AUTH_TYPE=DEVELOPMENT_BECOME_ANY_ACCOUNT
+    
+      
