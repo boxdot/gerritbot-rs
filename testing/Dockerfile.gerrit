@@ -1,0 +1,3 @@
+FROM openfrontier/gerrit:2.13.x
+
+ADD prepopulate.nohup /docker-entrypoint-init.d/prepopulate.nohup
