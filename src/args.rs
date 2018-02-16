@@ -26,32 +26,27 @@ const USAGE: &'static str = "
 Cisco Spark <> Gerrit Bot
 
 Usage:
-  gerritbot-rs [-v] --gerrit-hostname=<HOSTNAME> --gerrit-port=<PORT> --gerrit-username=<USERNAME> --gerrit-priv-key-path=<FILE> [--spark-url URL] [--spark-endpoint URL] [--spark-sqs URI] [--spark-sqs-region REGION] [--spark-webhook URL] [--spark-bot-token TOKEN] [--bot-msg-expiration SECS] [--bot-msg-capacity CAPACITY] 
-  gerritbot-rs -h | --help
+    gerritbot-rs [options]
+    gerritbot-rs -h | --help
 
-Options:
-  -h --help     Show this screen.
-  -v --verbose  Print more
-  -q --quiet    Be silent
+    -h --help     Show this screen.
+    -v --verbose  Print more
+    -q --quiet    Be silent
 
-Gerrit Options:
-  --gerrit-hostname HOSTNAME    Hostname of the Gerrit instance to listen on
-  --gerrit-port PORT            SSH port of the Gerrit instance [default:29418]
-  --gerrit-username USERNAME    SSH username of the Gerrit account to connect with
-  --gerrit-priv-key-path FILE   Path of the SSH key assigned to the Gerrit account to connect with
+    --gerrit-hostname HOSTNAME    Hostname of the Gerrit instance to listen on
+    --gerrit-port PORT            SSH port of the Gerrit instance [default:29418]
+    --gerrit-username USERNAME    SSH username of the Gerrit account to connect with
+    --gerrit-priv-key-path FILE   Path of the SSH key assigned to the Gerrit account to connect with
 
-Spark Options:
-  --spark-url URL               Cisco Spark API URL [default: https://api.ciscospark.com/v1]
-  --spark-endpoint URL          Cisco Spark endpoint
-  --spark-sqs URI               SQS ARN
-  --spark-sqs-region REGION     AWS region where the SQS is in [default: us-east-1]
-  --spark-webhook-url URL       Webhook URL
-  --spark-bot-token TOKEN       Cisco Spark API token
+    --spark-url URL               Cisco Spark API URL [default: https://api.ciscospark.com/v1]
+    --spark-endpoint URL          Cisco Spark endpoint
+    --spark-sqs URI               SQS ARN
+    --spark-sqs-region REGION     AWS region where the SQS is in [default: us-east-1]
+    --spark-webhook-url URL       Webhook URL
+    --spark-bot-token TOKEN       Cisco Spark API token
 
-Cache Options:
-  --bot-msg-expiration SECS     Duration to keep the events queued [default: 2]
-  --bot-msg-capacity CAPACITY   Capacity of the queue [default: 100]
-
+    --bot-msg-expiration SECS     Duration to keep the events queued [default: 2]
+    --bot-msg-capacity CAPACITY   Capacity of the queue [default: 100]
 ";
 
 pub fn parse_args() -> Args {
