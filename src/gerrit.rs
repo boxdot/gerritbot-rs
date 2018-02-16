@@ -46,6 +46,16 @@ pub struct PatchSet {
     pub kind: String,
     pub size_insertions: i32,
     pub size_deletions: i32,
+    pub comments: Option<Vec<InlineComment>>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct InlineComment {
+    pub file: String,
+    pub line: u32,
+    pub reviewer: User,
+    pub message: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -61,6 +71,7 @@ pub struct Change {
     pub url: String,
     pub commit_message: String,
     pub status: String,
+    pub current_patch_set: Option<PatchSet>,
 }
 
 #[derive(Deserialize, Debug, Eq, PartialEq, Hash, Clone)]
@@ -171,9 +182,7 @@ fn connect_to_gerrit(
     let mut session = ssh2::Session::new().ok_or_else(|| {
         let _ = send_terminate_msg::<()>(
             &tx.clone(),
-            String::from(
-                "Could not create a new ssh session for connecting to Gerrit.",
-            ),
+            String::from("Could not create a new ssh session for connecting to Gerrit."),
         );
     })?;
 
@@ -300,4 +309,41 @@ mod test {
         let result = get_pub_key_path(&PathBuf::from("some_priv_key"));
         assert!(result == PathBuf::from("some_priv_key.pub"));
     }
+}
+
+pub fn query(
+    host: String,
+    port: u16,
+    username: String,
+    priv_key_path: PathBuf,
+    change_id: String,
+) -> Result<Change, serde_json::Error> {
+    let hostport = format!("{}:{}", host, port);
+    let mut session = ssh2::Session::new().unwrap();
+
+    // Connect to the local SSH server
+    let tcp = TcpStream::connect(hostport).unwrap();
+    session.handshake(&tcp).unwrap();
+
+    // Try to authenticate
+    session
+        .userauth_pubkey_file(&username, None, &priv_key_path, None)
+        .unwrap();
+
+    let mut ssh_channel = session.channel_session().unwrap();
+    let query = format!(
+        "gerrit query --format JSON --current-patch-set --comments {}",
+        change_id
+    );
+    ssh_channel.exec(&query).unwrap();
+
+    let buf_channel = BufReader::new(ssh_channel);
+    let line = buf_channel.lines().next();
+
+    // event from our channel cannot fail
+    let json: String = line.unwrap().ok().unwrap();
+    let res: Result<Change, _> = serde_json::from_str(&json);
+    println!("[D] {:?} for json: {}", res, json);
+
+    res
 }

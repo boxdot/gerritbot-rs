@@ -3,6 +3,7 @@ use std::{error, fmt, thread};
 use futures::future::Future;
 use futures::{Sink, Stream};
 use futures::sync::mpsc::{channel, Sender};
+use futures::stream;
 use hyper;
 use hyper_native_tls;
 use iron::prelude::*;
@@ -31,7 +32,9 @@ fn new_client(url: &str) -> hyper::Client {
 /// Try to get json from the given url with basic token authorization.
 fn get_json_with_token(url: &str, token: &str) -> Result<hyper::client::Response, hyper::Error> {
     let client = new_client(url);
-    let auth = hyper::header::Authorization(hyper::header::Bearer { token: String::from(token) });
+    let auth = hyper::header::Authorization(hyper::header::Bearer {
+        token: String::from(token),
+    });
     client
         .get(url)
         .header(hyper::header::ContentType::json())
@@ -148,7 +151,7 @@ struct Webhooks {
     items: Vec<Webhook>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SparkClient {
     url: String,
     bot_token: String,
@@ -170,8 +173,9 @@ impl fmt::Display for Error {
             Error::HyperError(ref err) => fmt::Display::fmt(err, f),
             Error::SqsError(ref err) => fmt::Display::fmt(err, f),
             Error::JsonError(ref err) => fmt::Display::fmt(err, f),
-            Error::RegisterWebhook(ref msg) |
-            Error::DeleteWebhook(ref msg) => fmt::Display::fmt(msg, f),
+            Error::RegisterWebhook(ref msg) | Error::DeleteWebhook(ref msg) => {
+                fmt::Display::fmt(msg, f)
+            }
         }
     }
 }
@@ -182,8 +186,7 @@ impl error::Error for Error {
             Error::HyperError(ref err) => err.description(),
             Error::SqsError(ref err) => err.description(),
             Error::JsonError(ref err) => err.description(),
-            Error::RegisterWebhook(ref msg) |
-            Error::DeleteWebhook(ref msg) => msg,
+            Error::RegisterWebhook(ref msg) | Error::DeleteWebhook(ref msg) => msg,
         }
     }
 
@@ -192,8 +195,7 @@ impl error::Error for Error {
             Error::HyperError(ref err) => err.cause(),
             Error::SqsError(ref err) => err.cause(),
             Error::JsonError(ref err) => err.cause(),
-            Error::RegisterWebhook(_) |
-            Error::DeleteWebhook(_) => None,
+            Error::RegisterWebhook(_) | Error::DeleteWebhook(_) => None,
         }
     }
 }
@@ -239,6 +241,10 @@ impl SparkClient {
     }
 
     pub fn reply(&self, person_id: &str, msg: &str) {
+        if self.bot_token.is_empty() {
+            info!("Would send to Spark to {}: {}", person_id, msg);
+            return;
+        }
         let json = json!({
             "toPersonId": person_id,
             "markdown": msg,
@@ -264,12 +270,15 @@ impl SparkClient {
         });
         post_with_token(&(self.url.clone() + "/webhooks"), &self.bot_token, &json)
             .map_err(Error::from)
-            .and_then(|resp| if resp.status != hyper::status::StatusCode::Ok {
-                Err(Error::RegisterWebhook(
-                    format!("Could not register Spark's webhook: {}", resp.status),
-                ))
-            } else {
-                Ok(())
+            .and_then(|resp| {
+                if resp.status != hyper::status::StatusCode::Ok {
+                    Err(Error::RegisterWebhook(format!(
+                        "Could not register Spark's webhook: {}",
+                        resp.status
+                    )))
+                } else {
+                    Ok(())
+                }
             })
     }
 
@@ -282,29 +291,28 @@ impl SparkClient {
     fn delete_webhook(&self, id: &str) -> Result<(), Error> {
         delete_with_token(&(self.url.clone() + "/webhooks/" + id), &self.bot_token)
             .map_err(Error::from)
-            .and_then(|resp| if resp.status !=
-                hyper::status::StatusCode::NoContent
-            {
-                Err(Error::DeleteWebhook(
-                    format!("Could not delete webhook: {}", resp.status),
-                ))
-            } else {
-                Ok(())
+            .and_then(|resp| {
+                if resp.status != hyper::status::StatusCode::NoContent {
+                    Err(Error::DeleteWebhook(format!(
+                        "Could not delete webhook: {}",
+                        resp.status
+                    )))
+                } else {
+                    Ok(())
+                }
             })
     }
 
     pub fn replace_webhook_url(&self, url: &str) -> Result<(), Error> {
         // remove all other webhooks
         let webhooks = self.list_webhooks()?;
-        let to_remove = webhooks.items.into_iter().filter_map(
-            |webhook| if webhook.resource == "messages" &&
-                webhook.event == "created"
-            {
+        let to_remove = webhooks.items.into_iter().filter_map(|webhook| {
+            if webhook.resource == "messages" && webhook.event == "created" {
                 Some(webhook)
             } else {
                 None
-            },
-        );
+            }
+        });
         for webhook in to_remove {
             self.delete_webhook(&webhook.id)?;
             debug!("Removed webhook from Spark: {}", webhook.target_url);
@@ -326,12 +334,11 @@ impl Message {
     /// Load text from Spark for a received message
     /// Note: Spark does not send the text with the message to the registered post hook.
     pub fn load_text(&mut self, client: &SparkClient) -> Result<(), String> {
-        let resp = client.get_message_text(&self.id).map_err(
-            |err| format!("Invalid response from spark: {}", err),
-        )?;
-        let msg: Message = serde_json::from_reader(resp).map_err(
-            |err| format!("Could not parse json: {}", err),
-        )?;
+        let resp = client
+            .get_message_text(&self.id)
+            .map_err(|err| format!("Invalid response from spark: {}", err))?;
+        let msg: Message =
+            serde_json::from_reader(resp).map_err(|err| format!("Could not parse json: {}", err))?;
         self.text = msg.text;
         Ok(())
     }
@@ -352,14 +359,13 @@ impl Message {
             "filter" => bot::Action::FilterStatus(self.person_id),
             "filter enable" => bot::Action::FilterEnable(self.person_id),
             "filter disable" => bot::Action::FilterDisable(self.person_id),
-            _ => {
-                match FILTER_REGEX.captures(&self.text.trim()[..]).and_then(
-                    |cap| cap.get(1),
-                ) {
-                    Some(m) => bot::Action::FilterAdd(self.person_id, String::from(m.as_str())),
-                    None => bot::Action::Unknown(self.person_id),
-                }
-            }
+            _ => match FILTER_REGEX
+                .captures(&self.text.trim()[..])
+                .and_then(|cap| cap.get(1))
+            {
+                Some(m) => bot::Action::FilterAdd(self.person_id, String::from(m.as_str())),
+                None => bot::Action::Unknown(self.person_id),
+            },
         }
     }
 }
@@ -433,17 +439,19 @@ pub fn sqs_event_stream(
     let bot_id = client.bot_id.clone();
     let sqs_stream = sqs::sqs_receiver(sqs_url, sqs_region)?;
     let sqs_stream = sqs_stream
-        .filter_map(|sqs_message| if let Some(body) = sqs_message.body {
-            let new_post: Post = match serde_json::from_str(&body) {
-                Ok(post) => post,
-                Err(err) => {
-                    error!("Could not parse post: {}", err);
-                    return None;
-                }
-            };
-            Some(new_post.data)
-        } else {
-            None
+        .filter_map(|sqs_message| {
+            if let Some(body) = sqs_message.body {
+                let new_post: Post = match serde_json::from_str(&body) {
+                    Ok(post) => post,
+                    Err(err) => {
+                        error!("Could not parse post: {}", err);
+                        return None;
+                    }
+                };
+                Some(new_post.data)
+            } else {
+                None
+            }
         })
         .filter(move |msg| msg.person_id != bot_id)
         .map(move |mut msg| {
@@ -457,4 +465,8 @@ pub fn sqs_event_stream(
         .filter_map(|msg| msg.map(Message::into_action))
         .map_err(|err| format!("Error from Spark: {:?}", err));
     Ok(Box::new(sqs_stream))
+}
+
+pub fn empty_stream() -> Result<Box<Stream<Item = bot::Action, Error = String>>, Error> {
+    Ok(Box::new(stream::empty()))
 }

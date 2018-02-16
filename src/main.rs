@@ -5,6 +5,7 @@ extern crate hlua;
 extern crate hyper;
 extern crate hyper_native_tls;
 extern crate iron;
+extern crate itertools;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
@@ -24,6 +25,8 @@ extern crate stderrlog;
 extern crate tokio_core;
 
 use futures::Stream;
+use itertools::Itertools;
+use std::cmp::Ord;
 
 #[macro_use]
 mod utils;
@@ -72,17 +75,29 @@ fn main() {
     let mut core = tokio_core::reactor::Core::new().unwrap();
 
     // create spark client and event stream listener
-    let spark_client =
-        spark::SparkClient::new(args.spark_url, args.spark_bot_token, args.spark_webhook_url)
-            .unwrap_or_else(|err| {
-                error!("Could not create spark client: {}", err);
-                std::process::exit(1);
-            });
+    let spark_client = if args.spark_bot_token.is_empty() && args.spark_sqs.is_empty() {
+        spark::SparkClient::default()
+    } else {
+        spark::SparkClient::new(
+            args.spark_url.clone(),
+            args.spark_bot_token.clone(),
+            args.spark_webhook_url.clone(),
+        ).unwrap_or_else(|err| {
+            error!("Could not create spark client: {}", err);
+            std::process::exit(1);
+        })
+    };
 
     let spark_stream = if !args.spark_sqs.is_empty() {
-        spark::sqs_event_stream(spark_client.clone(), args.spark_sqs, args.spark_sqs_region)
-    } else {
+        spark::sqs_event_stream(
+            spark_client.clone(),
+            args.spark_sqs.clone(),
+            args.spark_sqs_region.clone(),
+        )
+    } else if !args.spark_bot_token.is_empty() {
         spark::webhook_event_stream(spark_client.clone(), &args.spark_endpoint, core.remote())
+    } else {
+        spark::empty_stream()
     };
     let spark_stream = spark_stream.unwrap_or_else(|err| {
         error!("Could not start listening to spark: {}", err);
@@ -92,9 +107,9 @@ fn main() {
     // create gerrit event stream listener
     let gerrit_stream = gerrit::event_stream(
         &args.gerrit_hostname,
-        args.gerrit_port,
-        args.gerrit_username,
-        args.gerrit_priv_key_path,
+        args.gerrit_port.clone(),
+        args.gerrit_username.clone(),
+        args.gerrit_priv_key_path.clone(),
     );
 
     // join spark and gerrit action stream into one and fold over actions with accumulator `bot`
@@ -105,7 +120,7 @@ fn main() {
             bot::Action::NoOp => false,
             _ => true,
         })
-        .filter_map(|action| {
+        .filter_map(move |action| {
             debug!("Handle action: {:?}", action);
 
             // fold over actions
@@ -129,6 +144,61 @@ fn main() {
                             Ok(())
                         });
                         response
+                    }
+                    bot::Task::FetchComments(user, change_id, message) => {
+                        let args = args.clone();
+                        let gerrit_hostname = args.gerrit_hostname.clone();
+                        let gerrit_change = match gerrit::query(
+                            args.gerrit_hostname,
+                            args.gerrit_port,
+                            args.gerrit_username,
+                            args.gerrit_priv_key_path,
+                            change_id,
+                        ) {
+                            Ok(value) => value,
+                            Err(_) => {
+                                return Some(bot::Response::new(user, message));
+                            }
+                        };
+                        let gerrit_change_number = gerrit_change.number;
+                        let additional_message = gerrit_change
+                            .current_patch_set
+                            .map(|patch_set| {
+                                let patch_set_number = patch_set.number;
+                                let mut comments = patch_set.comments.unwrap_or(vec![]);
+                                comments.sort_by(|a, b| a.file.cmp(&b.file));
+
+                                comments
+                                    .into_iter()
+                                    .group_by(|c| c.file.clone())
+                                    .into_iter()
+                                    .map(|(file, comments)| -> String {
+                                        let line_comments = comments
+                                            .map(|comment| {
+                                                let url = format!(
+                                                    "https://{}/#/c/{}/{}/{}@{}",
+                                                    gerrit_hostname,
+                                                    gerrit_change_number,
+                                                    patch_set_number,
+                                                    comment.file,
+                                                    comment.line
+                                                );
+                                                format!(
+                                                    "> [Line {}]({}): {}",
+                                                    comment.line, url, comment.message
+                                                )
+                                            })
+                                            .intersperse("\n".into())
+                                            .collect::<Vec<_>>()
+                                            .concat();
+                                        format!("`{}`\n\n{}", file, line_comments)
+                                    })
+                                    .intersperse("\n\n".into())
+                                    .collect::<Vec<_>>()
+                                    .concat()
+                            })
+                            .unwrap_or_else(String::new);
+                        bot::Response::new(user, format!("{}\n\n{}", message, additional_message))
                     }
                 };
                 return Some(response);

@@ -59,7 +59,10 @@ enum MsgCacheLine {
         approval_type: String,
         approval_value: String,
     },
-    ReviewerAdded { user_ref: usize, subject: String },
+    ReviewerAdded {
+        user_ref: usize,
+        subject: String,
+    },
 }
 
 impl MsgCacheLine {
@@ -153,18 +156,15 @@ impl Bot {
     }
 
     pub fn init_msg_cache(&mut self, capacity: usize, expiration: Duration) {
-        self.msg_cache =
-            Some(
-                LruCache::<MsgCacheLine, ()>::with_expiry_duration_and_capacity(expiration, capacity),
-            );
+        self.msg_cache = Some(
+            LruCache::<MsgCacheLine, ()>::with_expiry_duration_and_capacity(expiration, capacity),
+        );
     }
 
     fn index_users(&mut self) {
         for (user_pos, user) in self.users.iter().enumerate() {
-            self.person_id_index.insert(
-                user.spark_person_id.clone(),
-                user_pos,
-            );
+            self.person_id_index
+                .insert(user.spark_person_id.clone(), user_pos);
             self.email_index.insert(user.email.clone(), user_pos);
         }
     }
@@ -184,9 +184,9 @@ impl Bot {
         person_id: &str,
         email: &str,
     ) -> &'a mut User {
-        let pos = self.users.iter().position(
-            |u| u.spark_person_id == person_id,
-        );
+        let pos = self.users
+            .iter()
+            .position(|u| u.spark_person_id == person_id);
         let user: &'a mut User = match pos {
             Some(pos) => &mut self.users[pos],
             None => self.add_user(person_id, email),
@@ -195,17 +195,17 @@ impl Bot {
     }
 
     fn find_user_mut<'a>(&'a mut self, person_id: &str) -> Option<&'a mut User> {
-        self.person_id_index.get(person_id).cloned().map(
-            move |pos| {
-                &mut self.users[pos]
-            },
-        )
+        self.person_id_index
+            .get(person_id)
+            .cloned()
+            .map(move |pos| &mut self.users[pos])
     }
 
     fn find_user<'a>(&'a self, person_id: &str) -> Option<&'a User> {
-        self.person_id_index.get(person_id).cloned().map(|pos| {
-            &self.users[pos]
-        })
+        self.person_id_index
+            .get(person_id)
+            .cloned()
+            .map(|pos| &self.users[pos])
     }
 
     fn is_cached(&mut self, key: MsgCacheLine) -> bool {
@@ -246,7 +246,7 @@ impl Bot {
         )).unwrap()
     }
 
-    fn get_approvals_msg(&mut self, event: &gerrit::Event) -> Option<(&User, String)> {
+    fn get_approvals_msg(&mut self, event: &gerrit::Event) -> Option<(&User, String, bool)> {
         debug!("Incoming approvals: {:?}", event);
 
         if event.approvals.is_none() {
@@ -268,6 +268,8 @@ impl Bot {
             return None;
         }
 
+        let is_human = !approver.to_lowercase().contains("bot");
+
         let msgs: Vec<String> = approvals
             .iter()
             .filter_map(|approval| {
@@ -275,9 +277,7 @@ impl Bot {
                 let filtered = !approval
                     .old_value
                     .as_ref()
-                    .map(|old_value| {
-                        old_value != &approval.value && approval.value != "0"
-                    })
+                    .map(|old_value| old_value != &approval.value && approval.value != "0")
                     .unwrap_or(false);
                 debug!("Filtered approval: {:?}", filtered);
                 if filtered {
@@ -295,8 +295,7 @@ impl Bot {
                     approver.clone(),
                     approval.approval_type.clone(),
                     approval.value.clone(),
-                ))
-                {
+                )) {
                     debug!("Filtered approval due to cache hit.");
                     return None;
                 }
@@ -306,12 +305,17 @@ impl Bot {
                 if self.is_filtered(user_pos, &msg) {
                     return None;
                 }
-                if !msg.is_empty() { Some(msg) } else { None }
+
+                if !msg.is_empty() {
+                    Some(msg)
+                } else {
+                    None
+                }
             })
             .collect();
 
         if !msgs.is_empty() {
-            Some((&self.users[user_pos], msgs.join("\n\n"))) // two newlines since it is markdown
+            Some((&self.users[user_pos], msgs.join("\n\n"), is_human)) // two newlines since it is markdown
         } else {
             None
         }
@@ -334,8 +338,7 @@ impl Bot {
             } else {
                 change.subject.clone()
             },
-        ))
-        {
+        )) {
             debug!("Filtered reviewer-added due to cache hit.");
             return None;
         }
@@ -344,9 +347,7 @@ impl Bot {
             &self.users[user_pos],
             format!(
                 "[{}]({}) ({}) 👓 Added as reviewer",
-                event.change.subject,
-                event.change.url,
-                event.change.owner.username
+                event.change.subject, event.change.url, event.change.owner.username
             ),
         ))
     }
@@ -457,8 +458,7 @@ impl Bot {
                 } else {
                     warn!(
                         "User {} has configured invalid filter regex: {}",
-                        user.spark_person_id,
-                        filter.regex
+                        user.spark_person_id, filter.regex
                     );
                 }
             }
@@ -505,22 +505,19 @@ impl Response {
 pub enum Task {
     Reply(Response),
     ReplyAndSave(Response),
+    FetchComments(String, String, String),
 }
 
 const GREETINGS_MSG: &str =
-r#"Hi. I am GerritBot (**in a beta phase**). I can watch Gerrit reviews for you, and notify you about new +1/-1's.
+r#"Hi. I am GerritBot. I can watch Gerrit reviews for you, and notify you about new +1/-1's.
 
 To enable notifications, just type in **enable**. A small note: your email in Spark and in Gerrit has to be the same. Otherwise, I can't match your accounts.
 
-For more information, type in **help**.
+For more information, type in **help** or whatever comes to your mind.
 
-By the way, my icon is made by
-[ Madebyoliver ](http://www.flaticon.com/authors/madebyoliver)
-from
-[ www.flaticon.com ](http://www.flaticon.com)
-and is licensed by
-[ CC 3.0 BY](http://creativecommons.org/licenses/by/3.0/).
-"#;
+My source code is available on [Github](https://github.com/boxdot/gerritbot-rs). Feel free to contribute!
+
+If you have any requests or found a bug, please file an issue in the [Issue Tracker](https://github.com/boxdot/gerritbot-rs/issues)."#;
 
 const HELP_MSG: &str = r#"Commands:
 
@@ -555,8 +552,12 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
             Some(task)
         }
         Action::UpdateApprovals(event) => {
-            bot.get_approvals_msg(&event).map(|(user, message)| {
-                Task::Reply(Response::new(user.spark_person_id.clone(), message))
+            bot.get_approvals_msg(&event).map(|(user, message, is_human)| {
+                if is_human {
+                    Task::FetchComments(user.spark_person_id.clone(), event.change.id, message)
+                } else {
+                    Task::Reply(Response::new(user.spark_person_id.clone(), message))
+                }
             })
         }
         Action::Help(person_id) => Some(Task::Reply(Response::new(person_id, HELP_MSG))),
@@ -731,10 +732,9 @@ mod test {
             assert!(
                 bot.users
                     .iter()
-                    .position(|u| {
-                        u.spark_person_id == "some_person_id" && u.email == "some@example.com" &&
-                            u.enabled == enable
-                    })
+                    .position(|u| u.spark_person_id == "some_person_id"
+                        && u.email == "some@example.com"
+                        && u.enabled == enable)
                     .is_some()
             );
             assert!(bot.num_users() == num_users + 1);
@@ -754,10 +754,9 @@ mod test {
             assert!(
                 bot.users
                     .iter()
-                    .position(|u| {
-                        u.spark_person_id == "some_person_id" && u.email == "some@example.com" &&
-                            u.enabled == enable
-                    })
+                    .position(|u| u.spark_person_id == "some_person_id"
+                        && u.email == "some@example.com"
+                        && u.enabled == enable)
                     .is_some()
             );
             assert!(bot.num_users() == num_users);
@@ -843,10 +842,11 @@ mod test {
         bot.add_user("author_spark_id", "author@example.com");
         let res = bot.get_approvals_msg(&get_event());
         assert!(res.is_some());
-        let (user, msg) = res.unwrap();
+        let (user, msg, is_human) = res.unwrap();
         assert_eq!(user.spark_person_id, "author_spark_id");
         assert_eq!(user.email, "author@example.com");
         assert!(msg.contains("Some review."));
+        assert!(is_human);
     }
 
     #[test]
@@ -867,10 +867,11 @@ mod test {
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
         {
             let res = bot.enable_filter("author_spark_id", true);
@@ -879,10 +880,11 @@ mod test {
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
     }
 
@@ -895,10 +897,11 @@ mod test {
         {
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
         {
             let res = bot.get_approvals_msg(&get_event());
@@ -915,19 +918,21 @@ mod test {
         {
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
         thread::sleep(Duration::from_millis(200));
         {
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
     }
 
@@ -990,10 +995,10 @@ mod test {
         assert!(
             bot.users
                 .iter()
-                .position(|u| {
-                    u.spark_person_id == "some_person_id" && u.email == "some@example.com" &&
-                        u.filter == None
-                })
+                .position(
+                    |u| u.spark_person_id == "some_person_id" && u.email == "some@example.com"
+                        && u.filter == None
+                )
                 .is_some()
         );
 
@@ -1013,10 +1018,10 @@ mod test {
         assert!(
             bot.users
                 .iter()
-                .position(|u| {
-                    u.spark_person_id == "some_person_id" && u.email == "some@example.com" &&
-                        u.filter == Some(Filter::new(".*some_word.*"))
-                })
+                .position(
+                    |u| u.spark_person_id == "some_person_id" && u.email == "some@example.com"
+                        && u.filter == Some(Filter::new(".*some_word.*"))
+                )
                 .is_some()
         );
 
@@ -1029,10 +1034,10 @@ mod test {
         assert!(
             bot.users
                 .iter()
-                .position(|u| {
-                    u.spark_person_id == "some_person_id" && u.email == "some@example.com" &&
-                        u.filter.as_ref().map(|f| f.enabled) == Some(false)
-                })
+                .position(
+                    |u| u.spark_person_id == "some_person_id" && u.email == "some@example.com"
+                        && u.filter.as_ref().map(|f| f.enabled) == Some(false)
+                )
                 .is_some()
         );
         {
@@ -1045,10 +1050,10 @@ mod test {
         assert!(
             bot.users
                 .iter()
-                .position(|u| {
-                    u.spark_person_id == "some_person_id" && u.email == "some@example.com" &&
-                        u.filter.as_ref().map(|f| f.enabled) == Some(true)
-                })
+                .position(
+                    |u| u.spark_person_id == "some_person_id" && u.email == "some@example.com"
+                        && u.filter.as_ref().map(|f| f.enabled) == Some(true)
+                )
                 .is_some()
         );
         {
