@@ -842,10 +842,11 @@ mod test {
         bot.add_user("author_spark_id", "author@example.com");
         let res = bot.get_approvals_msg(&get_event());
         assert!(res.is_some());
-        let (user, msg) = res.unwrap();
+        let (user, msg, is_human) = res.unwrap();
         assert_eq!(user.spark_person_id, "author_spark_id");
         assert_eq!(user.email, "author@example.com");
         assert!(msg.contains("Some review."));
+        assert!(is_human);
     }
 
     #[test]
@@ -866,10 +867,11 @@ mod test {
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
         {
             let res = bot.enable_filter("author_spark_id", true);
@@ -878,10 +880,11 @@ mod test {
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
     }
 
@@ -894,10 +897,11 @@ mod test {
         {
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
         {
             let res = bot.get_approvals_msg(&get_event());
@@ -914,19 +918,21 @@ mod test {
         {
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
         thread::sleep(Duration::from_millis(200));
         {
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
     }
 
