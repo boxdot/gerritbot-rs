@@ -22,8 +22,8 @@ function main(event)
 
     -- TODO: when Spark will allow to format text with different colors, set
     -- green resp. red color here.
-    f = "[%s](%s) %s %s%s (%s) from %s"
-    msg = string.format(f, event.subject, event.url, icon, sign, event.value, event.type, event.approver)
+    f = "[%s](%s) (%s) %s %s%s (%s) from %s"
+    msg = string.format(f, event.subject, event.url, event.project, icon, sign, event.value, event.type, event.approver)
 
     len = 0
     lines = {}

@@ -245,6 +245,7 @@ impl Bot {
         lua_event.set("type", approval.approval_type.clone()).unwrap();
         lua_event.set("url", event.change.url.clone()).unwrap();
         lua_event.set("subject", event.change.subject.clone()).unwrap();
+        lua_event.set("project", event.change.project.clone()).unwrap();
 
         f.call::<_, String>(lua_event).unwrap()
     }
@@ -964,7 +965,7 @@ mod test {
         let res = Bot::format_msg(&event, &event.approvals.as_ref().unwrap()[0]);
         assert_eq!(
             res,
-            "[Some review.](http://localhost/42) 👍 +2 (Code-Review) from approver\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE"
+            "[Some review.](http://localhost/42) (demo-project) 👍 +2 (Code-Review) from approver\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE"
         );
     }
 
