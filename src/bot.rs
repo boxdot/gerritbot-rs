@@ -2,12 +2,13 @@ use std::collections::HashMap;
 use std::convert;
 use std::fs::File;
 use std::io;
+use std::io::Read;
 use std::path::Path;
 use std::time::Duration;
 
 use lru_time_cache::LruCache;
 use serde_json;
-use hlua::{Lua, LuaFunction};
+use rlua::{Lua, Function as LuaFunction};
 use regex::Regex;
 
 use gerrit;
@@ -229,14 +230,15 @@ impl Bot {
 
     fn format_msg(event: &gerrit::Event, approval: &gerrit::Approval) -> String {
         let filename = String::from("scripts/format.lua");
-        let script = File::open(&Path::new(&filename)).unwrap();
+        let mut script = String::new();
+        File::open(&Path::new(&filename)).unwrap().read_to_string(&mut script).unwrap();
 
-        let mut lua = Lua::new();
-        lua.openlibs();
-        lua.execute_from_reader::<(), _>(&script).unwrap();
-        let mut f: LuaFunction<_> = lua.get("main").unwrap();
+        let lua = Lua::new();
+        let globals = lua.globals();
+        lua.eval::<()>(&script, None).unwrap();
+        let f: LuaFunction = globals.get("main").unwrap();
 
-        f.call_with_args((
+        f.call::<_, String>((
             event.author.as_ref().unwrap().username.clone(), // approver
             event.comment.clone(),
             approval.value.parse().unwrap_or(0),
