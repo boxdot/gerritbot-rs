@@ -237,15 +237,16 @@ impl Bot {
         let globals = lua.globals();
         lua.eval::<()>(&script, None).unwrap();
         let f: LuaFunction = globals.get("main").unwrap();
+        let lua_event = lua.create_table().unwrap();
 
-        f.call::<_, String>((
-            event.author.as_ref().unwrap().username.clone(), // approver
-            event.comment.clone(),
-            approval.value.parse().unwrap_or(0),
-            approval.approval_type.clone(),
-            event.change.url.clone(),
-            event.change.subject.clone(),
-        )).unwrap()
+        lua_event.set("approver", event.author.as_ref().unwrap().username.clone()).unwrap();
+        lua_event.set("comment", event.comment.clone()).unwrap();
+        lua_event.set("value", approval.value.parse().unwrap_or(0)).unwrap();
+        lua_event.set("type", approval.approval_type.clone()).unwrap();
+        lua_event.set("url", event.change.url.clone()).unwrap();
+        lua_event.set("subject", event.change.subject.clone()).unwrap();
+
+        f.call::<_, String>(lua_event).unwrap()
     }
 
     fn get_approvals_msg(&mut self, event: &gerrit::Event) -> Option<(&User, String)> {
