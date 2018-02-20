@@ -1,33 +1,33 @@
 -- Filter and format messages
 -- return empty string to filter the message
-function main(approver, comment, value, type, url, subject)
-    if type ~= "Code-Review" and type ~= "WaitForVerification" and type ~= "Verified" then
+function main(event)
+    if event.type ~= "Code-Review" and event.type ~= "WaitForVerification" and event.type ~= "Verified" then
         return ""
     end
 
-    if string.match(type, "WaitForVerification") then
+    if string.match(event.type, "WaitForVerification") then
         icon = "⌛"
-    elseif value > 0 then
+    elseif event.value > 0 then
         icon = "👍"
-    elseif value == 0 then
+    elseif event.value == 0 then
         icon = "👉"
     else
         icon = "👎"
     end
 
     sign = ""
-    if value > 0 then
+    if event.value > 0 then
         sign = "+"
     end
 
     -- TODO: when Spark will allow to format text with different colors, set
     -- green resp. red color here.
-    f = "[%s](%s) %s %s%s (%s) from %s"
-    msg = string.format(f, subject, url, icon, sign, value, type, approver)
+    f = "[%s](%s) (%s) %s %s%s (%s) from %s"
+    msg = string.format(f, event.subject, event.url, event.project, icon, sign, event.value, event.type, event.approver)
 
     len = 0
     lines = {}
-    for line in string.gmatch(comment, "[^\r\n]+") do
+    for line in string.gmatch(event.comment, "[^\r\n]+") do
         if string.match(line, "FAILURE") then
             table.insert(lines, "> " .. line)
             len = len + 1

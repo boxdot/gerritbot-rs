@@ -171,9 +171,7 @@ fn connect_to_gerrit(
     let mut session = ssh2::Session::new().ok_or_else(|| {
         let _ = send_terminate_msg::<()>(
             &tx.clone(),
-            String::from(
-                "Could not create a new ssh session for connecting to Gerrit.",
-            ),
+            String::from("Could not create a new ssh session for connecting to Gerrit."),
         );
     })?;
 
