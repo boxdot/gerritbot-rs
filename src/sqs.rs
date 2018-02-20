@@ -1,9 +1,9 @@
 use std::{error, fmt, thread};
 
-use futures::{Sink, Future, Stream};
+use futures::{Future, Sink, Stream};
 use futures::sync::mpsc::channel;
 use rusoto_core::{self, default_tls_client, DefaultCredentialsProvider, Region};
-use rusoto_sqs::{self, Sqs, SqsClient, ReceiveMessageRequest, DeleteMessageRequest};
+use rusoto_sqs::{self, DeleteMessageRequest, ReceiveMessageRequest, Sqs, SqsClient};
 
 #[derive(Debug)]
 pub enum Error {
@@ -98,8 +98,7 @@ pub fn sqs_receiver(
             if let Err(err) = sqs_client.delete_message(&delete_req) {
                 error!(
                     "Could not delete message with handle {}: {:?}",
-                    delete_req.receipt_handle,
-                    err
+                    delete_req.receipt_handle, err
                 )
             };
         }

@@ -1,6 +1,5 @@
 extern crate docopt;
 extern crate futures;
-extern crate hlua;
 extern crate hyper;
 extern crate hyper_native_tls;
 extern crate iron;
@@ -10,6 +9,7 @@ extern crate lazy_static;
 extern crate log;
 extern crate lru_time_cache;
 extern crate regex;
+extern crate rlua;
 extern crate router;
 extern crate rusoto_core;
 extern crate rusoto_sqs;
