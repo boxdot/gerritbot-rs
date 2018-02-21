@@ -34,18 +34,30 @@ mod gerrit;
 mod spark;
 mod sqs;
 
-fn main() {
-    let args = args::parse_args();
+#[derive(Debug)]
+struct Error(String);
+
+impl ::std::error::Error for Error {
+    fn description(&self) -> &str {
+        &self.0
+    }
+}
+
+impl ::std::fmt::Display for Error {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> Result<(), ::std::fmt::Error> {
+        f.write_str(&self.0)
+    }
+}
+
+fn run(args: args::Args) -> Result<(), Box<std::error::Error>> {
     stderrlog::new()
         .module(module_path!())
         .quiet(args.quiet)
         .timestamp(stderrlog::Timestamp::Second)
         .verbosity(if args.verbose { 5 } else { 2 })
-        .init()
-        .unwrap();
+        .init()?;
     info!("Starting");
     debug!("Arguments: {:?}", args);
-
     // load or create a new bot
     let mut bot = match bot::Bot::load("state.json") {
         Ok(bot) => {
@@ -72,17 +84,14 @@ fn main() {
     };
 
     // event loop
-    let mut core = tokio_core::reactor::Core::new().unwrap();
+    let mut core = tokio_core::reactor::Core::new()?;
 
     // create spark client and event stream listener
     let spark_client = spark::SparkClient::new(
         args.spark_url,
         args.spark_bot_token,
         args.spark_webhook_url,
-    ).unwrap_or_else(|err| {
-        error!("Could not create spark client: {}", err);
-        std::process::exit(1);
-    });
+    )?;
 
     let spark_stream = if !args.spark_sqs.is_empty() {
         spark::sqs_event_stream(
@@ -96,11 +105,7 @@ fn main() {
             &args.spark_endpoint,
             core.remote(),
         )
-    };
-    let spark_stream = spark_stream.unwrap_or_else(|err| {
-        error!("Could not start listening to spark: {}", err);
-        std::process::exit(1);
-    });
+    }?;
 
     // create gerrit event stream listener
     let gerrit_stream = gerrit::event_stream(
@@ -158,5 +163,14 @@ fn main() {
             Ok(())
         });
 
-    let _ = core.run(actions);
+    core.run(actions).map_err(|()| Box::new(Error("reactor failed".to_string())).into())
+}
+
+fn main() {
+    let args = args::parse_args();
+
+    if let Err(error) = run(args) {
+        eprintln!("ERROR: {}", error);
+        std::process::exit(1);
+    }
 }
