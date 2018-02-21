@@ -39,7 +39,7 @@ fn main() {
         .module(module_path!())
         .quiet(args.flag_quiet)
         .timestamp(stderrlog::Timestamp::Second)
-        .verbosity(if args.flag_verbose {5} else {2})
+        .verbosity(if args.flag_verbose { 5 } else { 2 })
         .init()
         .unwrap();
     info!("Starting");
@@ -62,27 +62,39 @@ fn main() {
     if args.flag_bot_msg_expiration != 0 && args.flag_bot_msg_capacity != 0 {
         debug!(
             "Approval LRU cache: capacity - {}, expiration - {} sec",
-            args.flag_bot_msg_capacity,
-            args.flag_bot_msg_expiration
+            args.flag_bot_msg_capacity, args.flag_bot_msg_expiration
         );
-        bot.init_msg_cache(args.flag_bot_msg_capacity, Duration::from_secs(args.flag_bot_msg_expiration));
+        bot.init_msg_cache(
+            args.flag_bot_msg_capacity,
+            Duration::from_secs(args.flag_bot_msg_expiration),
+        );
     };
 
     // event loop
     let mut core = tokio_core::reactor::Core::new().unwrap();
 
     // create spark client and event stream listener
-    let spark_client =
-        spark::SparkClient::new(args.flag_spark_url, args.flag_spark_bot_token, args.flag_spark_webhook_url)
-            .unwrap_or_else(|err| {
-                error!("Could not create spark client: {}", err);
-                std::process::exit(1);
-            });
+    let spark_client = spark::SparkClient::new(
+        args.flag_spark_url,
+        args.flag_spark_bot_token,
+        args.flag_spark_webhook_url,
+    ).unwrap_or_else(|err| {
+        error!("Could not create spark client: {}", err);
+        std::process::exit(1);
+    });
 
     let spark_stream = if !args.flag_spark_sqs.is_empty() {
-        spark::sqs_event_stream(spark_client.clone(), args.flag_spark_sqs, args.flag_spark_sqs_region)
+        spark::sqs_event_stream(
+            spark_client.clone(),
+            args.flag_spark_sqs,
+            args.flag_spark_sqs_region,
+        )
     } else {
-        spark::webhook_event_stream(spark_client.clone(), &args.flag_spark_endpoint, core.remote())
+        spark::webhook_event_stream(
+            spark_client.clone(),
+            &args.flag_spark_endpoint,
+            core.remote(),
+        )
     };
     let spark_stream = spark_stream.unwrap_or_else(|err| {
         error!("Could not start listening to spark: {}", err);
