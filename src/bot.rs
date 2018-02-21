@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use lru_time_cache::LruCache;
 use serde_json;
-use rlua::{Lua, Function as LuaFunction};
+use rlua::{Function as LuaFunction, Lua};
 use regex::Regex;
 
 use gerrit;
@@ -231,7 +231,10 @@ impl Bot {
     fn format_msg(event: &gerrit::Event, approval: &gerrit::Approval) -> String {
         let filename = String::from("scripts/format.lua");
         let mut script = String::new();
-        File::open(&Path::new(&filename)).unwrap().read_to_string(&mut script).unwrap();
+        File::open(&Path::new(&filename))
+            .unwrap()
+            .read_to_string(&mut script)
+            .unwrap();
 
         let lua = Lua::new();
         let globals = lua.globals();
@@ -239,13 +242,23 @@ impl Bot {
         let f: LuaFunction = globals.get("main").unwrap();
         let lua_event = lua.create_table().unwrap();
 
-        lua_event.set("approver", event.author.as_ref().unwrap().username.clone()).unwrap();
+        lua_event
+            .set("approver", event.author.as_ref().unwrap().username.clone())
+            .unwrap();
         lua_event.set("comment", event.comment.clone()).unwrap();
-        lua_event.set("value", approval.value.parse().unwrap_or(0)).unwrap();
-        lua_event.set("type", approval.approval_type.clone()).unwrap();
+        lua_event
+            .set("value", approval.value.parse().unwrap_or(0))
+            .unwrap();
+        lua_event
+            .set("type", approval.approval_type.clone())
+            .unwrap();
         lua_event.set("url", event.change.url.clone()).unwrap();
-        lua_event.set("subject", event.change.subject.clone()).unwrap();
-        lua_event.set("project", event.change.project.clone()).unwrap();
+        lua_event
+            .set("subject", event.change.subject.clone())
+            .unwrap();
+        lua_event
+            .set("project", event.change.project.clone())
+            .unwrap();
 
         f.call::<_, String>(lua_event).unwrap()
     }
