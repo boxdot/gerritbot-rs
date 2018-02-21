@@ -1,4 +1,5 @@
-extern crate docopt;
+#[macro_use]
+extern crate clap;
 extern crate futures;
 extern crate hyper;
 extern crate hyper_native_tls;
@@ -37,9 +38,9 @@ fn main() {
     let args = args::parse_args();
     stderrlog::new()
         .module(module_path!())
-        .quiet(args.flag_quiet)
+        .quiet(args.quiet)
         .timestamp(stderrlog::Timestamp::Second)
-        .verbosity(if args.flag_verbose { 5 } else { 2 })
+        .verbosity(if args.verbose { 5 } else { 2 })
         .init()
         .unwrap();
     info!("Starting");
@@ -59,14 +60,14 @@ fn main() {
             bot::Bot::new()
         }
     };
-    if args.flag_bot_msg_expiration != 0 && args.flag_bot_msg_capacity != 0 {
+    if args.bot_msg_expiration != 0 && args.bot_msg_capacity != 0 {
         debug!(
             "Approval LRU cache: capacity - {}, expiration - {} sec",
-            args.flag_bot_msg_capacity, args.flag_bot_msg_expiration
+            args.bot_msg_capacity, args.bot_msg_expiration
         );
         bot.init_msg_cache(
-            args.flag_bot_msg_capacity,
-            Duration::from_secs(args.flag_bot_msg_expiration),
+            args.bot_msg_capacity,
+            Duration::from_secs(args.bot_msg_expiration),
         );
     };
 
@@ -75,24 +76,24 @@ fn main() {
 
     // create spark client and event stream listener
     let spark_client = spark::SparkClient::new(
-        args.flag_spark_url,
-        args.flag_spark_bot_token,
-        args.flag_spark_webhook_url,
+        args.spark_url,
+        args.spark_bot_token,
+        args.spark_webhook_url,
     ).unwrap_or_else(|err| {
         error!("Could not create spark client: {}", err);
         std::process::exit(1);
     });
 
-    let spark_stream = if !args.flag_spark_sqs.is_empty() {
+    let spark_stream = if !args.spark_sqs.is_empty() {
         spark::sqs_event_stream(
             spark_client.clone(),
-            args.flag_spark_sqs,
-            args.flag_spark_sqs_region,
+            args.spark_sqs,
+            args.spark_sqs_region,
         )
     } else {
         spark::webhook_event_stream(
             spark_client.clone(),
-            &args.flag_spark_endpoint,
+            &args.spark_endpoint,
             core.remote(),
         )
     };
@@ -103,10 +104,10 @@ fn main() {
 
     // create gerrit event stream listener
     let gerrit_stream = gerrit::event_stream(
-        &args.flag_gerrit_hostname,
-        args.flag_gerrit_port,
-        args.flag_gerrit_username,
-        args.flag_gerrit_priv_key_path,
+        &args.gerrit_hostname,
+        args.gerrit_port,
+        args.gerrit_username,
+        args.gerrit_priv_key_path,
     );
 
     // join spark and gerrit action stream into one and fold over actions with accumulator `bot`
