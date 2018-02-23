@@ -1,0 +1,20 @@
+gerrit:
+  hostname: localhost
+  port: 29418
+  username: admin
+  priv_key_path: testing/id_rsa
+
+spark:
+  uri: https://api.ciscospark.com/v1
+  bot_token: ""
+  webhook_url: ""
+  mode: 
+    Direct:
+      uri: ""
+      region: "us-east-1"
+      endpoint: "localhost:3000"
+
+  
+bot:
+  msg_expiration: 4
+  msg_capacity: 100
