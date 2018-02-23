@@ -226,6 +226,12 @@ impl SparkClient {
             bot_token: bot_token,
             bot_id: String::new(),
         };
+
+        if client.bot_token.is_empty() {
+            warn!("Spark Client in no-op mode.");
+            return Ok(client);
+        }
+
         client.bot_id = client.get_bot_id()?;
         debug!("Bot id: {}", client.bot_id);
 
@@ -238,6 +244,11 @@ impl SparkClient {
     }
 
     pub fn reply(&self, person_id: &str, msg: &str) {
+        if self.bot_token.is_empty() {
+            info!("Would send message to {}: {}", person_id, msg);
+            return;
+        }
+
         let json = json!({
             "toPersonId": person_id,
             "markdown": msg,
