@@ -1,9 +1,8 @@
-extern crate serde_yaml;
-
 use docopt::Docopt;
 use std::fs::File;
 use std::path::PathBuf;
 use rusoto_core::Region;
+use serde_yaml;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Args {
