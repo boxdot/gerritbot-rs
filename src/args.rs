@@ -55,7 +55,7 @@ impl Default for BotConfig {
     }
 }
 
-const USAGE: &'static str = "
+const USAGE: &str = "
 Cisco Spark <> Gerrit Bot
 
 Usage:

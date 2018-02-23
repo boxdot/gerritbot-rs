@@ -1,6 +1,6 @@
 use std::io::{self, BufRead, BufReader};
 use std::net::TcpStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread;
 
 use ssh2;
@@ -303,11 +303,11 @@ mod test {
 }
 
 pub fn query(
-    host: String,
+    host: &str,
     port: u16,
-    username: String,
-    priv_key_path: PathBuf,
-    change_id: String,
+    username: &str,
+    priv_key_path: &Path,
+    change_id: &str,
 ) -> Result<Change, serde_json::Error> {
     let hostport = format!("{}:{}", host, port);
     let mut session = ssh2::Session::new().unwrap();
@@ -318,7 +318,7 @@ pub fn query(
 
     // Try to authenticate
     session
-        .userauth_pubkey_file(&username, None, &priv_key_path, None)
+        .userauth_pubkey_file(username, None, priv_key_path, None)
         .unwrap();
 
     let mut ssh_channel = session.channel_session().unwrap();
