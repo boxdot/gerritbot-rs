@@ -20,22 +20,18 @@ The bot can run in two modes.
 ### Direct mode
 
 The bot is listening on a specified endpoint for incoming incoming Spark messages. For that, you
-need to provide the endpoint url to the bot by using the argument `--spark-webhook-url`. The bot
-will register the url for you through the Cisco Spask API. Alternatively, you can also register the
+need to provide the endpoint url to the bot by setting `spark.webhook_url` in the configuration file.
+The bot will register the url for you through the Cisco Spask API. Alternatively, you can also register the
 url yourself at [https://developer.ciscospark.com](https://developer.ciscospark.com). In that case,
-do not provide the option `--spark-webhook-url`, since otherwise it will overwrite you manually
+do not provide the option `spark.webhook_url`, since otherwise it will overwrite you manually
 configured url.
+
+See configuration example file in [config-direct.yml](config-direct.yml) in the repository.
 
 Example:
 
 ```shell
-$ cargo run -- \
-    --spark-webhook-url https://endpoint.example.org \
-    --spark-endpoint localhost:8888 \
-    --spark-bot-token <API_KEY> \
-    --gerrit-hostname localhost \
-    --gerrit-priv-key-path ~/.ssh/id_rsa \
-    --gerrit-username gerritbot
+$ cargo run -- --config config-direct.yml
 ```
 
 In this setup, the bot is listening for the incoming messages at `localhost:8888`, where Spark will
@@ -46,21 +42,16 @@ a local environment. For an easy way to get a public url connected to a local en
 
 ### AWS SQS mode
 
-The bot is polling the Cisco Spark messages from an AWS SQS queue provided by the
-arguments `--spark-sqs` and `--spark-sqs-region`. The url of the queue can be registered in Spark in
+The bot is polling the Cisco Spark messages from an AWS SQS queue provided by the configuration
+ `spark.sqs` and `spark.sqs_region`. The url of the queue can be registered in Spark in
 the same way as in direct mode.
+
+See configuration example file in [config-sqs.yml](config-sqs.yml) in the repository.
 
 Example:
 
 ```shell
-$ cargo run -- \
-    --spark-webhook-url https://gateway-to-sqs.amazonaws.com/prod
-    --spark-sqs https://sqs.region.amazonaws.com/account/sqs-name \
-    --spark-sqs-region region \
-    --spark-bot-token <API_KEY> \
-    --gerrit-hostname localhost \
-    --gerrit-priv-key-path ~/.ssh/id_rsa \
-    --gerrit-username gerritbot
+$ cargo run -- --config-sqs.yml
 ```
 
 This is useful, when the bot is running in a private network and does not have a connection to the

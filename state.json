@@ -2,7 +2,7 @@
   "users": [
     {
       "spark_person_id": "xxxx",
-      "email": "john.doe@localhost",
+      "email": "admin@example.com",
       "enabled": true,
       "filter": null
     }
