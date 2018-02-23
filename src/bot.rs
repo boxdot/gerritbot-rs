@@ -207,7 +207,7 @@ impl Bot {
             .map(|pos| &self.users[pos])
     }
 
-    fn is_cached(&mut self, key: MsgCacheLine) -> bool {
+    fn touch_cache(&mut self, key: MsgCacheLine) -> bool {
         if let Some(cache) = self.msg_cache.as_mut() {
             let hit = cache.get(&key).is_some();
             if hit {
@@ -217,7 +217,7 @@ impl Bot {
                 return false;
             }
         };
-        return false;
+        false
     }
 
     fn enable<'a>(&'a mut self, person_id: &str, email: &str, enabled: bool) -> &'a User {
@@ -300,7 +300,7 @@ impl Bot {
                 }
 
                 // filter all messages that were already sent to the user recently
-                if self.is_cached(MsgCacheLine::new_approval(
+                if self.touch_cache(MsgCacheLine::new_approval(
                     user_pos,
                     if change.topic.is_some() {
                         change.topic.as_ref().unwrap().clone()
@@ -346,7 +346,7 @@ impl Bot {
         let change = &event.change;
 
         // filter all messages that were already sent to the user recently
-        if self.is_cached(MsgCacheLine::new_reviewer_added(
+        if self.touch_cache(MsgCacheLine::new_reviewer_added(
             user_pos,
             if change.topic.is_some() {
                 change.topic.as_ref().unwrap().clone()

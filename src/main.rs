@@ -78,16 +78,17 @@ fn main() {
     let mut core = tokio_core::reactor::Core::new().unwrap();
 
     // create spark client and event stream listener
+    let spark_config = config.spark.clone();
     let spark_client = spark::SparkClient::new(
-        config.spark.api_uri,
-        config.spark.bot_token,
-        config.spark.webhook_url,
+        spark_config.api_uri,
+        spark_config.bot_token,
+        spark_config.webhook_url,
     ).unwrap_or_else(|err| {
         error!("Could not create spark client: {}", err);
         std::process::exit(1);
     });
 
-    let spark_stream = match config.spark.mode {
+    let spark_stream = match config.spark.mode.clone() {
         args::ModeConfig::Direct { endpoint } => {
             spark::webhook_event_stream(spark_client.clone(), &endpoint, core.remote())
         }
@@ -102,11 +103,12 @@ fn main() {
     });
 
     // create gerrit event stream listener
+    let gerrit_config = config.gerrit.clone();
     let gerrit_stream = gerrit::event_stream(
-        &config.gerrit.hostname,
-        config.gerrit.port,
-        config.gerrit.username,
-        config.gerrit.priv_key_path,
+        &gerrit_config.hostname,
+        gerrit_config.port,
+        gerrit_config.username,
+        gerrit_config.priv_key_path,
     );
 
     // join spark and gerrit action stream into one and fold over actions with accumulator `bot`
@@ -143,14 +145,14 @@ fn main() {
                         response
                     }
                     bot::Task::FetchComments(user, change_id, message) => {
-                        let args = args.clone();
-                        let gerrit_hostname = args.gerrit_hostname.clone();
+                        let gerrit_config = config.gerrit.clone();
+                        let gerrit_hostname = config.gerrit.hostname.clone();
                         let gerrit_change = match gerrit::query(
-                            args.gerrit_hostname,
-                            args.gerrit_port,
-                            args.gerrit_username,
-                            args.gerrit_priv_key_path,
-                            change_id,
+                            &gerrit_config.hostname,
+                            gerrit_config.port,
+                            &gerrit_config.username,
+                            &gerrit_config.priv_key_path,
+                            &change_id,
                         ) {
                             Ok(value) => value,
                             Err(_) => {
@@ -162,7 +164,7 @@ fn main() {
                             .current_patch_set
                             .map(|patch_set| {
                                 let patch_set_number = patch_set.number;
-                                let mut comments = patch_set.comments.unwrap_or(vec![]);
+                                let mut comments = patch_set.comments.unwrap_or_else(Vec::new);
                                 comments.sort_by(|a, b| a.file.cmp(&b.file));
 
                                 comments
