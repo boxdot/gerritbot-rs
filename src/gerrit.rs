@@ -24,8 +24,7 @@ pub struct User {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Approval {
-    #[serde(rename = "type")]
-    pub approval_type: String,
+    #[serde(rename = "type")] pub approval_type: String,
     pub description: String,
     pub value: String,
     pub old_value: Option<String>,
@@ -37,8 +36,7 @@ pub struct PatchSet {
     pub number: String,
     pub revision: String,
     pub parents: Vec<String>,
-    #[serde(rename = "ref")]
-    pub reference: String,
+    #[serde(rename = "ref")] pub reference: String,
     pub uploader: User,
     pub created_on: u32,
     pub author: User,
@@ -71,10 +69,8 @@ pub struct ChangeKey {
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub enum EventType {
-    #[serde(rename = "reviewer-added")]
-    ReviewerAdded,
-    #[serde(rename = "comment-added")]
-    CommentAdded,
+    #[serde(rename = "reviewer-added")] ReviewerAdded,
+    #[serde(rename = "comment-added")] CommentAdded,
 }
 
 // Only specific events are accepted by this type by design!
@@ -86,18 +82,13 @@ pub struct Event {
     pub approvals: Option<Vec<Approval>>,
     pub reviewer: Option<User>,
     pub comment: Option<String>,
-    #[serde(rename = "patchSet")]
-    pub patchset: PatchSet,
+    #[serde(rename = "patchSet")] pub patchset: PatchSet,
     pub change: Change,
     pub project: String,
-    #[serde(rename = "refName")]
-    pub ref_name: String,
-    #[serde(rename = "changeKey")]
-    pub changekey: ChangeKey,
-    #[serde(rename = "type")]
-    pub event_type: EventType,
-    #[serde(rename = "eventCreatedOn")]
-    pub created_on: u32,
+    #[serde(rename = "refName")] pub ref_name: String,
+    #[serde(rename = "changeKey")] pub changekey: ChangeKey,
+    #[serde(rename = "type")] pub event_type: EventType,
+    #[serde(rename = "eventCreatedOn")] pub created_on: u32,
 }
 
 impl Event {
