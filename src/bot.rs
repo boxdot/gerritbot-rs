@@ -99,10 +99,8 @@ pub struct Bot {
     /// cache.
     #[serde(skip_serializing, skip_deserializing)]
     msg_cache: Option<LruCache<MsgCacheLine, ()>>,
-    #[serde(skip_serializing, skip_deserializing)]
-    person_id_index: HashMap<String, usize>,
-    #[serde(skip_serializing, skip_deserializing)]
-    email_index: HashMap<String, usize>,
+    #[serde(skip_serializing, skip_deserializing)] person_id_index: HashMap<String, usize>,
+    #[serde(skip_serializing, skip_deserializing)] email_index: HashMap<String, usize>,
 }
 
 #[derive(Debug)]

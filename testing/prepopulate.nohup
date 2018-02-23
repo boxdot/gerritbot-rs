@@ -24,7 +24,7 @@ generate_ssh_key() {
   ssh -oStrictHostKeyChecking=no -p 29418 ${1}@localhost gerrit version
 
   echo "Copying the key with open permissions for everyone to use (uhuh)"
-  cp $HOME/.ssh/id_rsa /root/src/testing/id_rsa*
+  cp $HOME/.ssh/id_rsa* /root/src/testing/id_rsa
   chmod 777 /root/src/testing/id_rsa*
 }
 
