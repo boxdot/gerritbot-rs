@@ -76,7 +76,7 @@ fn main() {
 
     // create spark client and event stream listener
     let spark_client = spark::SparkClient::new(
-        config.spark.uri,
+        config.spark.api_uri,
         config.spark.bot_token,
         config.spark.webhook_url,
     ).unwrap_or_else(|err| {

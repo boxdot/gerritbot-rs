@@ -5,11 +5,13 @@ gerrit:
   priv_key_path: testing/id_rsa
 
 spark:
-  uri: https://api.ciscospark.com/v1
+  api_uri: https://api.ciscospark.com/v1
   bot_token: ""
+  # optional, add a webhook URL is you want to register it automatically on Cisco Spark
+  # webhook_url: "https://endpoint.example.org"
   mode: 
     Sqs:
-      uri: ""
+      uri: "https://sqs.us-east-1.amazonaws.com/xxxxxxxxxxx/gerribot-rs"
       region: "us-east-1"
   
 bot:

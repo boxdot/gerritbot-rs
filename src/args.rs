@@ -30,7 +30,7 @@ pub struct GerritConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct SparkConfig {
     pub bot_token: String,
-    pub uri: String,
+    pub api_uri: String,
     pub webhook_url: Option<String>,
     pub mode: ModeConfig,
 }

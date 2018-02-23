@@ -17,10 +17,6 @@ $ cargo run -- <arguments>
 
 The bot can run in two modes.
 
-### Configuration file
-
-You can configure gerritbot-rs with a YAML file. See `config.yml` in the repository.
-
 ### Direct mode
 
 The bot is listening on a specified endpoint for incoming incoming Spark messages. For that, you
@@ -29,6 +25,8 @@ The bot will register the url for you through the Cisco Spask API. Alternatively
 url yourself at [https://developer.ciscospark.com](https://developer.ciscospark.com). In that case,
 do not provide the option `spark.webhook_url`, since otherwise it will overwrite you manually
 configured url.
+
+See configuration example file in [config-direct.yml](config-direct.yml) in the repository.
 
 Example:
 
@@ -47,6 +45,8 @@ a local environment. For an easy way to get a public url connected to a local en
 The bot is polling the Cisco Spark messages from an AWS SQS queue provided by the configuration
  `spark.sqs` and `spark.sqs_region`. The url of the queue can be registered in Spark in
 the same way as in direct mode.
+
+See configuration example file in [config-sqs.yml](config-sqs.yml) in the repository.
 
 Example:
 
