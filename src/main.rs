@@ -37,6 +37,8 @@ mod gerrit;
 mod spark;
 mod sqs;
 
+use spark::SparkClient;
+
 fn main() {
     let args = args::parse_args();
     let config = args::parse_config(args.flag_config);
@@ -79,7 +81,7 @@ fn main() {
 
     // create spark client and event stream listener
     let spark_config = config.spark.clone();
-    let spark_client = spark::SparkClient::new(
+    let spark_client = spark::WebClient::new(
         spark_config.api_uri,
         spark_config.bot_token,
         spark_config.webhook_url,

@@ -17,6 +17,10 @@ use rusoto_core;
 use bot;
 use sqs;
 
+//
+// Helper functions
+//
+
 /// Create a new hyper client for the given url.
 fn new_client(url: &str) -> hyper::Client {
     if url.starts_with("https:") {
@@ -43,7 +47,7 @@ fn get_json_with_token(url: &str, token: &str) -> Result<hyper::client::Response
 }
 
 /// Try to post json to the given url with basic token authorization.
-pub fn post_with_token<T>(
+fn post_with_token<T>(
     url: &str,
     token: &str,
     data: &T,
@@ -63,7 +67,7 @@ where
 }
 
 /// Try to post json to the given url with basic token authorization.
-pub fn delete_with_token(url: &str, token: &str) -> Result<hyper::client::Response, hyper::Error> {
+fn delete_with_token(url: &str, token: &str) -> Result<hyper::client::Response, hyper::Error> {
     let client = new_client(url);
     let auth = hyper::header::Authorization(String::from("Bearer ") + token);
     client
@@ -72,6 +76,10 @@ pub fn delete_with_token(url: &str, token: &str) -> Result<hyper::client::Respon
         .header(auth)
         .send()
 }
+
+//
+// Spark data model
+//
 
 /// Spark id of the user
 pub type PersonId = String;
@@ -150,8 +158,18 @@ struct Webhooks {
     items: Vec<Webhook>,
 }
 
+//
+// Client
+//
+
+pub trait SparkClient {
+    fn id(&self) -> &str;
+    fn reply(&self, person_id: &str, msg: &str);
+    fn get_message(&self, message_id: &str) -> Result<Message, String>;
+}
+
 #[derive(Debug, Clone, Default)]
-pub struct SparkClient {
+pub struct WebClient {
     url: String,
     bot_token: String,
     pub bot_id: String,
@@ -217,13 +235,13 @@ impl From<serde_json::Error> for Error {
     }
 }
 
-impl SparkClient {
+impl WebClient {
     pub fn new(
         spark_api_url: String,
         bot_token: String,
         webhook_url: Option<String>,
-    ) -> Result<SparkClient, Error> {
-        let mut client = SparkClient {
+    ) -> Result<Self, Error> {
+        let mut client = Self {
             url: spark_api_url,
             bot_token: bot_token,
             bot_id: String::new(),
@@ -243,21 +261,6 @@ impl SparkClient {
         }
 
         Ok(client)
-    }
-
-    pub fn reply(&self, person_id: &str, msg: &str) {
-        if self.bot_token.is_empty() {
-            info!("Would send message to {}: {}", person_id, msg);
-            return;
-        }
-        let json = json!({
-            "toPersonId": person_id,
-            "markdown": msg,
-        });
-        let res = post_with_token(&(self.url.clone() + "/messages"), &self.bot_token, &json);
-        if let Err(err) = res {
-            error!("Could not reply to gerrit: {:?}", err);
-        }
     }
 
     fn get_bot_id(&self) -> Result<String, Error> {
@@ -308,7 +311,7 @@ impl SparkClient {
             })
     }
 
-    pub fn replace_webhook_url(&self, url: &str) -> Result<(), Error> {
+    fn replace_webhook_url(&self, url: &str) -> Result<(), Error> {
         // remove all other webhooks
         let webhooks = self.list_webhooks()?;
         let to_remove = webhooks.items.into_iter().filter_map(|webhook| {
@@ -326,24 +329,43 @@ impl SparkClient {
         // register new webhook
         self.register_webhook(url)
     }
+}
 
-    fn get_message_text(&self, message_id: &str) -> Result<hyper::client::Response, hyper::Error> {
-        get_json_with_token(
+impl SparkClient for WebClient {
+    fn id(&self) -> &str {
+        &self.bot_id
+    }
+
+    fn reply(&self, person_id: &str, msg: &str) {
+        if self.bot_token.is_empty() {
+            info!("Would send message to {}: {}", person_id, msg);
+            return;
+        }
+        let json = json!({
+            "toPersonId": person_id,
+            "markdown": msg,
+        });
+        let res = post_with_token(&(self.url.clone() + "/messages"), &self.bot_token, &json);
+        if let Err(err) = res {
+            error!("Could not reply to gerrit: {:?}", err);
+        }
+    }
+
+    // TODO: Use proper error type.
+    fn get_message(&self, message_id: &str) -> Result<Message, String> {
+        let resp = get_json_with_token(
             &(self.url.clone() + "/messages/" + message_id),
             &self.bot_token,
-        )
+        ).map_err(|err| format!("Invalid response from spark: {}", err))?;
+        serde_json::from_reader(resp).map_err(|err| format!("Could not parse json: {}", err))?
     }
 }
 
 impl Message {
     /// Load text from Spark for a received message
     /// Note: Spark does not send the text with the message to the registered post hook.
-    pub fn load_text(&mut self, client: &SparkClient) -> Result<(), String> {
-        let resp = client
-            .get_message_text(&self.id)
-            .map_err(|err| format!("Invalid response from spark: {}", err))?;
-        let msg: Message =
-            serde_json::from_reader(resp).map_err(|err| format!("Could not parse json: {}", err))?;
+    pub fn load_text<C: SparkClient>(&mut self, client: &C) -> Result<(), String> {
+        let msg = client.get_message(&self.id)?;
         self.text = msg.text;
         Ok(())
     }
@@ -395,8 +417,8 @@ pub fn webhook_handler(
     Ok(Response::with(status::Ok))
 }
 
-pub fn webhook_event_stream(
-    client: SparkClient,
+pub fn webhook_event_stream<C: 'static + SparkClient>(
+    client: C,
     listen_url: &str,
     remote: tokio_core::reactor::Remote,
 ) -> Result<Box<Stream<Item = bot::Action, Error = String>>, Error> {
@@ -411,7 +433,7 @@ pub fn webhook_event_stream(
         "post",
     );
 
-    let bot_id = client.bot_id.clone();
+    let bot_id = String::from(client.id());
     let stream = rx.filter(move |msg| msg.person_id != bot_id)
         .map(move |mut msg| {
             debug!("Loading text for message: {:?}", msg);
@@ -436,12 +458,12 @@ pub fn webhook_event_stream(
     Ok(Box::new(stream))
 }
 
-pub fn sqs_event_stream(
-    client: SparkClient,
+pub fn sqs_event_stream<C: SparkClient + 'static>(
+    client: C,
     sqs_url: String,
     sqs_region: rusoto_core::Region,
 ) -> Result<Box<Stream<Item = bot::Action, Error = String>>, Error> {
-    let bot_id = client.bot_id.clone();
+    let bot_id = String::from(client.id());
     let sqs_stream = sqs::sqs_receiver(sqs_url, sqs_region)?;
     let sqs_stream = sqs_stream
         .filter_map(|sqs_message| {
