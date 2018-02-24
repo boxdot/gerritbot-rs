@@ -24,8 +24,7 @@ generate_ssh_key() {
   ssh -oStrictHostKeyChecking=no -p 29418 ${1}@localhost gerrit version
 
   echo "Copying the key with open permissions for everyone to use (uhuh)"
-  cp $HOME/.ssh/id_rsa* /root/src/testing/id_rsa
-  chmod 777 /root/src/testing/id_rsa*
+  install -m 777 $HOME/.ssh/id_rsa* /root/data
 }
 
 create_user() {
@@ -40,8 +39,10 @@ create_project() {
 
 push_git_repo() {
   echo "Cloning the repo before doing some stuff on it, for Gerrit!"
-  pushd $(mktemp -d)
-  git clone https://github.com/boxdot/gerritbot-rs .
+  rm -rf /root/data/src
+  mkdir /root/data/src
+  pushd /root/data/src
+  git clone file:///root/src.git .
   echo "Pushing repo to Gerrit"
   git remote add gerrit-test ssh://admin@localhost:29418/gerritbot-rs
   git checkout HEAD~1
