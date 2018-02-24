@@ -109,7 +109,8 @@ pub struct Message {
     room_type: String,
 
     // a message contained in a post does not have text loaded
-    #[serde(default)] text: String,
+    #[serde(default)]
+    text: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -123,7 +124,8 @@ struct PersonDetails {
     created: String,
     last_activity: Option<String>,
     status: Option<String>,
-    #[serde(rename = "type")] person_type: String,
+    #[serde(rename = "type")]
+    person_type: String,
 }
 
 #[derive(Deserialize, Debug)]
