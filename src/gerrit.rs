@@ -1,9 +1,10 @@
 use std::io::{self, BufRead, BufReader};
 use std::net::TcpStream;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::thread;
 
 use ssh2;
+use ssh2::Channel;
 use serde_json;
 
 use futures::sync::mpsc::{channel, Receiver, Sender};
@@ -156,14 +157,14 @@ fn send_terminate_msg<T>(
     Err(())
 }
 
-struct GerritConnection {
-    session: ssh2::Session,
+pub struct GerritConnection {
+    pub session: ssh2::Session,
     /// tcp has to be kept alive with session together, even if it is never used directly
     _tcp: TcpStream,
 }
 
 impl GerritConnection {
-    fn new(session: ssh2::Session, tcp: TcpStream) -> GerritConnection {
+    pub fn new(session: ssh2::Session, tcp: TcpStream) -> GerritConnection {
         GerritConnection {
             session: session,
             _tcp: tcp,
@@ -171,70 +172,33 @@ impl GerritConnection {
     }
 }
 
-fn connect_to_gerrit(
-    tx: &Sender<Result<String, StreamError>>,
-    hostport: &str,
+pub fn connect_to_gerrit(
+    host: &str,
     username: &str,
     priv_key_path: &PathBuf,
-    pub_key_path: &PathBuf,
-) -> Result<GerritConnection, ()> {
-    // Connect to the local SSH server
-    let mut session = ssh2::Session::new().ok_or_else(|| {
-        let _ = send_terminate_msg::<()>(
-            &tx.clone(),
-            String::from("Could not create a new ssh session for connecting to Gerrit."),
-        );
+) -> Result<GerritConnection, String> {
+    let pub_key_path = get_pub_key_path(&priv_key_path);
+    debug!("Will use public key: {}", pub_key_path.to_str().unwrap());
+
+    let mut session = ssh2::Session::new().unwrap();
+
+    let tcp = TcpStream::connect(host).or_else(|err| {
+        Err(format!(
+            "Could not connect to gerrit at {}: {:?}",
+            host, err
+        ))
     })?;
 
-    let tcp = TcpStream::connect(hostport).or_else(|err| {
-        send_terminate_msg(
-            &tx.clone(),
-            format!("Could not connect to gerrit at {}: {:?}", hostport, err),
-        )
-    })?;
-
-    session.handshake(&tcp).or_else(|err| {
-        send_terminate_msg(
-            &tx.clone(),
-            format!("Could not connect to gerrit: {:?}", err),
-        )
-    })?;
+    session
+        .handshake(&tcp)
+        .or_else(|err| Err(format!("Could not connect to gerrit: {:?}", err)))?;
 
     // Try to authenticate
     session
-        .userauth_pubkey_file(username, Some(pub_key_path), priv_key_path, None)
-        .or_else(|err| {
-            send_terminate_msg(&tx.clone(), format!("Could not authenticate: {:?}", err))
-        })?;
+        .userauth_pubkey_file(username, Some(&pub_key_path), priv_key_path, None)
+        .or_else(|err| Err(format!("Could not authenticate: {:?}", err)))?;
 
     Ok(GerritConnection::new(session, tcp))
-}
-
-fn new_ssh_channel<'a>(
-    tx: &Sender<Result<String, StreamError>>,
-    session: &'a ssh2::Session,
-) -> Result<ssh2::Channel<'a>, ()> {
-    let mut ssh_channel = session.channel_session().or_else(|err| {
-        send_terminate_msg(
-            &tx.clone(),
-            format!("Could not create ssh channel: {:?}", err),
-        )
-    })?;
-
-    // .exec("gerrit stream-events -s comment-added -s reviewer-added -s reviewer-deleted -s change-merged")
-    ssh_channel
-        .exec("gerrit stream-events -s comment-added -s reviewer-added")
-        .or_else(|err| {
-            send_terminate_msg(
-                &tx.clone(),
-                format!(
-                    "Could not execute gerrit stream-event command over ssh: {:?}",
-                    err
-                ),
-            )
-        })?;
-
-    Ok(ssh_channel)
 }
 
 fn receiver_into_event_stream(
@@ -254,28 +218,38 @@ fn receiver_into_event_stream(
 }
 
 pub fn event_stream(
-    host: &str,
-    port: u16,
+    host: String,
     username: String,
     priv_key_path: PathBuf,
 ) -> Box<Stream<Item = bot::Action, Error = String>> {
-    let hostport = format!("{}:{}", host, port);
-    let pub_key_path = get_pub_key_path(&priv_key_path);
-    debug!("Will use public key: {}", pub_key_path.to_str().unwrap());
-
     let (main_tx, rx) = channel(1);
     thread::spawn(move || -> Result<(), ()> {
         loop {
-            info!("(Re)connecting to Gerrit over ssh: {}", hostport);
+            info!("(Re)connecting to Gerrit over SSH: {}", host);
+            let conn = connect_to_gerrit(&host, &username, &priv_key_path).or_else(|err| {
+                send_terminate_msg(
+                    &main_tx.clone(),
+                    format!("Could not connect to Gerrit: {}", err),
+                )
+            })?;
 
-            let conn = connect_to_gerrit(
-                &main_tx,
-                &hostport,
-                &username,
-                &priv_key_path,
-                &pub_key_path,
-            )?;
-            let ssh_channel = new_ssh_channel(&main_tx, &conn.session)?;
+            let mut ssh_channel = conn.session.channel_session().or_else(|err| {
+                send_terminate_msg(
+                    &main_tx.clone(),
+                    format!("Could not open SSH channel: {:?}", err),
+                )
+            })?;
+            ssh_channel
+                .exec("gerrit stream-events -s comment-added -s reviewer-added")
+                .or_else(|err| {
+                    send_terminate_msg(
+                        &main_tx.clone(),
+                        format!(
+                            "Could not execute gerrit stream-event command over ssh: {:?}",
+                            err
+                        ),
+                    )
+                })?;
             info!("Connected to Gerrit.");
 
             let buf_channel = BufReader::new(ssh_channel);
@@ -311,26 +285,7 @@ mod test {
     }
 }
 
-pub fn query(
-    host: &str,
-    port: u16,
-    username: &str,
-    priv_key_path: &Path,
-    change_id: &str,
-) -> Result<Change, serde_json::Error> {
-    let hostport = format!("{}:{}", host, port);
-    let mut session = ssh2::Session::new().unwrap();
-
-    // Connect to the local SSH server
-    let tcp = TcpStream::connect(hostport).unwrap();
-    session.handshake(&tcp).unwrap();
-
-    // Try to authenticate
-    session
-        .userauth_pubkey_file(username, None, priv_key_path, None)
-        .unwrap();
-
-    let mut ssh_channel = session.channel_session().unwrap();
+pub fn query(mut ssh_channel: Channel, change_id: &str) -> Result<Change, serde_json::Error> {
     let query = format!(
         "gerrit query --format JSON --current-patch-set --comments {}",
         change_id

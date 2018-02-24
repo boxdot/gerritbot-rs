@@ -42,14 +42,16 @@ use spark::SparkClient;
 
 fn spark_client_from_config(spark_config: args::SparkConfig) -> Rc<SparkClient> {
     if !spark_config.bot_token.is_empty() {
-        Rc::new(spark::WebClient::new(
-            spark_config.api_uri,
-            spark_config.bot_token,
-            spark_config.webhook_url,
-        ).unwrap_or_else(|err| {
-            error!("Could not create spark client: {}", err);
-            std::process::exit(1);
-        }))
+        Rc::new(
+            spark::WebClient::new(
+                spark_config.api_uri,
+                spark_config.bot_token,
+                spark_config.webhook_url,
+            ).unwrap_or_else(|err| {
+                error!("Could not create spark client: {}", err);
+                std::process::exit(1);
+            }),
+        )
     } else {
         warn!("Using console as Spark client due to empty bot_token.");
         Rc::new(spark::ConsoleClient::new())
@@ -102,9 +104,7 @@ fn main() {
         args::ModeConfig::Direct { endpoint } => {
             spark::webhook_event_stream(spark_client, &endpoint, core.remote())
         }
-        args::ModeConfig::Sqs { uri, region } => {
-            spark::sqs_event_stream(spark_client, uri, region)
-        }
+        args::ModeConfig::Sqs { uri, region } => spark::sqs_event_stream(spark_client, uri, region),
     };
 
     let spark_stream = spark_stream.unwrap_or_else(|err| {
@@ -114,9 +114,20 @@ fn main() {
 
     // create gerrit event stream listener
     let gerrit_config = config.gerrit.clone();
+    info!(
+        "(Re)connecting to Gerrit over ssh: {:?}",
+        gerrit_config.host
+    );
+    let conn = gerrit::connect_to_gerrit(
+        &gerrit_config.host,
+        &gerrit_config.username,
+        &gerrit_config.priv_key_path,
+    ).unwrap_or_else(|err| {
+        error!("Could not connect to Gerrit via SSH: {}", err);
+        std::process::exit(1);
+    });
     let gerrit_stream = gerrit::event_stream(
-        &gerrit_config.hostname,
-        gerrit_config.port,
+        gerrit_config.host,
         gerrit_config.username,
         gerrit_config.priv_key_path,
     );
@@ -157,14 +168,15 @@ fn main() {
                     }
                     bot::Task::FetchComments(user, change_id, message) => {
                         let gerrit_config = config.gerrit.clone();
-                        let gerrit_hostname = config.gerrit.hostname.clone();
-                        let gerrit_change = match gerrit::query(
-                            &gerrit_config.hostname,
-                            gerrit_config.port,
-                            &gerrit_config.username,
-                            &gerrit_config.priv_key_path,
-                            &change_id,
-                        ) {
+                        let gerrit_host = config.gerrit.host.clone();
+                        let mut ssh_channel = match conn.session.channel_session() {
+                            Ok(channel) => channel,
+                            Err(err) => {
+                                error!("Failed to open SSH channel: {}", err);
+                                return Some(bot::Response::new(user, message));
+                            }
+                        };
+                        let gerrit_change = match gerrit::query(ssh_channel, &change_id) {
                             Ok(value) => value,
                             Err(_) => {
                                 return Some(bot::Response::new(user, message));
@@ -187,7 +199,7 @@ fn main() {
                                             .map(|comment| {
                                                 let url = format!(
                                                     "https://{}/#/c/{}/{}/{}@{}",
-                                                    gerrit_hostname,
+                                                    gerrit_host.split(':').next().unwrap(),
                                                     gerrit_change_number,
                                                     patch_set_number,
                                                     comment.file,
