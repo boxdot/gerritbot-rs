@@ -1,0 +1,4 @@
+FROM rust
+RUN apt-get update && apt-get install -y build-essential cmake libssh2-1-dev
+RUN cargo install cargo-watch
+CMD ["/bin/bash", "/src/testing/bot.sh"]
