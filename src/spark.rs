@@ -1,4 +1,4 @@
-use std::{io, error, fmt, thread};
+use std::{error, fmt, io, thread};
 use std::rc::Rc;
 
 use futures::future::Future;
@@ -183,7 +183,7 @@ pub enum Error {
     JsonError(serde_json::Error),
     RegisterWebhook(String),
     DeleteWebhook(String),
-    IoError(io::Error)
+    IoError(io::Error),
 }
 
 impl fmt::Display for Error {
@@ -194,7 +194,7 @@ impl fmt::Display for Error {
             Error::JsonError(ref err) => fmt::Display::fmt(err, f),
             Error::RegisterWebhook(ref msg) | Error::DeleteWebhook(ref msg) => {
                 fmt::Display::fmt(msg, f)
-            },
+            }
             Error::IoError(ref err) => fmt::Display::fmt(err, f),
         }
     }
@@ -364,21 +364,21 @@ impl SparkClient for WebClient {
 
 #[derive(Debug, Clone)]
 pub struct ConsoleClient {
-    stdin_enabled: bool
+    stdin_enabled: bool,
 }
 
 impl ConsoleClient {
     /// Create a console client which resolves the message text always with a placeholder text.
     pub fn new() -> Self {
         Self {
-            stdin_enabled: false
+            stdin_enabled: false,
         }
     }
 
     // Create a console client which resolves the message text from stdin.
     pub fn _with_stdin() -> Self {
         Self {
-            stdin_enabled: true
+            stdin_enabled: true,
         }
     }
 }

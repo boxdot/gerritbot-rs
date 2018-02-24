@@ -20,8 +20,7 @@ pub struct Config {
 
 #[derive(Debug, Default, Deserialize, Clone)]
 pub struct GerritConfig {
-    pub hostname: String,
-    pub port: u16,
+    pub host: String,
     pub username: String,
     pub priv_key_path: PathBuf,
 }
@@ -86,6 +85,6 @@ pub fn parse_config(path: PathBuf) -> Config {
         eprintln!("Could not parse config file: {}", e);
         ::std::process::exit(2)
     });
-    println!("{:?}", config);
+    debug!("{:?}", config);
     config
 }

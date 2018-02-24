@@ -1,6 +1,5 @@
 gerrit:
-  hostname: localhost
-  port: 29418
+  host: localhost:29418
   username: rmp-bot
   priv_key_path: testing/id_rsa
 
