@@ -343,7 +343,7 @@ pub fn query(
     // event from our channel cannot fail
     let json: String = line.unwrap().ok().unwrap();
     let res: Result<Change, _> = serde_json::from_str(&json);
-    println!("[D] {:?} for json: {}", res, json);
+    debug!("[D] {:?} for json: {}", res, json);
 
     res
 }
