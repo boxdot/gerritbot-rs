@@ -165,7 +165,7 @@ struct Webhooks {
 pub trait SparkClient {
     fn id(&self) -> &str;
     fn reply(&self, person_id: &str, msg: &str);
-    fn get_message(&self, message_id: &str) -> Result<Message, String>;
+    fn get_message(&self, message_id: &str) -> Result<Message, Error>;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -352,19 +352,19 @@ impl SparkClient for WebClient {
     }
 
     // TODO: Use proper error type.
-    fn get_message(&self, message_id: &str) -> Result<Message, String> {
+    fn get_message(&self, message_id: &str) -> Result<Message, Error> {
         let resp = get_json_with_token(
             &(self.url.clone() + "/messages/" + message_id),
             &self.bot_token,
-        ).map_err(|err| format!("Invalid response from spark: {}", err))?;
-        serde_json::from_reader(resp).map_err(|err| format!("Could not parse json: {}", err))?
+        )?;
+        serde_json::from_reader(resp).map_err(Error::from)
     }
 }
 
 impl Message {
     /// Load text from Spark for a received message
     /// Note: Spark does not send the text with the message to the registered post hook.
-    pub fn load_text<C: SparkClient>(&mut self, client: &C) -> Result<(), String> {
+    pub fn load_text<C: SparkClient>(&mut self, client: &C) -> Result<(), Error> {
         let msg = client.get_message(&self.id)?;
         self.text = msg.text;
         Ok(())
