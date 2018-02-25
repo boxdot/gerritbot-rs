@@ -28,6 +28,7 @@ use futures::Stream;
 use std::time::Duration;
 use itertools::Itertools;
 use std::cmp::Ord;
+use std::rc::Rc;
 
 #[macro_use]
 mod utils;
@@ -38,6 +39,22 @@ mod spark;
 mod sqs;
 
 use spark::SparkClient;
+
+fn spark_client_from_config(spark_config: args::SparkConfig) -> Rc<SparkClient> {
+    if !spark_config.bot_token.is_empty() {
+        Rc::new(spark::WebClient::new(
+            spark_config.api_uri,
+            spark_config.bot_token,
+            spark_config.webhook_url,
+        ).unwrap_or_else(|err| {
+            error!("Could not create spark client: {}", err);
+            std::process::exit(1);
+        }))
+    } else {
+        warn!("Using console as Spark client due to empty bot_token.");
+        Rc::new(spark::ConsoleClient::new())
+    }
+}
 
 fn main() {
     let args = args::parse_args();
@@ -80,22 +97,13 @@ fn main() {
     let mut core = tokio_core::reactor::Core::new().unwrap();
 
     // create spark client and event stream listener
-    let spark_config = config.spark.clone();
-    let spark_client = spark::WebClient::new(
-        spark_config.api_uri,
-        spark_config.bot_token,
-        spark_config.webhook_url,
-    ).unwrap_or_else(|err| {
-        error!("Could not create spark client: {}", err);
-        std::process::exit(1);
-    });
-
+    let spark_client = spark_client_from_config(config.spark.clone());
     let spark_stream = match config.spark.mode.clone() {
         args::ModeConfig::Direct { endpoint } => {
-            spark::webhook_event_stream(spark_client.clone(), &endpoint, core.remote())
+            spark::webhook_event_stream(spark_client, &endpoint, core.remote())
         }
         args::ModeConfig::Sqs { uri, region } => {
-            spark::sqs_event_stream(spark_client.clone(), uri, region)
+            spark::sqs_event_stream(spark_client, uri, region)
         }
     };
 
@@ -114,6 +122,7 @@ fn main() {
     );
 
     // join spark and gerrit action stream into one and fold over actions with accumulator `bot`
+    let spark_client = spark_client_from_config(config.spark.clone());
     let handle = core.handle();
     let actions = spark_stream
         .select(gerrit_stream)

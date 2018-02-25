@@ -1,4 +1,5 @@
-use std::{error, fmt, thread};
+use std::{io, error, fmt, thread};
+use std::rc::Rc;
 
 use futures::future::Future;
 use futures::{Sink, Stream};
@@ -106,7 +107,7 @@ struct Post {
     target_url: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
     created: Option<String>,
@@ -168,7 +169,7 @@ pub trait SparkClient {
     fn get_message(&self, message_id: &str) -> Result<Message, Error>;
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct WebClient {
     url: String,
     bot_token: String,
@@ -182,6 +183,7 @@ pub enum Error {
     JsonError(serde_json::Error),
     RegisterWebhook(String),
     DeleteWebhook(String),
+    IoError(io::Error)
 }
 
 impl fmt::Display for Error {
@@ -192,7 +194,8 @@ impl fmt::Display for Error {
             Error::JsonError(ref err) => fmt::Display::fmt(err, f),
             Error::RegisterWebhook(ref msg) | Error::DeleteWebhook(ref msg) => {
                 fmt::Display::fmt(msg, f)
-            }
+            },
+            Error::IoError(ref err) => fmt::Display::fmt(err, f),
         }
     }
 }
@@ -204,6 +207,7 @@ impl error::Error for Error {
             Error::SqsError(ref err) => err.description(),
             Error::JsonError(ref err) => err.description(),
             Error::RegisterWebhook(ref msg) | Error::DeleteWebhook(ref msg) => msg,
+            Error::IoError(ref err) => err.description(),
         }
     }
 
@@ -213,6 +217,7 @@ impl error::Error for Error {
             Error::SqsError(ref err) => err.cause(),
             Error::JsonError(ref err) => err.cause(),
             Error::RegisterWebhook(_) | Error::DeleteWebhook(_) => None,
+            Error::IoError(ref err) => err.cause(),
         }
     }
 }
@@ -235,6 +240,12 @@ impl From<serde_json::Error> for Error {
     }
 }
 
+impl From<io::Error> for Error {
+    fn from(err: io::Error) -> Self {
+        Error::IoError(err)
+    }
+}
+
 impl WebClient {
     pub fn new(
         spark_api_url: String,
@@ -246,11 +257,6 @@ impl WebClient {
             bot_token: bot_token,
             bot_id: String::new(),
         };
-
-        if client.bot_token.is_empty() {
-            warn!("Spark Client in no-op mode.");
-            return Ok(client);
-        }
 
         client.bot_id = client.get_bot_id()?;
         debug!("Bot id: {}", client.bot_id);
@@ -337,10 +343,6 @@ impl SparkClient for WebClient {
     }
 
     fn reply(&self, person_id: &str, msg: &str) {
-        if self.bot_token.is_empty() {
-            info!("Would send message to {}: {}", person_id, msg);
-            return;
-        }
         let json = json!({
             "toPersonId": person_id,
             "markdown": msg,
@@ -351,7 +353,6 @@ impl SparkClient for WebClient {
         }
     }
 
-    // TODO: Use proper error type.
     fn get_message(&self, message_id: &str) -> Result<Message, Error> {
         let resp = get_json_with_token(
             &(self.url.clone() + "/messages/" + message_id),
@@ -361,10 +362,54 @@ impl SparkClient for WebClient {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ConsoleClient {
+    stdin_enabled: bool
+}
+
+impl ConsoleClient {
+    /// Create a console client which resolves the message text always with a placeholder text.
+    pub fn new() -> Self {
+        Self {
+            stdin_enabled: false
+        }
+    }
+
+    // Create a console client which resolves the message text from stdin.
+    pub fn _with_stdin() -> Self {
+        Self {
+            stdin_enabled: true
+        }
+    }
+}
+
+impl SparkClient for ConsoleClient {
+    fn id(&self) -> &str {
+        "console-client"
+    }
+
+    fn reply(&self, person_id: &str, msg: &str) {
+        print!("Would reply to {}: {}", person_id, msg);
+    }
+
+    fn get_message(&self, message_id: &str) -> Result<Message, Error> {
+        if self.stdin_enabled {
+            let mut line = String::new();
+            io::stdin().read_line(&mut line)?;
+            serde_json::from_str(&line).map_err(Error::from)
+        } else {
+            let mut message = Message::default();
+            message.id = message_id.into();
+            message.text = "Placeholder text".into();
+            Ok(message)
+        }
+    }
+}
+
 impl Message {
     /// Load text from Spark for a received message
     /// Note: Spark does not send the text with the message to the registered post hook.
-    pub fn load_text<C: SparkClient>(&mut self, client: &C) -> Result<(), Error> {
+    pub fn load_text<C: SparkClient + ?Sized>(&mut self, client: &C) -> Result<(), Error> {
         let msg = client.get_message(&self.id)?;
         self.text = msg.text;
         Ok(())
@@ -417,8 +462,8 @@ pub fn webhook_handler(
     Ok(Response::with(status::Ok))
 }
 
-pub fn webhook_event_stream<C: 'static + SparkClient>(
-    client: C,
+pub fn webhook_event_stream<C: 'static + SparkClient + ?Sized>(
+    client: Rc<C>,
     listen_url: &str,
     remote: tokio_core::reactor::Remote,
 ) -> Result<Box<Stream<Item = bot::Action, Error = String>>, Error> {
@@ -437,7 +482,7 @@ pub fn webhook_event_stream<C: 'static + SparkClient>(
     let stream = rx.filter(move |msg| msg.person_id != bot_id)
         .map(move |mut msg| {
             debug!("Loading text for message: {:?}", msg);
-            if let Err(err) = msg.load_text(&client) {
+            if let Err(err) = msg.load_text(&*client) {
                 error!("Could not load post's text: {}", err);
                 return None;
             }
@@ -458,8 +503,8 @@ pub fn webhook_event_stream<C: 'static + SparkClient>(
     Ok(Box::new(stream))
 }
 
-pub fn sqs_event_stream<C: SparkClient + 'static>(
-    client: C,
+pub fn sqs_event_stream<C: SparkClient + 'static + ?Sized>(
+    client: Rc<C>,
     sqs_url: String,
     sqs_region: rusoto_core::Region,
 ) -> Result<Box<Stream<Item = bot::Action, Error = String>>, Error> {
@@ -483,7 +528,7 @@ pub fn sqs_event_stream<C: SparkClient + 'static>(
         .filter(move |msg| msg.person_id != bot_id)
         .map(move |mut msg| {
             debug!("Loading text for message: {:?}", msg);
-            if let Err(err) = msg.load_text(&client) {
+            if let Err(err) = msg.load_text(&*client) {
                 error!("Could not load post's text: {}", err);
                 return None;
             }
