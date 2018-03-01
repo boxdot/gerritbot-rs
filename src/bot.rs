@@ -1,15 +1,16 @@
 use std::collections::HashMap;
 use std::convert;
 use std::fs::File;
-use std::io;
 use std::io::Read;
+use std::io;
 use std::path::Path;
 use std::time::Duration;
 
+use itertools::Itertools;
 use lru_time_cache::LruCache;
-use serde_json;
-use rlua::{Function as LuaFunction, Lua};
 use regex::Regex;
+use rlua::{Function as LuaFunction, Lua};
+use serde_json;
 
 use gerrit;
 use spark;
@@ -290,17 +291,6 @@ impl Bot {
         let msgs: Vec<String> = approvals
             .iter()
             .filter_map(|approval| {
-                // filter if there was no previous value, or value did not change, or it is 0
-                let filtered = !approval
-                    .old_value
-                    .as_ref()
-                    .map(|old_value| old_value != &approval.value && approval.value != "0")
-                    .unwrap_or(false);
-                debug!("Filtered approval: {:?}", filtered);
-                if filtered {
-                    return None;
-                }
-
                 // filter all messages that were already sent to the user recently
                 if self.touch_cache(MsgCacheLine::new_approval(
                     user_pos,
@@ -497,6 +487,11 @@ pub enum Action {
     FilterEnable(spark::PersonId),
     FilterDisable(spark::PersonId),
     ReviewerAdded(Box<gerrit::Event>),
+    ChangeFetched(
+        spark::PersonId,
+        String, /* message */
+        Box<gerrit::Change>,
+    ),
     NoOp,
 }
 
@@ -703,9 +698,54 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
                 Task::Reply(Response::new(user.spark_person_id.clone(), message))
             })
         }
+        Action::ChangeFetched(person_id, message, change) => {
+            Some(Task::Reply(Response::new(
+                person_id, format_msg_with_comments(message, *change))))
+        }
         Action::NoOp => None,
     };
     (bot, task)
+}
+
+fn format_comments(change: gerrit::Change) -> Option<String> {
+    let change_number = change.number.clone();
+    let host = change.url.split('/').nth(2).unwrap();
+
+    change.current_patch_set.map(|patch_set| {
+        let patch_set_number = patch_set.number;
+        let mut comments = patch_set.comments.unwrap_or_else(Vec::new);
+        comments.sort_by(|a, b| a.file.cmp(&b.file));
+
+        comments
+            .into_iter()
+            .group_by(|c| c.file.clone())
+            .into_iter()
+            .map(|(file, comments)| -> String {
+                let line_comments = comments
+                    .map(|comment| {
+                        let url = format!(
+                            "https://{}/#/c/{}/{}/{}@{}",
+                            host, change_number, patch_set_number, comment.file, comment.line
+                        );
+                        format!("> [Line {}]({}): {}", comment.line, url, comment.message)
+                    })
+                    .intersperse("\n".into())
+                    .collect::<Vec<_>>()
+                    .concat();
+                format!("`{}`\n\n{}", file, line_comments)
+            })
+            .intersperse("\n\n".into())
+            .collect::<Vec<_>>()
+            .concat()
+    })
+}
+
+fn format_msg_with_comments(message: String, change: gerrit::Change) -> String {
+    if let Some(additional_message) = format_comments(change) {
+        format!("{}\n\n{}", message, additional_message)
+    } else {
+        message
+    }
 }
 
 #[cfg(test)]

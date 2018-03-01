@@ -79,6 +79,7 @@ pub fn parse_args() -> Args {
 pub fn parse_config(path: PathBuf) -> Config {
     let file = File::open(path).unwrap_or_else(|e| {
         eprintln!("Could not open config file: {}", e);
+        eprintln!("{}", USAGE);
         ::std::process::exit(1)
     });
     let config: Config = serde_yaml::from_reader(file).unwrap_or_else(|e| {
