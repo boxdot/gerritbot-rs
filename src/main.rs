@@ -24,10 +24,8 @@ extern crate ssh2;
 extern crate stderrlog;
 extern crate tokio_core;
 
-use futures::Stream;
+use futures::{Future, Sink, Stream};
 use std::time::Duration;
-use itertools::Itertools;
-use std::cmp::Ord;
 use std::rc::Rc;
 
 #[macro_use]
@@ -118,25 +116,31 @@ fn main() {
         "(Re)connecting to Gerrit over ssh: {:?}",
         gerrit_config.host
     );
-    let conn = gerrit::connect_to_gerrit(
-        &gerrit_config.host,
-        &gerrit_config.username,
-        &gerrit_config.priv_key_path,
+
+    let (gerrit_change_id_sink, gerrit_change_response_stream) = gerrit::change_sink(
+        gerrit_config.host.clone(),
+        gerrit_config.username.clone(),
+        gerrit_config.priv_key_path.clone(),
     ).unwrap_or_else(|err| {
-        error!("Could not connect to Gerrit via SSH: {}", err);
+        error!(
+            "Could not connect to Gerrit via SSH for sending commands: {}",
+            err
+        );
         std::process::exit(1);
     });
+
     let gerrit_stream = gerrit::event_stream(
         gerrit_config.host,
         gerrit_config.username,
         gerrit_config.priv_key_path,
     );
 
-    // join spark and gerrit action stream into one and fold over actions with accumulator `bot`
+    // join spark and gerrit action streams into one and fold over actions with accumulator `bot`
     let spark_client = spark_client_from_config(config.spark.clone());
     let handle = core.handle();
     let actions = spark_stream
         .select(gerrit_stream)
+        .select(gerrit_change_response_stream)
         .filter(|action| match *action {
             bot::Action::NoOp => false,
             _ => true,
@@ -155,7 +159,7 @@ fn main() {
             if let Some(task) = task {
                 debug!("New task {:?}", task);
                 let response = match task {
-                    bot::Task::Reply(response) => response,
+                    bot::Task::Reply(response) => Some(response),
                     bot::Task::ReplyAndSave(response) => {
                         let bot_clone = bot.clone();
                         handle.spawn_fn(move || {
@@ -164,66 +168,22 @@ fn main() {
                             }
                             Ok(())
                         });
-                        response
+                        Some(response)
                     }
                     bot::Task::FetchComments(user, change_id, message) => {
-                        let gerrit_config = config.gerrit.clone();
-                        let gerrit_host = config.gerrit.host.clone();
-                        let mut ssh_channel = match conn.session.channel_session() {
-                            Ok(channel) => channel,
-                            Err(err) => {
-                                error!("Failed to open SSH channel: {}", err);
-                                return Some(bot::Response::new(user, message));
-                            }
-                        };
-                        let gerrit_change = match gerrit::query(ssh_channel, &change_id) {
-                            Ok(value) => value,
-                            Err(_) => {
-                                return Some(bot::Response::new(user, message));
-                            }
-                        };
-                        let gerrit_change_number = gerrit_change.number;
-                        let additional_message = gerrit_change
-                            .current_patch_set
-                            .map(|patch_set| {
-                                let patch_set_number = patch_set.number;
-                                let mut comments = patch_set.comments.unwrap_or_else(Vec::new);
-                                comments.sort_by(|a, b| a.file.cmp(&b.file));
-
-                                comments
-                                    .into_iter()
-                                    .group_by(|c| c.file.clone())
-                                    .into_iter()
-                                    .map(|(file, comments)| -> String {
-                                        let line_comments = comments
-                                            .map(|comment| {
-                                                let url = format!(
-                                                    "https://{}/#/c/{}/{}/{}@{}",
-                                                    gerrit_host.split(':').next().unwrap(),
-                                                    gerrit_change_number,
-                                                    patch_set_number,
-                                                    comment.file,
-                                                    comment.line
-                                                );
-                                                format!(
-                                                    "> [Line {}]({}): {}",
-                                                    comment.line, url, comment.message
-                                                )
-                                            })
-                                            .intersperse("\n".into())
-                                            .collect::<Vec<_>>()
-                                            .concat();
-                                        format!("`{}`\n\n{}", file, line_comments)
-                                    })
-                                    .intersperse("\n\n".into())
-                                    .collect::<Vec<_>>()
-                                    .concat()
-                            })
-                            .unwrap_or_else(String::new);
-                        bot::Response::new(user, format!("{}\n\n{}", message, additional_message))
+                        handle.spawn(
+                            gerrit_change_id_sink
+                                .clone()
+                                .send((user, change_id, message))
+                                .map_err(|e| {
+                                    error!("Could not fetch comments: {}", e);
+                                })
+                                .then(|_| Ok(())),
+                        );
+                        None
                     }
                 };
-                return Some(response);
+                return response;
             }
             None
         })

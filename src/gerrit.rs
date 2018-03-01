@@ -73,6 +73,14 @@ pub struct Change {
     pub commit_message: String,
     pub status: String,
     pub current_patch_set: Option<PatchSet>,
+    pub comments: Option<Vec<Comment>>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct Comment {
+    pub timestamp: u64,
+    pub reviewer: User,
+    pub message: String,
 }
 
 #[derive(Deserialize, Debug, Eq, PartialEq, Hash, Clone)]
@@ -160,45 +168,76 @@ fn send_terminate_msg<T>(
 pub struct GerritConnection {
     pub session: ssh2::Session,
     /// tcp has to be kept alive with session together, even if it is never used directly
-    _tcp: TcpStream,
+    tcp: Box<TcpStream>,
+    // Data needed for reconnection in case this connection was terminated.
+    host: String,
+    username: String,
+    priv_key_path: PathBuf,
 }
 
 impl GerritConnection {
-    pub fn new(session: ssh2::Session, tcp: TcpStream) -> GerritConnection {
-        GerritConnection {
-            session: session,
-            _tcp: tcp,
-        }
+    pub fn connect(host: String, username: String, priv_key_path: PathBuf) -> Result<Self, String> {
+        let pub_key_path = get_pub_key_path(&priv_key_path);
+        debug!("Will use public key: {}", pub_key_path.to_str().unwrap());
+
+        let mut session = ssh2::Session::new().unwrap();
+
+        debug!("Connecting to tcp: {}", &host);
+        let tcp = Box::new(TcpStream::connect(&host).or_else(|err| {
+            Err(format!(
+                "Could not connect to gerrit at {}: {:?}",
+                host, err
+            ))
+        })?);
+
+        session
+            .handshake(&*tcp)
+            .or_else(|err| Err(format!("Could not connect to gerrit: {:?}", err)))?;
+
+        // Try to authenticate
+        session
+            .userauth_pubkey_file(&username, Some(&pub_key_path), &priv_key_path, None)
+            .or_else(|err| Err(format!("Could not authenticate: {:?}", err)))?;
+
+        Ok(Self {
+            session,
+            tcp,
+            host,
+            username,
+            priv_key_path,
+        })
     }
-}
 
-pub fn connect_to_gerrit(
-    host: &str,
-    username: &str,
-    priv_key_path: &PathBuf,
-) -> Result<GerritConnection, String> {
-    let pub_key_path = get_pub_key_path(&priv_key_path);
-    debug!("Will use public key: {}", pub_key_path.to_str().unwrap());
+    pub fn reconnect(&mut self) -> Result<(), String> {
+        let mut session = ssh2::Session::new().unwrap();
+        let tcp = Box::new(TcpStream::connect(&self.host).or_else(|err| {
+            Err(format!(
+                "Could not connect to gerrit at {}: {:?}",
+                self.host, err
+            ))
+        })?);
 
-    let mut session = ssh2::Session::new().unwrap();
+        session
+            .handshake(&*tcp)
+            .or_else(|err| Err(format!("Could not connect to gerrit: {:?}", err)))?;
 
-    let tcp = TcpStream::connect(host).or_else(|err| {
-        Err(format!(
-            "Could not connect to gerrit at {}: {:?}",
-            host, err
-        ))
-    })?;
+        // Try to authenticate
+        let pub_key_path = get_pub_key_path(&self.priv_key_path);
+        debug!("Will use public key: {}", pub_key_path.to_str().unwrap());
+        session
+            .userauth_pubkey_file(
+                &self.username,
+                Some(&pub_key_path),
+                &self.priv_key_path,
+                None,
+            )
+            .or_else(|err| Err(format!("Could not authenticate: {:?}", err)))?;
 
-    session
-        .handshake(&tcp)
-        .or_else(|err| Err(format!("Could not connect to gerrit: {:?}", err)))?;
+        self.session = session;
+        self.tcp = tcp;
 
-    // Try to authenticate
-    session
-        .userauth_pubkey_file(username, Some(&pub_key_path), priv_key_path, None)
-        .or_else(|err| Err(format!("Could not authenticate: {:?}", err)))?;
-
-    Ok(GerritConnection::new(session, tcp))
+        Ok(())
+    }
 }
 
 fn receiver_into_event_stream(
@@ -225,13 +264,15 @@ pub fn event_stream(
     let (main_tx, rx) = channel(1);
     thread::spawn(move || -> Result<(), ()> {
         loop {
-            info!("(Re)connecting to Gerrit over SSH: {}", host);
-            let conn = connect_to_gerrit(&host, &username, &priv_key_path).or_else(|err| {
-                send_terminate_msg(
-                    &main_tx.clone(),
-                    format!("Could not connect to Gerrit: {}", err),
-                )
-            })?;
+            info!("(Re)connecting to Gerrit over SSH: {}", &host);
+            let conn =
+                GerritConnection::connect(host.clone(), username.clone(), priv_key_path.clone())
+                    .or_else(|err| {
+                        send_terminate_msg(
+                            &main_tx.clone(),
+                            format!("Could not connect to Gerrit: {}", err),
+                        )
+                    })?;
 
             let mut ssh_channel = conn.session.channel_session().or_else(|err| {
                 send_terminate_msg(
@@ -274,18 +315,71 @@ pub fn event_stream(
     receiver_into_event_stream(rx)
 }
 
-#[cfg(test)]
-mod test {
-    use super::{get_pub_key_path, PathBuf};
+/// Create a channel accepting change ids and a stream of reponses with `Change` corresponding to
+/// incoming change ids.
+///
+/// Note: If connection to Gerrit is lost, the stream will try to establish a new one for every
+/// incoming change id.
+pub fn change_sink(
+    host: String,
+    username: String,
+    priv_key_path: PathBuf,
+) -> Result<
+    (
+        Sender<(String, String, String)>,
+        Box<Stream<Item = bot::Action, Error = String>>,
+    ),
+    String,
+> {
+    let mut conn = GerritConnection::connect(host, username, priv_key_path)?;
+    let (tx, rx) = channel::<(String, String, String)>(1);
+    let response_stream = rx.then(move |data| {
+        let (user, change_id, message) = data.expect("receiver should never fail");
 
-    #[test]
-    fn test_get_pub_key_path() {
-        let result = get_pub_key_path(&PathBuf::from("some_priv_key"));
-        assert!(result == PathBuf::from("some_priv_key.pub"));
-    }
+        let res = conn.session.channel_session().map(|ssh_channel| {
+            query_change(ssh_channel, &change_id)
+                .map_err(|e| format!("Could not parse json: {}", e))
+                .map(|change| {
+                    // TODO: avoid cloning
+                    debug!("Got response: {:?}", change);
+                    bot::Action::ChangeFetched(user.clone(), message.clone(), Box::new(change))
+                })
+        });
+
+        if let Ok(fut_resp) = res {
+            return fut_resp;
+        }
+
+        info!(
+            "Reconnecting to Gerrit over SSH for sending commands: {}",
+            &conn.host
+        );
+        if let Err(e) = conn.reconnect() {
+            return Err(format!("Failed to reconnect to Gerrit over SSH: {}", e));
+        };
+
+        conn.session
+            .channel_session()
+            .map_err(|e| {
+                format!(
+                    "Failed to reconnect to Gerrit over SSH for sending commands: {}",
+                    e
+                )
+            })
+            .and_then(|ssh_channel| {
+                query_change(ssh_channel, &change_id)
+                    .map_err(|e| format!("Could not parse json: {}", e))
+                    .map(|change| bot::Action::ChangeFetched(user, message, Box::new(change)))
+            })
+    });
+
+    Ok((tx, Box::new(response_stream)))
 }
 
-pub fn query(mut ssh_channel: Channel, change_id: &str) -> Result<Change, serde_json::Error> {
+pub fn query_change(
+    mut ssh_channel: Channel,
+    change_id: &str,
+) -> Result<Change, serde_json::Error> {
     let query = format!(
         "gerrit query --format JSON --current-patch-set --comments {}",
         change_id
@@ -297,8 +391,16 @@ pub fn query(mut ssh_channel: Channel, change_id: &str) -> Result<Change, serde_
 
     // event from our channel cannot fail
     let json: String = line.unwrap().ok().unwrap();
-    let res: Result<Change, _> = serde_json::from_str(&json);
-    debug!("[D] {:?} for json: {}", res, json);
+    serde_json::from_str(&json)
+}
 
-    res
+#[cfg(test)]
+mod test {
+    use super::{get_pub_key_path, PathBuf};
+
+    #[test]
+    fn test_get_pub_key_path() {
+        let result = get_pub_key_path(&PathBuf::from("some_priv_key"));
+        assert!(result == PathBuf::from("some_priv_key.pub"));
+    }
 }
