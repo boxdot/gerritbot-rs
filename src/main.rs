@@ -58,7 +58,6 @@ fn spark_client_from_config(spark_config: args::SparkConfig) -> Rc<SparkClient> 
 
 fn main() {
     let args = args::parse_args();
-    let config = args::parse_config(args.flag_config);
     stderrlog::new()
         .module(module_path!())
         .quiet(args.flag_quiet)
@@ -66,6 +65,7 @@ fn main() {
         .verbosity(if args.flag_verbose { 5 } else { 2 })
         .init()
         .unwrap();
+    let config = args::parse_config(args.flag_config);
     info!("Starting");
 
     // load or create a new bot
