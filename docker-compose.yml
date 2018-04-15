@@ -1,4 +1,4 @@
-version: "3.0"
+version: "3.4"
 
 services:
   gerrit:
@@ -15,5 +15,4 @@ services:
       - USER_EMAIL=gerrit@localhost
       - WEBURL=http://localhost:8080
       - AUTH_TYPE=DEVELOPMENT_BECOME_ANY_ACCOUNT
-    
-      
+    dns: 8.8.8.8
