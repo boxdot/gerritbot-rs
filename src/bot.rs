@@ -229,7 +229,7 @@ impl Bot {
         user
     }
 
-    fn format_msg(event: &gerrit::Event, approval: &gerrit::Approval) -> String {
+    fn format_msg(event: &gerrit::Event, approval: &gerrit::Approval, is_human: bool) -> String {
         let filename = String::from("scripts/format.lua");
         let mut script = String::new();
         File::open(&Path::new(&filename))
@@ -259,6 +259,9 @@ impl Bot {
             .unwrap();
         lua_event
             .set("project", event.change.project.clone())
+            .unwrap();
+        lua_event
+            .set("is_human", is_human.clone())
             .unwrap();
 
         f.call::<_, String>(lua_event).unwrap()
@@ -307,7 +310,7 @@ impl Bot {
                     return None;
                 }
 
-                let msg = Self::format_msg(event, approval);
+                let msg = Self::format_msg(event, approval, is_human);
                 // if user has configured and enabled a filter try to apply it
                 if self.is_filtered(user_pos, &msg) {
                     return None;

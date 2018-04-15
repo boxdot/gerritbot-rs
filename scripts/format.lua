@@ -28,7 +28,10 @@ function main(event)
     len = 0
     lines = {}
     for line in string.gmatch(event.comment, "[^\r\n]+") do
-        if string.match(line, "FAILURE") then
+        if event.is_human then
+            table.insert(lines, "> " .. line)
+            len = len + 1
+        elseif string.match(line, "FAILURE") then
             table.insert(lines, "> " .. line)
             len = len + 1
         end
