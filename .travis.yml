@@ -9,3 +9,10 @@ matrix:
 before_install:
   - sudo apt-get update -qq
   - sudo apt-get install libssh2-1-dev -y
+before_script:
+  - rustup toolchain install nightly
+  - rustup component add --toolchain nightly rustfmt-preview
+script:
+  - cargo +nightly fmt --all -- --write-mode=diff
+  - cargo build --verbose --all
+  - cargo test --verbose --all
