@@ -1,5 +1,6 @@
 gerrit:
-  host: localhost:29418
+  hostname: gerrit
+  port: 29418
   username: admin
   priv_key_path: testing/data/id_rsa
 
@@ -11,6 +12,7 @@ spark:
   mode:
     Direct:
       endpoint: "localhost:8888"
+
 
 bot:
   msg_expiration: 4
