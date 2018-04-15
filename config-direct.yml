@@ -1,7 +1,7 @@
 gerrit:
   host: localhost:29418
   username: admin
-  priv_key_path: testing/id_rsa
+  priv_key_path: testing/id_rsa_admin
 
 spark:
   api_uri: https://api.ciscospark.com/v1

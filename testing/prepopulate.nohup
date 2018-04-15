@@ -10,7 +10,7 @@ wait_for_gerrit() {
 }
 
 generate_ssh_key() {
-  ssh_key="$HOME/.ssh/id_rsa"
+  ssh_key="$HOME/.ssh/id_rsa${2}"
   if [ ! -f "$ssh_key" ]; then
     echo "SSH key has not yet been created, creating one for you..."
     ssh-keygen -t rsa -f $ssh_key -q -N ""
@@ -20,17 +20,18 @@ generate_ssh_key() {
   curl -s --digest --user admin:secret -X POST --url "http://localhost:8080/a/accounts/${1}/sshkeys" --data-binary "@${ssh_key}.pub"
 
   echo -n "Test if connection works: "
-  rm -f $HOME/.ssh/known_hosts
-  ssh -oStrictHostKeyChecking=no -p 29418 ${1}@localhost gerrit version
+  ssh -i ${ssh_key} -o StrictHostKeyChecking=no -p 29418 ${1}@localhost gerrit version
 
   echo "Copying the key with open permissions for everyone to use (uhuh)"
-  cp $HOME/.ssh/id_rsa* /root/src/testing/id_rsa
-  chmod 777 /root/src/testing/id_rsa*
+  cp ${ssh_key} /root/src/testing
+  cp ${ssh_key}.pub /root/src/testing
+  chmod 777 /root/src/testing/*
 }
 
 create_user() {
   echo -n "Creating user $1: "
   curl -s --digest --user admin:secret -X PUT --url "http://localhost:8080/a/accounts/${1}" -H "Content-Type: application/json" --data "{\"name\": \"$1\", \"email\": \"$2\"}"
+  generate_ssh_key $1 "_$1"
 }
 
 create_project() {
@@ -43,6 +44,7 @@ push_git_repo() {
   pushd $(mktemp -d)
   git clone https://github.com/boxdot/gerritbot-rs .
   echo "Pushing repo to Gerrit"
+  ssh-keyscan -t rsa -p 29418 localhost >> $HOME/.ssh/known_hosts
   git remote add gerrit-test ssh://admin@localhost:29418/gerritbot-rs
   git checkout HEAD~1
   git push gerrit-test master:master
