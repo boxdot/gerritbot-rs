@@ -10,7 +10,7 @@ function main(event)
     elseif event.value > 0 then
         icon = "👍"
     elseif event.value == 0 then
-        icon = "👉"
+        icon = "📝"
     else
         icon = "👎"
     end
