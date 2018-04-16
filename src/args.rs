@@ -72,7 +72,7 @@ pub fn parse_args() -> Args {
     let args: Args = Docopt::new(USAGE)
         .and_then(|d| d.deserialize())
         .unwrap_or_else(|e| e.exit());
-    debug!("{:?}", args);
+    debug!("{:#?}", args);
     args
 }
 
@@ -86,6 +86,6 @@ pub fn parse_config(path: PathBuf) -> Config {
         eprintln!("Could not parse config file: {}", e);
         ::std::process::exit(2)
     });
-    debug!("{:?}", config);
+    debug!("{:#?}", config);
     config
 }

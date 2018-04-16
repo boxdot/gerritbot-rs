@@ -248,7 +248,7 @@ fn receiver_into_event_stream(
         event.unwrap().map(|event| {
             let json: String = event;
             let res = serde_json::from_str(&json);
-            debug!("Incoming Gerrit event: {:?}", res);
+            debug!("Incoming Gerrit event: {:#?}", res);
             res.ok()
         })
     }).filter_map(|event| event.map(Event::into_action))

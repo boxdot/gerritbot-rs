@@ -66,7 +66,6 @@ fn main() {
         .init()
         .unwrap();
     let config = args::parse_config(args.flag_config);
-    info!("Starting");
 
     // load or create a new bot
     let mut bot = match bot::Bot::load("state.json") {
@@ -113,7 +112,7 @@ fn main() {
     // create gerrit event stream listener
     let gerrit_config = config.gerrit.clone();
     info!(
-        "(Re)connecting to Gerrit over ssh: {:?}",
+        "(Re)connecting to Gerrit over ssh: {}",
         gerrit_config.host
     );
 
@@ -146,7 +145,7 @@ fn main() {
             _ => true,
         })
         .filter_map(move |action| {
-            debug!("Handle action: {:?}", action);
+            debug!("Handle action: {:#?}", action);
 
             // fold over actions
             let old_bot = std::mem::replace(&mut bot, bot::Bot::new());
@@ -157,7 +156,7 @@ fn main() {
             // Note: We have to do it here, since the value of `bot` is only
             // available in this function.
             if let Some(task) = task {
-                debug!("New task {:?}", task);
+                debug!("New task {:#?}", task);
                 let response = match task {
                     bot::Task::Reply(response) => Some(response),
                     bot::Task::ReplyAndSave(response) => {

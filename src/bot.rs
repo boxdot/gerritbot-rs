@@ -268,7 +268,7 @@ impl Bot {
     }
 
     fn get_approvals_msg(&mut self, event: &gerrit::Event) -> Option<(&User, String, bool)> {
-        debug!("Incoming approvals: {:?}", event);
+        debug!("Incoming approvals: {:#?}", event);
 
         if event.approvals.is_none() {
             return None;

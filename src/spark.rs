@@ -481,7 +481,7 @@ pub fn webhook_event_stream<C: 'static + SparkClient + ?Sized>(
     let bot_id = String::from(client.id());
     let stream = rx.filter(move |msg| msg.person_id != bot_id)
         .map(move |mut msg| {
-            debug!("Loading text for message: {:?}", msg);
+            debug!("Loading text for message: {:#?}", msg);
             if let Err(err) = msg.load_text(&*client) {
                 error!("Could not load post's text: {}", err);
                 return None;
@@ -527,7 +527,7 @@ pub fn sqs_event_stream<C: SparkClient + 'static + ?Sized>(
         })
         .filter(move |msg| msg.person_id != bot_id)
         .map(move |mut msg| {
-            debug!("Loading text for message: {:?}", msg);
+            debug!("Loading text for message: {:#?}", msg);
             if let Err(err) = msg.load_text(&*client) {
                 error!("Could not load post's text: {}", err);
                 return None;
