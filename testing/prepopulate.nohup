@@ -4,7 +4,7 @@ user=${1:-$USER_NAME}
 wait_for_gerrit() {
   echo "Waiting for Gerrit to be available on tcp:8080..."
   while ! nc -z localhost 8080; do   
-    sleep 0.1 # wait for 1/10 of the second before check again
+    sleep 1 # wait for 1/10 of the second before check again
   done
   echo "Gerrit available!"
 }
@@ -40,22 +40,22 @@ create_project() {
 
 push_git_repo() {
   echo "Cloning the repo before doing some stuff on it, for Gerrit!"
-  rm -rf /root/data/src
-  mkdir /root/data/src
-  pushd /root/data/src
+  rm -rf /root/src
+  mkdir -p /root/src
+  pushd /root/src
   git clone file:///root/src.git .
   echo "Pushing repo to Gerrit"
   ssh-keyscan -t rsa -p 29418 localhost >> $HOME/.ssh/known_hosts
-  git remote add gerrit-test ssh://admin@localhost:29418/gerritbot-rs
-  git checkout HEAD~1
-  git push gerrit-test master:master
+  git remote add gerrit ssh://admin@localhost:29418/gerritbot-rs
+  git checkout master
+  git push gerrit master:master
   echo "Adding Gerrit git hook and amending commit"
   gitdir=$(git rev-parse --git-dir); scp -p -P 29418 admin@localhost:hooks/commit-msg ${gitdir}/hooks/
   git config user.email "john.doe@localhost"
   git config user.name "John Doe"
   git commit --amend --no-edit
   echo "Pushing a review"
-  git push gerrit-test HEAD:refs/for/master
+  git push gerrit HEAD:refs/for/master
   popd
 }
 
