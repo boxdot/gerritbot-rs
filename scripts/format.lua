@@ -28,7 +28,7 @@ function main(event)
     len = 0
     lines = {}
     for line in string.gmatch(event.comment, "[^\r\n]+") do
-        if event.is_human then
+        if event.is_human and not line:match "^Patch Set" then
             table.insert(lines, "> " .. line)
             len = len + 1
         elseif string.match(line, "FAILURE") then
