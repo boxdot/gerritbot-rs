@@ -1032,7 +1032,7 @@ mod test {
         let mut bot = Bot::new();
         bot.add_user("author_spark_id", "author@example.com");
         let event = get_event();
-        let res = Bot::format_msg(&event, &event.approvals.as_ref().unwrap()[0]);
+        let res = Bot::format_msg(&event, &event.approvals.as_ref().unwrap()[0], true);
         assert_eq!(
             res,
             "[Some review.](http://localhost/42) (demo-project) 👍 +2 (Code-Review) from approver\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE"
@@ -1045,7 +1045,7 @@ mod test {
         bot.add_user("author_spark_id", "author@example.com");
         let mut event = get_event();
         event.approvals.as_mut().unwrap()[0].approval_type = String::from("Some new type");
-        let res = Bot::format_msg(&event, &event.approvals.as_ref().unwrap()[0]);
+        let res = Bot::format_msg(&event, &event.approvals.as_ref().unwrap()[0], true);
         assert!(res.is_empty());
     }
 
