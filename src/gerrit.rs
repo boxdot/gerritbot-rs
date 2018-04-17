@@ -1,3 +1,4 @@
+use std::fmt;
 use std::io::{self, BufRead, BufReader};
 use std::net::TcpStream;
 use std::path::PathBuf;
@@ -19,7 +20,13 @@ pub type Username = String;
 pub struct User {
     pub name: Option<String>,
     pub username: Username,
-    pub email: Option<String>,
+    pub email: Option<String>
+}
+
+impl fmt::Display for User {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(&self.username)
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -326,60 +333,71 @@ pub fn change_sink(
     priv_key_path: PathBuf,
 ) -> Result<
     (
-        Sender<(String, String, String)>,
+        Sender<(String, Change, String)>,
         Box<Stream<Item = bot::Action, Error = String>>,
     ),
     String,
 > {
     let mut conn = GerritConnection::connect(host, username, priv_key_path)?;
-    let (tx, rx) = channel::<(String, String, String)>(1);
+    let (tx, rx) = channel::<(String, Change, String)>(1);
     let response_stream = rx.then(move |data| {
-        let (user, change_id, message) = data.expect("receiver should never fail");
+        let (user, mut change, message) = data.expect("receiver should never fail");
 
+        let change_id = change.id.clone();
         let res = conn.session.channel_session().map(|ssh_channel| {
-            query_change(ssh_channel, &change_id)
-                .map_err(|e| format!("Could not parse json: {}", e))
-                .map(|change| {
-                    // TODO: avoid cloning
-                    debug!("Got response: {:?}", change);
-                    bot::Action::ChangeFetched(user.clone(), message.clone(), Box::new(change))
-                })
+            let comments = match fetch_patch_set(ssh_channel, change_id.clone()) {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("Could not fetch additional comments: {:?}", e);
+                    None
+                }
+            };
+            debug!("Got comments: {:#?}", comments);
+            change.current_patch_set = comments;
         });
 
-        if let Ok(fut_resp) = res {
-            return fut_resp;
+        if let Ok(_) = res {
+            return Ok(bot::Action::ChangeFetched(user.clone(), message.clone(), Box::new(change)));
+        } else {
+
+            info!(
+                "Reconnecting to Gerrit over SSH for sending commands: {}",
+                &conn.host
+            );
+            if let Err(e) = conn.reconnect() {
+                return Err(format!("Failed to reconnect to Gerrit over SSH: {}", e));
+            };
+
+            conn.session
+                .channel_session()
+                .map_err(|e| {
+                    format!(
+                        "Failed to reconnect to Gerrit over SSH for sending commands: {}",
+                        e
+                    )
+                })
+                .and_then(|ssh_channel| {
+                    let comments = match fetch_patch_set(ssh_channel, change_id) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            error!("Could not fetch additional comments: {:?}", e);
+                            None
+                        }
+                    };
+                    debug!("Got comments: {:#?}", comments);
+                    change.current_patch_set = comments;
+                    Ok(bot::Action::ChangeFetched(user, message, Box::new(change)))
+                })
         }
-
-        info!(
-            "Reconnecting to Gerrit over SSH for sending commands: {}",
-            &conn.host
-        );
-        if let Err(e) = conn.reconnect() {
-            return Err(format!("Failed to reconnect to Gerrit over SSH: {}", e));
-        };
-
-        conn.session
-            .channel_session()
-            .map_err(|e| {
-                format!(
-                    "Failed to reconnect to Gerrit over SSH for sending commands: {}",
-                    e
-                )
-            })
-            .and_then(|ssh_channel| {
-                query_change(ssh_channel, &change_id)
-                    .map_err(|e| format!("Could not parse json: {}", e))
-                    .map(|change| bot::Action::ChangeFetched(user, message, Box::new(change)))
-            })
     });
 
     Ok((tx, Box::new(response_stream)))
 }
 
-pub fn query_change(
+pub fn fetch_patch_set(
     mut ssh_channel: Channel,
-    change_id: &str,
-) -> Result<Change, serde_json::Error> {
+    change_id: String,
+) -> Result<Option<PatchSet>, serde_json::Error> {
     let query = format!(
         "gerrit query --format JSON --current-patch-set --comments {}",
         change_id
@@ -391,7 +409,13 @@ pub fn query_change(
 
     // event from our channel cannot fail
     let json: String = line.unwrap().ok().unwrap();
-    serde_json::from_str(&json)
+    debug!("{}", json);
+    let complete_change: Change = serde_json::from_str::<Change>(&json)?;
+    debug!("{:#?}", complete_change);
+    //debug!("{:#?}", complete_change);
+    //let mut new_change = change.clone();
+    //change.comments = complete_change.comments;
+    Ok(complete_change.current_patch_set)
 }
 
 #[cfg(test)]

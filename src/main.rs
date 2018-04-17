@@ -169,11 +169,11 @@ fn main() {
                         });
                         Some(response)
                     }
-                    bot::Task::FetchComments(user, change_id, message) => {
+                    bot::Task::FetchComments(user, change, message) => {
                         handle.spawn(
                             gerrit_change_id_sink
                                 .clone()
-                                .send((user, change_id, message))
+                                .send((user, change, message))
                                 .map_err(|e| {
                                     error!("Could not fetch comments: {}", e);
                                 })
