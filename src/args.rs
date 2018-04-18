@@ -20,8 +20,7 @@ pub struct Config {
 
 #[derive(Debug, Default, Deserialize, Clone)]
 pub struct GerritConfig {
-    pub hostname: String,
-    pub port: u16,
+    pub host: String,
     pub username: String,
     pub priv_key_path: PathBuf,
 }
@@ -55,7 +54,7 @@ impl Default for BotConfig {
     }
 }
 
-const USAGE: &'static str = "
+const USAGE: &str = "
 Cisco Spark <> Gerrit Bot
 
 Usage:
@@ -73,19 +72,20 @@ pub fn parse_args() -> Args {
     let args: Args = Docopt::new(USAGE)
         .and_then(|d| d.deserialize())
         .unwrap_or_else(|e| e.exit());
-    debug!("{:?}", args);
+    debug!("{:#?}", args);
     args
 }
 
 pub fn parse_config(path: PathBuf) -> Config {
     let file = File::open(path).unwrap_or_else(|e| {
         eprintln!("Could not open config file: {}", e);
+        eprintln!("{}", USAGE);
         ::std::process::exit(1)
     });
     let config: Config = serde_yaml::from_reader(file).unwrap_or_else(|e| {
         eprintln!("Could not parse config file: {}", e);
         ::std::process::exit(2)
     });
-    println!("{:?}", config);
+    debug!("{:#?}", config);
     config
 }
