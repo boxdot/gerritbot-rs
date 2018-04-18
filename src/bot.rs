@@ -261,7 +261,7 @@ impl Bot {
             .set("project", event.change.project.clone())
             .unwrap();
         lua_event
-            .set("is_human", is_human.clone())
+            .set("is_human", is_human)
             .unwrap();
 
         f.call::<_, String>(lua_event).unwrap()
