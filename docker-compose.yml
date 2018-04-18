@@ -1,21 +1,21 @@
-version: "3.0"
+version: "3.4"
 
 services:
   gerrit:
-    build:
-      context: testing
-      dockerfile: Dockerfile.gerrit
+    image: openfrontier/gerrit:2.13.x
     ports:
       - 8080:8080
       - 29418:29418
     volumes:
       - ./.git:/root/src.git:ro
-      - ./testing/data/src:/root/data/src
+      - ./testing/data:/root/data
+      - ./testing/prepopulate.nohup:/docker-entrypoint-init.d/prepopulate.nohup
     environment:
       - USER_NAME=gerrit
       - USER_EMAIL=gerrit@localhost
       - WEBURL=http://localhost:8080
       - AUTH_TYPE=DEVELOPMENT_BECOME_ANY_ACCOUNT
+
   bot:
     build:
       context: testing

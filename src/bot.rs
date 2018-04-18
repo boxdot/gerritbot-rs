@@ -1,15 +1,16 @@
 use std::collections::HashMap;
 use std::convert;
 use std::fs::File;
-use std::io;
 use std::io::Read;
+use std::io;
 use std::path::Path;
 use std::time::Duration;
 
+use itertools::Itertools;
 use lru_time_cache::LruCache;
-use serde_json;
-use rlua::{Function as LuaFunction, Lua};
 use regex::Regex;
+use rlua::{Function as LuaFunction, Lua};
+use serde_json;
 
 use gerrit;
 use spark;
@@ -209,7 +210,7 @@ impl Bot {
             .map(|pos| &self.users[pos])
     }
 
-    fn is_cached(&mut self, key: MsgCacheLine) -> bool {
+    fn touch_cache(&mut self, key: MsgCacheLine) -> bool {
         if let Some(cache) = self.msg_cache.as_mut() {
             let hit = cache.get(&key).is_some();
             if hit {
@@ -219,7 +220,7 @@ impl Bot {
                 return false;
             }
         };
-        return false;
+        false
     }
 
     fn enable<'a>(&'a mut self, person_id: &str, email: &str, enabled: bool) -> &'a User {
@@ -228,7 +229,7 @@ impl Bot {
         user
     }
 
-    fn format_msg(event: &gerrit::Event, approval: &gerrit::Approval) -> String {
+    fn format_msg(event: &gerrit::Event, approval: &gerrit::Approval, is_human: bool) -> String {
         let filename = String::from("scripts/format.lua");
         let mut script = String::new();
         File::open(&Path::new(&filename))
@@ -259,12 +260,15 @@ impl Bot {
         lua_event
             .set("project", event.change.project.clone())
             .unwrap();
+        lua_event
+            .set("is_human", is_human)
+            .unwrap();
 
         f.call::<_, String>(lua_event).unwrap()
     }
 
-    fn get_approvals_msg(&mut self, event: &gerrit::Event) -> Option<(&User, String)> {
-        debug!("Incoming approvals: {:?}", event);
+    fn get_approvals_msg(&mut self, event: &gerrit::Event) -> Option<(&User, String, bool)> {
+        debug!("Incoming approvals: {:#?}", event);
 
         if event.approvals.is_none() {
             return None;
@@ -285,22 +289,13 @@ impl Bot {
             return None;
         }
 
+        let is_human = !approver.to_lowercase().contains("bot");
+
         let msgs: Vec<String> = approvals
             .iter()
             .filter_map(|approval| {
-                // filter if there was no previous value, or value did not change, or it is 0
-                let filtered = !approval
-                    .old_value
-                    .as_ref()
-                    .map(|old_value| old_value != &approval.value && approval.value != "0")
-                    .unwrap_or(false);
-                debug!("Filtered approval: {:?}", filtered);
-                if filtered {
-                    return None;
-                }
-
                 // filter all messages that were already sent to the user recently
-                if self.is_cached(MsgCacheLine::new_approval(
+                if self.touch_cache(MsgCacheLine::new_approval(
                     user_pos,
                     if change.topic.is_some() {
                         change.topic.as_ref().unwrap().clone()
@@ -315,11 +310,12 @@ impl Bot {
                     return None;
                 }
 
-                let msg = Self::format_msg(event, approval);
+                let msg = Self::format_msg(event, approval, is_human);
                 // if user has configured and enabled a filter try to apply it
                 if self.is_filtered(user_pos, &msg) {
                     return None;
                 }
+
                 if !msg.is_empty() {
                     Some(msg)
                 } else {
@@ -329,7 +325,7 @@ impl Bot {
             .collect();
 
         if !msgs.is_empty() {
-            Some((&self.users[user_pos], msgs.join("\n\n"))) // two newlines since it is markdown
+            Some((&self.users[user_pos], msgs.join("\n\n"), is_human)) // two newlines since it is markdown
         } else {
             None
         }
@@ -345,7 +341,7 @@ impl Bot {
         let change = &event.change;
 
         // filter all messages that were already sent to the user recently
-        if self.is_cached(MsgCacheLine::new_reviewer_added(
+        if self.touch_cache(MsgCacheLine::new_reviewer_added(
             user_pos,
             if change.topic.is_some() {
                 change.topic.as_ref().unwrap().clone()
@@ -494,6 +490,11 @@ pub enum Action {
     FilterEnable(spark::PersonId),
     FilterDisable(spark::PersonId),
     ReviewerAdded(Box<gerrit::Event>),
+    ChangeFetched(
+        spark::PersonId,
+        String, /* message */
+        Box<gerrit::Change>,
+    ),
     NoOp,
 }
 
@@ -519,6 +520,7 @@ impl Response {
 pub enum Task {
     Reply(Response),
     ReplyAndSave(Response),
+    FetchComments(String, gerrit::Change, String),
 }
 
 const GREETINGS_MSG: &str =
@@ -569,8 +571,12 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
             Some(task)
         }
         Action::UpdateApprovals(event) => {
-            bot.get_approvals_msg(&event).map(|(user, message)| {
-                Task::Reply(Response::new(user.spark_person_id.clone(), message))
+            bot.get_approvals_msg(&event).map(|(user, message, is_human)| {
+                if is_human && has_inline_comments(&event) {
+                    Task::FetchComments(user.spark_person_id.clone(), event.change, message)
+                } else {
+                    Task::Reply(Response::new(user.spark_person_id.clone(), message))
+                }
             })
         }
         Action::Help(person_id) => Some(Task::Reply(Response::new(person_id, HELP_MSG))),
@@ -695,9 +701,61 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
                 Task::Reply(Response::new(user.spark_person_id.clone(), message))
             })
         }
+        Action::ChangeFetched(person_id, message, change) => {
+            Some(Task::Reply(Response::new(
+                person_id, format_msg_with_comments(message, *change))))
+        }
         Action::NoOp => None,
     };
     (bot, task)
+}
+
+fn has_inline_comments(event: &gerrit::Event) -> bool {
+    lazy_static! {
+        static ref RE: Regex = Regex::new(r"\(\d+\scomments?\)").unwrap();
+    }
+    event.comment.as_ref().map(|s| RE.is_match(s)).unwrap_or(false)
+}
+
+fn format_comments(change: gerrit::Change) -> Option<String> {
+    let change_number = change.number.clone();
+    let host = change.url.split('/').nth(2).unwrap();
+
+    change.current_patch_set.map(|patch_set| {
+        let patch_set_number = patch_set.number;
+        let mut comments = patch_set.comments.unwrap_or_else(Vec::new);
+        comments.sort_by(|a, b| a.file.cmp(&b.file));
+
+        comments
+            .into_iter()
+            .group_by(|c| c.file.clone())
+            .into_iter()
+            .map(|(file, comments)| -> String {
+                let line_comments = comments
+                    .map(|comment| {
+                        let url = format!(
+                            "https://{}/#/c/{}/{}/{}@{}",
+                            host, change_number, patch_set_number, comment.file, comment.line
+                        );
+                        format!("> [Line {}]({}) by {}: {}", comment.line, url, comment.reviewer, comment.message)
+                    })
+                    .intersperse("\n".into())
+                    .collect::<Vec<_>>()
+                    .concat();
+                format!("`{}`\n\n{}", file, line_comments)
+            })
+            .intersperse("\n\n".into())
+            .collect::<Vec<_>>()
+            .concat()
+    })
+}
+
+fn format_msg_with_comments(message: String, change: gerrit::Change) -> String {
+    if let Some(additional_message) = format_comments(change) {
+        format!("{}\n\n{}", message, additional_message)
+    } else {
+        message
+    }
 }
 
 #[cfg(test)]
@@ -855,10 +913,11 @@ mod test {
         bot.add_user("author_spark_id", "author@example.com");
         let res = bot.get_approvals_msg(&get_event());
         assert!(res.is_some());
-        let (user, msg) = res.unwrap();
+        let (user, msg, is_human) = res.unwrap();
         assert_eq!(user.spark_person_id, "author_spark_id");
         assert_eq!(user.email, "author@example.com");
         assert!(msg.contains("Some review."));
+        assert!(is_human);
     }
 
     #[test]
@@ -879,10 +938,11 @@ mod test {
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
         {
             let res = bot.enable_filter("author_spark_id", true);
@@ -891,10 +951,11 @@ mod test {
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
     }
 
@@ -907,10 +968,11 @@ mod test {
         {
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
         {
             let res = bot.get_approvals_msg(&get_event());
@@ -927,19 +989,21 @@ mod test {
         {
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
         thread::sleep(Duration::from_millis(200));
         {
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
-            let (user, msg) = res.unwrap();
+            let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, "author_spark_id");
             assert_eq!(user.email, "author@example.com");
             assert!(msg.contains("Some review."));
+            assert!(is_human);
         }
     }
 
@@ -975,7 +1039,7 @@ mod test {
         let mut bot = Bot::new();
         bot.add_user("author_spark_id", "author@example.com");
         let event = get_event();
-        let res = Bot::format_msg(&event, &event.approvals.as_ref().unwrap()[0]);
+        let res = Bot::format_msg(&event, &event.approvals.as_ref().unwrap()[0], true);
         assert_eq!(
             res,
             "[Some review.](http://localhost/42) (demo-project) 👍 +2 (Code-Review) from approver\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE"
@@ -988,7 +1052,7 @@ mod test {
         bot.add_user("author_spark_id", "author@example.com");
         let mut event = get_event();
         event.approvals.as_mut().unwrap()[0].approval_type = String::from("Some new type");
-        let res = Bot::format_msg(&event, &event.approvals.as_ref().unwrap()[0]);
+        let res = Bot::format_msg(&event, &event.approvals.as_ref().unwrap()[0], true);
         assert!(res.is_empty());
     }
 
@@ -1115,5 +1179,15 @@ mod test {
         assert_eq!(res, Err(AddFilterResult::InvalidFilter));
         let res = bot.enable_filter("some_person_id", false);
         assert_eq!(res, Err(AddFilterResult::InvalidFilter));
+    }
+
+    #[test]
+    fn test_has_inline_comments() {
+        let mut event = get_event();
+        event.comment = Some("PatchSet 666: (2 comments)".into());
+        assert!(has_inline_comments(&event));
+
+        event.comment = Some("Nope, colleague comment!".into());
+        assert!(!has_inline_comments(&event));
     }
 }

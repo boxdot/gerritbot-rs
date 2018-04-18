@@ -1,6 +1,5 @@
 gerrit:
-  hostname: localhost
-  port: 29418
+  host: localhost:29418
   username: admin
   priv_key_path: testing/data/id_rsa
 
@@ -9,11 +8,10 @@ spark:
   bot_token: ""
   # optional, add a webhook URL is you want to register it automatically on Cisco Spark
   # webhook_url: "https://endpoint.example.org"
-  mode: 
+  mode:
     Direct:
       endpoint: "localhost:8888"
 
-  
 bot:
   msg_expiration: 4
   msg_capacity: 100

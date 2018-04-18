@@ -10,7 +10,7 @@ function main(event)
     elseif event.value > 0 then
         icon = "👍"
     elseif event.value == 0 then
-        icon = "👉"
+        icon = "📝"
     else
         icon = "👎"
     end
@@ -28,7 +28,10 @@ function main(event)
     len = 0
     lines = {}
     for line in string.gmatch(event.comment, "[^\r\n]+") do
-        if string.match(line, "FAILURE") then
+        if event.is_human and not line:match "^Patch Set" then
+            table.insert(lines, "> " .. line)
+            len = len + 1
+        elseif string.match(line, "FAILURE") then
             table.insert(lines, "> " .. line)
             len = len + 1
         end

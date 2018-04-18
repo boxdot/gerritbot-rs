@@ -1,9 +1,11 @@
+use std::fmt;
 use std::io::{self, BufRead, BufReader};
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::thread;
 
 use ssh2;
+use ssh2::Channel;
 use serde_json;
 
 use futures::sync::mpsc::{channel, Receiver, Sender};
@@ -18,7 +20,13 @@ pub type Username = String;
 pub struct User {
     pub name: Option<String>,
     pub username: Username,
-    pub email: Option<String>,
+    pub email: Option<String>
+}
+
+impl fmt::Display for User {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(&self.username)
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -46,6 +54,16 @@ pub struct PatchSet {
     pub kind: String,
     pub size_insertions: i32,
     pub size_deletions: i32,
+    pub comments: Option<Vec<InlineComment>>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct InlineComment {
+    pub file: String,
+    pub line: u32,
+    pub reviewer: User,
+    pub message: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -61,6 +79,15 @@ pub struct Change {
     pub url: String,
     pub commit_message: String,
     pub status: String,
+    pub current_patch_set: Option<PatchSet>,
+    pub comments: Option<Vec<Comment>>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct Comment {
+    pub timestamp: u64,
+    pub reviewer: User,
+    pub message: String,
 }
 
 #[derive(Deserialize, Debug, Eq, PartialEq, Hash, Clone)]
@@ -145,85 +172,79 @@ fn send_terminate_msg<T>(
     Err(())
 }
 
-struct GerritConnection {
-    session: ssh2::Session,
+pub struct GerritConnection {
+    pub session: ssh2::Session,
     /// tcp has to be kept alive with session together, even if it is never used directly
-    _tcp: TcpStream,
+    tcp: Box<TcpStream>,
+    // Data needed for reconnection in case this connection was terminated.
+    host: String,
+    username: String,
+    priv_key_path: PathBuf,
 }
 
 impl GerritConnection {
-    fn new(session: ssh2::Session, tcp: TcpStream) -> GerritConnection {
-        GerritConnection {
-            session: session,
-            _tcp: tcp,
-        }
+    pub fn connect(host: String, username: String, priv_key_path: PathBuf) -> Result<Self, String> {
+        let pub_key_path = get_pub_key_path(&priv_key_path);
+        debug!("Will use public key: {}", pub_key_path.to_str().unwrap());
+
+        let mut session = ssh2::Session::new().unwrap();
+
+        debug!("Connecting to tcp: {}", &host);
+        let tcp = Box::new(TcpStream::connect(&host).or_else(|err| {
+            Err(format!(
+                "Could not connect to gerrit at {}: {:?}",
+                host, err
+            ))
+        })?);
+
+        session
+            .handshake(&*tcp)
+            .or_else(|err| Err(format!("Could not connect to gerrit: {:?}", err)))?;
+
+        // Try to authenticate
+        session
+            .userauth_pubkey_file(&username, Some(&pub_key_path), &priv_key_path, None)
+            .or_else(|err| Err(format!("Could not authenticate: {:?}", err)))?;
+
+        Ok(Self {
+            session,
+            tcp,
+            host,
+            username,
+            priv_key_path,
+        })
     }
-}
 
-fn connect_to_gerrit(
-    tx: &Sender<Result<String, StreamError>>,
-    hostport: &str,
-    username: &str,
-    priv_key_path: &PathBuf,
-    pub_key_path: &PathBuf,
-) -> Result<GerritConnection, ()> {
-    // Connect to the local SSH server
-    let mut session = ssh2::Session::new().ok_or_else(|| {
-        let _ = send_terminate_msg::<()>(
-            &tx.clone(),
-            String::from("Could not create a new ssh session for connecting to Gerrit."),
-        );
-    })?;
+    pub fn reconnect(&mut self) -> Result<(), String> {
+        let mut session = ssh2::Session::new().unwrap();
+        let tcp = Box::new(TcpStream::connect(&self.host).or_else(|err| {
+            Err(format!(
+                "Could not connect to gerrit at {}: {:?}",
+                self.host, err
+            ))
+        })?);
 
-    let tcp = TcpStream::connect(hostport).or_else(|err| {
-        send_terminate_msg(
-            &tx.clone(),
-            format!("Could not connect to gerrit at {}: {:?}", hostport, err),
-        )
-    })?;
+        session
+            .handshake(&*tcp)
+            .or_else(|err| Err(format!("Could not connect to gerrit: {:?}", err)))?;
 
-    session.handshake(&tcp).or_else(|err| {
-        send_terminate_msg(
-            &tx.clone(),
-            format!("Could not connect to gerrit: {:?}", err),
-        )
-    })?;
-
-    // Try to authenticate
-    session
-        .userauth_pubkey_file(username, Some(pub_key_path), priv_key_path, None)
-        .or_else(|err| {
-            send_terminate_msg(&tx.clone(), format!("Could not authenticate: {:?}", err))
-        })?;
-
-    Ok(GerritConnection::new(session, tcp))
-}
-
-fn new_ssh_channel<'a>(
-    tx: &Sender<Result<String, StreamError>>,
-    session: &'a ssh2::Session,
-) -> Result<ssh2::Channel<'a>, ()> {
-    let mut ssh_channel = session.channel_session().or_else(|err| {
-        send_terminate_msg(
-            &tx.clone(),
-            format!("Could not create ssh channel: {:?}", err),
-        )
-    })?;
-
-    // .exec("gerrit stream-events -s comment-added -s reviewer-added -s reviewer-deleted -s change-merged")
-    ssh_channel
-        .exec("gerrit stream-events -s comment-added -s reviewer-added")
-        .or_else(|err| {
-            send_terminate_msg(
-                &tx.clone(),
-                format!(
-                    "Could not execute gerrit stream-event command over ssh: {:?}",
-                    err
-                ),
+        // Try to authenticate
+        let pub_key_path = get_pub_key_path(&self.priv_key_path);
+        debug!("Will use public key: {}", pub_key_path.to_str().unwrap());
+        session
+            .userauth_pubkey_file(
+                &self.username,
+                Some(&pub_key_path),
+                &self.priv_key_path,
+                None,
             )
-        })?;
+            .or_else(|err| Err(format!("Could not authenticate: {:?}", err)))?;
 
-    Ok(ssh_channel)
+        self.session = session;
+        self.tcp = tcp;
+
+        Ok(())
+    }
 }
 
 fn receiver_into_event_stream(
@@ -234,7 +255,7 @@ fn receiver_into_event_stream(
         event.unwrap().map(|event| {
             let json: String = event;
             let res = serde_json::from_str(&json);
-            debug!("Incoming Gerrit event: {:?}", res);
+            debug!("Incoming Gerrit event: {:#?}", res);
             res.ok()
         })
     }).filter_map(|event| event.map(Event::into_action))
@@ -243,28 +264,40 @@ fn receiver_into_event_stream(
 }
 
 pub fn event_stream(
-    host: &str,
-    port: u16,
+    host: String,
     username: String,
     priv_key_path: PathBuf,
 ) -> Box<Stream<Item = bot::Action, Error = String>> {
-    let hostport = format!("{}:{}", host, port);
-    let pub_key_path = get_pub_key_path(&priv_key_path);
-    debug!("Will use public key: {}", pub_key_path.to_str().unwrap());
-
     let (main_tx, rx) = channel(1);
     thread::spawn(move || -> Result<(), ()> {
         loop {
-            info!("(Re)connecting to Gerrit over ssh: {}", hostport);
+            info!("(Re)connecting to Gerrit over SSH: {}", &host);
+            let conn =
+                GerritConnection::connect(host.clone(), username.clone(), priv_key_path.clone())
+                    .or_else(|err| {
+                        send_terminate_msg(
+                            &main_tx.clone(),
+                            format!("Could not connect to Gerrit: {}", err),
+                        )
+                    })?;
 
-            let conn = connect_to_gerrit(
-                &main_tx,
-                &hostport,
-                &username,
-                &priv_key_path,
-                &pub_key_path,
-            )?;
-            let ssh_channel = new_ssh_channel(&main_tx, &conn.session)?;
+            let mut ssh_channel = conn.session.channel_session().or_else(|err| {
+                send_terminate_msg(
+                    &main_tx.clone(),
+                    format!("Could not open SSH channel: {:?}", err),
+                )
+            })?;
+            ssh_channel
+                .exec("gerrit stream-events -s comment-added -s reviewer-added")
+                .or_else(|err| {
+                    send_terminate_msg(
+                        &main_tx.clone(),
+                        format!(
+                            "Could not execute gerrit stream-event command over ssh: {:?}",
+                            err
+                        ),
+                    )
+                })?;
             info!("Connected to Gerrit.");
 
             let buf_channel = BufReader::new(ssh_channel);
@@ -287,6 +320,102 @@ pub fn event_stream(
     });
 
     receiver_into_event_stream(rx)
+}
+
+/// Create a channel accepting change ids and a stream of reponses with `Change` corresponding to
+/// incoming change ids.
+///
+/// Note: If connection to Gerrit is lost, the stream will try to establish a new one for every
+/// incoming change id.
+pub fn change_sink(
+    host: String,
+    username: String,
+    priv_key_path: PathBuf,
+) -> Result<
+    (
+        Sender<(String, Change, String)>,
+        Box<Stream<Item = bot::Action, Error = String>>,
+    ),
+    String,
+> {
+    let mut conn = GerritConnection::connect(host, username, priv_key_path)?;
+    let (tx, rx) = channel::<(String, Change, String)>(1);
+    let response_stream = rx.then(move |data| {
+        let (user, mut change, message) = data.expect("receiver should never fail");
+
+        let change_id = change.id.clone();
+        let res = conn.session.channel_session().map(|ssh_channel| {
+            let comments = match fetch_patch_set(ssh_channel, change_id.clone()) {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("Could not fetch additional comments: {:?}", e);
+                    None
+                }
+            };
+            debug!("Got comments: {:#?}", comments);
+            change.current_patch_set = comments;
+        });
+
+        if let Ok(_) = res {
+            return Ok(bot::Action::ChangeFetched(user.clone(), message.clone(), Box::new(change)));
+        } else {
+
+            info!(
+                "Reconnecting to Gerrit over SSH for sending commands: {}",
+                &conn.host
+            );
+            if let Err(e) = conn.reconnect() {
+                return Err(format!("Failed to reconnect to Gerrit over SSH: {}", e));
+            };
+
+            conn.session
+                .channel_session()
+                .map_err(|e| {
+                    format!(
+                        "Failed to reconnect to Gerrit over SSH for sending commands: {}",
+                        e
+                    )
+                })
+                .and_then(|ssh_channel| {
+                    let comments = match fetch_patch_set(ssh_channel, change_id) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            error!("Could not fetch additional comments: {:?}", e);
+                            None
+                        }
+                    };
+                    debug!("Got comments: {:#?}", comments);
+                    change.current_patch_set = comments;
+                    Ok(bot::Action::ChangeFetched(user, message, Box::new(change)))
+                })
+        }
+    });
+
+    Ok((tx, Box::new(response_stream)))
+}
+
+pub fn fetch_patch_set(
+    mut ssh_channel: Channel,
+    change_id: String,
+) -> Result<Option<PatchSet>, serde_json::Error> {
+    let query = format!(
+        "gerrit query --format JSON --current-patch-set --comments {}",
+        change_id
+    );
+    ssh_channel.exec(&query).unwrap();
+
+    let buf_channel = BufReader::new(ssh_channel);
+    let line = buf_channel.lines().next();
+
+    // event from our channel cannot fail
+    let json: String = line.unwrap().ok().unwrap();
+    debug!("{}", json);
+    let complete_change: Change = serde_json::from_str::<Change>(&json)?;
+    debug!("{:#?}", complete_change);
+    //debug!("{:#?}", complete_change);
+    //let mut new_change = change.clone();
+    //change.comments = complete_change.comments;
+    Ok(complete_change.current_patch_set)
 }
 
 #[cfg(test)]
