@@ -417,11 +417,9 @@ impl Message {
 
     /// Convert Spark message to bot action
     pub fn into_action(self) -> bot::Action {
-        lazy_static!(
-            static ref FILTER_REGEX: Regex = Regex::new(
-                r"(?i)^filter (.*)$"
-            ).unwrap();
-        );
+        lazy_static! {
+            static ref FILTER_REGEX: Regex = Regex::new(r"(?i)^filter (.*)$").unwrap();
+        };
 
         match &self.text.trim().to_lowercase()[..] {
             "enable" => bot::Action::Enable(self.person_id, self.person_email),

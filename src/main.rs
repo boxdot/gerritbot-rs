@@ -10,7 +10,6 @@ extern crate lazy_static;
 extern crate log;
 extern crate lru_time_cache;
 extern crate regex;
-extern crate rlua;
 extern crate router;
 extern crate rusoto_core;
 extern crate rusoto_sqs;
@@ -111,10 +110,7 @@ fn main() {
 
     // create gerrit event stream listener
     let gerrit_config = config.gerrit.clone();
-    info!(
-        "(Re)connecting to Gerrit over ssh: {}",
-        gerrit_config.host
-    );
+    info!("(Re)connecting to Gerrit over ssh: {}", gerrit_config.host);
 
     let (gerrit_change_id_sink, gerrit_change_response_stream) = gerrit::change_sink(
         gerrit_config.host.clone(),

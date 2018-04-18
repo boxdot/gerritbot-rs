@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::convert;
 use std::fs::File;
-use std::io::Read;
 use std::io;
 use std::path::Path;
 use std::time::Duration;
@@ -9,7 +8,6 @@ use std::time::Duration;
 use itertools::Itertools;
 use lru_time_cache::LruCache;
 use regex::Regex;
-use rlua::{Function as LuaFunction, Lua};
 use serde_json;
 
 use gerrit;
@@ -148,8 +146,7 @@ impl Bot {
             users: Vec::new(),
             msg_cache: Some(
                 LruCache::<MsgCacheLine, ()>::with_expiry_duration_and_capacity(
-                    expiration,
-                    capacity,
+                    expiration, capacity,
                 ),
             ),
             person_id_index: HashMap::new(),
@@ -229,42 +226,72 @@ impl Bot {
         user
     }
 
+    /// Filter and format messages.
+    ///
+    /// Returns empty string to filter the message.
     fn format_msg(event: &gerrit::Event, approval: &gerrit::Approval, is_human: bool) -> String {
-        let filename = String::from("scripts/format.lua");
-        let mut script = String::new();
-        File::open(&Path::new(&filename))
+        let approval_type = &approval.approval_type;
+        if approval_type != "Code-Review" && approval_type != "WaitForVerification"
+            && approval_type != "Verified"
+        {
+            return String::new();
+        }
+
+        let approval_value = approval.value.parse().unwrap_or(0);
+        let icon = if approval_type.contains("WaitForVerification") {
+            "⌛"
+        } else if approval_value > 0 {
+            "👍"
+        } else if approval_value == 0 {
+            "📝"
+        } else {
+            "👎"
+        };
+
+        let sign = if approval_value > 0 { "+" } else { "" };
+
+        // TODO: When Spark will allow to format text with different colors, set
+        // green resp. red color here.
+        let msg = format!(
+            "[{}]({}) ({}) {} {}{} ({}) from {}",
+            event.change.subject,
+            event.change.url,
+            event.change.project,
+            icon,
+            sign,
+            approval_value,
+            approval_type,
+            event.author.as_ref().unwrap().username
+        );
+
+        let lines: Vec<_> = event
+            .comment
+            .as_ref()
             .unwrap()
-            .read_to_string(&mut script)
-            .unwrap();
-
-        let lua = Lua::new();
-        let globals = lua.globals();
-        lua.eval::<()>(&script, None).unwrap();
-        let f: LuaFunction = globals.get("main").unwrap();
-        let lua_event = lua.create_table().unwrap();
-
-        lua_event
-            .set("approver", event.author.as_ref().unwrap().username.clone())
-            .unwrap();
-        lua_event.set("comment", event.comment.clone()).unwrap();
-        lua_event
-            .set("value", approval.value.parse().unwrap_or(0))
-            .unwrap();
-        lua_event
-            .set("type", approval.approval_type.clone())
-            .unwrap();
-        lua_event.set("url", event.change.url.clone()).unwrap();
-        lua_event
-            .set("subject", event.change.subject.clone())
-            .unwrap();
-        lua_event
-            .set("project", event.change.project.clone())
-            .unwrap();
-        lua_event
-            .set("is_human", is_human)
-            .unwrap();
-
-        f.call::<_, String>(lua_event).unwrap()
+            .split("\n")
+            .filter_map(|l| {
+                let l = l.trim();
+                if l.is_empty() {
+                    None
+                } else if (is_human && !l.starts_with("Patch Set")) || l.contains("FAILURE") {
+                    Some(format!("> {}", l))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if lines.len() == 0 {
+            msg
+        } else {
+            format!(
+                "{}\n\n{}",
+                msg,
+                lines
+                    .into_iter()
+                    .intersperse("<br>\n".into())
+                    .collect::<String>()
+            )
+        }
     }
 
     fn get_approvals_msg(&mut self, event: &gerrit::Event) -> Option<(&User, String, bool)> {
@@ -714,7 +741,11 @@ fn has_inline_comments(event: &gerrit::Event) -> bool {
     lazy_static! {
         static ref RE: Regex = Regex::new(r"\(\d+\scomments?\)").unwrap();
     }
-    event.comment.as_ref().map(|s| RE.is_match(s)).unwrap_or(false)
+    event
+        .comment
+        .as_ref()
+        .map(|s| RE.is_match(s))
+        .unwrap_or(false)
 }
 
 fn format_comments(change: gerrit::Change) -> Option<String> {
@@ -737,7 +768,10 @@ fn format_comments(change: gerrit::Change) -> Option<String> {
                             "https://{}/#/c/{}/{}/{}@{}",
                             host, change_number, patch_set_number, comment.file, comment.line
                         );
-                        format!("> [Line {}]({}) by {}: {}", comment.line, url, comment.reviewer, comment.message)
+                        format!(
+                            "> [Line {}]({}) by {}: {}",
+                            comment.line, url, comment.reviewer, comment.message
+                        )
                     })
                     .intersperse("\n".into())
                     .collect::<Vec<_>>()

@@ -20,7 +20,7 @@ pub type Username = String;
 pub struct User {
     pub name: Option<String>,
     pub username: Username,
-    pub email: Option<String>
+    pub email: Option<String>,
 }
 
 impl fmt::Display for User {
@@ -357,9 +357,12 @@ pub fn change_sink(
         });
 
         if let Ok(_) = res {
-            return Ok(bot::Action::ChangeFetched(user.clone(), message.clone(), Box::new(change)));
+            return Ok(bot::Action::ChangeFetched(
+                user.clone(),
+                message.clone(),
+                Box::new(change),
+            ));
         } else {
-
             info!(
                 "Reconnecting to Gerrit over SSH for sending commands: {}",
                 &conn.host
