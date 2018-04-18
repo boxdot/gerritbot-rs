@@ -572,7 +572,7 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
         }
         Action::UpdateApprovals(event) => {
             bot.get_approvals_msg(&event).map(|(user, message, is_human)| {
-                if is_human {
+                if is_human && has_inline_comments(&event) {
                     Task::FetchComments(user.spark_person_id.clone(), event.change, message)
                 } else {
                     Task::Reply(Response::new(user.spark_person_id.clone(), message))
@@ -708,6 +708,13 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
         Action::NoOp => None,
     };
     (bot, task)
+}
+
+fn has_inline_comments(event: &gerrit::Event) -> bool {
+    lazy_static! {
+        static ref RE: Regex = Regex::new(r"\(\d+\scomments?\)").unwrap();
+    }
+    event.comment.as_ref().map(|s| RE.is_match(s)).unwrap_or(false)
 }
 
 fn format_comments(change: gerrit::Change) -> Option<String> {
@@ -1172,5 +1179,15 @@ mod test {
         assert_eq!(res, Err(AddFilterResult::InvalidFilter));
         let res = bot.enable_filter("some_person_id", false);
         assert_eq!(res, Err(AddFilterResult::InvalidFilter));
+    }
+
+    #[test]
+    fn test_has_inline_comments() {
+        let mut event = get_event();
+        event.comment = Some("PatchSet 666: (2 comments)".into());
+        assert!(has_inline_comments(&event));
+
+        event.comment = Some("Nope, colleague comment!".into());
+        assert!(!has_inline_comments(&event));
     }
 }
