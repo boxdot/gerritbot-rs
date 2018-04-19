@@ -544,7 +544,7 @@ const HELP_MSG: &str = r#"Commands:
 
 `disable` -- I will stop notifying you.
 
-`filter <regex>` -- Filter all messages by applying the specified regex pattern. If the pattern matches, the message is filtered. The pattern is applied to the full text I send to you. Be aware, to send this command **not** in markdown mode, otherwise, Spark would eat some special characters in the pattern. For regex specification, cf. https://doc.rust-lang.org/regex/regex/index.html#syntax.
+`filter <regex>` -- Filter all messages by applying the specified regex pattern. If the pattern matches, the message is filtered. The pattern is applied to the full text I send to you. Be aware, to send this command **not** in markdown mode, otherwise, Spark would eat some special characters in the pattern. For regex specification, cf. https://docs.rs/regex/0.2.10/regex/#syntax.
 
 `filter enable` -- Enable the filtering of messages with the configured filter.
 
