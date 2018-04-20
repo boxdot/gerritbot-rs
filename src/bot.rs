@@ -294,6 +294,18 @@ impl Bot {
         let msgs: Vec<String> = approvals
             .iter()
             .filter_map(|approval| {
+                // filter if the message is from a bot and there was no previous value, or value
+                // did not change, or it is 0
+                let filtered = !is_human && !approval
+                    .old_value
+                    .as_ref()
+                    .map(|old_value| old_value != &approval.value && approval.value != "0")
+                    .unwrap_or(false);
+                debug!("Filtered approval: {:?}", filtered);
+                if filtered {
+                    return None;
+                }
+
                 // filter all messages that were already sent to the user recently
                 if self.touch_cache(MsgCacheLine::new_approval(
                     user_pos,
