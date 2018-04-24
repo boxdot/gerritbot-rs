@@ -1,3 +1,4 @@
+
 use std::collections::HashMap;
 use std::convert;
 use std::fs::File;
@@ -294,6 +295,18 @@ impl Bot {
         let msgs: Vec<String> = approvals
             .iter()
             .filter_map(|approval| {
+                // filter if the message is from a bot and there was no previous value, or value
+                // did not change, or it is 0
+                let filtered = !approval
+                    .old_value
+                    .as_ref()
+                    .map(|old_value| old_value != &approval.value && approval.value != "0")
+                    .unwrap_or(false);
+                debug!("Filtered approval: {:?}", filtered);
+                if filtered {
+                    return None;
+                }
+
                 // filter all messages that were already sent to the user recently
                 if self.touch_cache(MsgCacheLine::new_approval(
                     user_pos,
@@ -325,7 +338,11 @@ impl Bot {
             .collect();
 
         if !msgs.is_empty() {
+            // We got some approvals
             Some((&self.users[user_pos], msgs.join("\n\n"), is_human)) // two newlines since it is markdown
+        } else if is_human && has_inline_comments(&event) && event.comment.is_some() {
+            // We did not get any approvals, but we got inline comments from a human.
+            Some((&self.users[user_pos], event.comment.clone().unwrap(), is_human))
         } else {
             None
         }
@@ -1191,3 +1208,4 @@ mod test {
         assert!(!has_inline_comments(&event));
     }
 }
+
