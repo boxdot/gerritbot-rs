@@ -148,8 +148,7 @@ impl Bot {
             users: Vec::new(),
             msg_cache: Some(
                 LruCache::<MsgCacheLine, ()>::with_expiry_duration_and_capacity(
-                    expiration,
-                    capacity,
+                    expiration, capacity,
                 ),
             ),
             person_id_index: HashMap::new(),
@@ -260,9 +259,7 @@ impl Bot {
         lua_event
             .set("project", event.change.project.clone())
             .unwrap();
-        lua_event
-            .set("is_human", is_human)
-            .unwrap();
+        lua_event.set("is_human", is_human).unwrap();
 
         f.call::<_, String>(lua_event).unwrap()
     }
@@ -294,9 +291,8 @@ impl Bot {
         let msgs: Vec<String> = approvals
             .iter()
             .filter_map(|approval| {
-                // filter if the message is from a bot and there was no previous value, or value
-                // did not change, or it is 0
-                let filtered = !is_human && !approval
+                // filter if there was no previous value, or value did not change, or it is 0
+                let filtered = !approval
                     .old_value
                     .as_ref()
                     .map(|old_value| old_value != &approval.value && approval.value != "0")
@@ -337,7 +333,15 @@ impl Bot {
             .collect();
 
         if !msgs.is_empty() {
+            // We got some approvals
             Some((&self.users[user_pos], msgs.join("\n\n"), is_human)) // two newlines since it is markdown
+        } else if is_human && has_inline_comments(&event) && event.comment.is_some() {
+            // We did not get any approvals, but we got inline comments from a human.
+            Some((
+                &self.users[user_pos],
+                event.comment.clone().unwrap(),
+                is_human,
+            ))
         } else {
             None
         }
@@ -726,7 +730,11 @@ fn has_inline_comments(event: &gerrit::Event) -> bool {
     lazy_static! {
         static ref RE: Regex = Regex::new(r"\(\d+\scomments?\)").unwrap();
     }
-    event.comment.as_ref().map(|s| RE.is_match(s)).unwrap_or(false)
+    event
+        .comment
+        .as_ref()
+        .map(|s| RE.is_match(s))
+        .unwrap_or(false)
 }
 
 fn format_comments(change: gerrit::Change) -> Option<String> {
@@ -745,11 +753,22 @@ fn format_comments(change: gerrit::Change) -> Option<String> {
             .map(|(file, comments)| -> String {
                 let line_comments = comments
                     .map(|comment| {
+                        let mut lines = comment.message.split("\n");
                         let url = format!(
                             "https://{}/#/c/{}/{}/{}@{}",
                             host, change_number, patch_set_number, comment.file, comment.line
                         );
-                        format!("> [Line {}]({}) by {}: {}", comment.line, url, comment.reviewer, comment.message)
+                        let first_line = lines.next().unwrap_or("");
+                        let first_line = format!(
+                            "> [Line {}]({}) by {}: {}",
+                            comment.line, url, comment.reviewer, first_line
+                        );
+                        let tail = lines
+                            .map(|l| format!("> {}", l))
+                            .intersperse("\n".into())
+                            .collect::<Vec<_>>()
+                            .concat();
+                        format!("{}\n{}", first_line, tail)
                     })
                     .intersperse("\n".into())
                     .collect::<Vec<_>>()
@@ -851,8 +870,17 @@ mod test {
     const EVENT_JSON : &'static str = r#"
 {"author":{"name":"Approver","username":"approver"},"approvals":[{"type":"Code-Review","description":"Code-Review","value":"2","oldValue":"-1"}],"comment":"Patch Set 1: Code-Review+2\n\nJust a buggy script. FAILURE\n\nAnd more problems. FAILURE","patchSet":{"number":"1","revision":"49a65998c02eda928559f2d0b586c20bc8e37b10","parents":["fb1909b4eda306985d2bbce769310e5a50a98cf5"],"ref":"refs/changes/42/42/1","uploader":{"name":"Author","email":"author@example.com","username":"Author"},"createdOn":1494165142,"author":{"name":"Author","email":"author@example.com","username":"Author"},"isDraft":false,"kind":"REWORK","sizeInsertions":0,"sizeDeletions":0},"change":{"project":"demo-project","branch":"master","id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14","number":"49","subject":"Some review.","owner":{"name":"Author","email":"author@example.com","username":"author"},"url":"http://localhost/42","commitMessage":"Some review.\n\nChange-Id: Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14\n","status":"NEW"},"project":"demo-project","refName":"refs/heads/master","changeKey":{"id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14"},"type":"comment-added","eventCreatedOn":1499190282}"#;
 
+    const CHANGE_JSON_WITH_COMMENTS : &'static str = r#"
+{"project":"gerritbot-rs","branch":"master","id":"If70442f674c595a59f3e44280570e760ba3584c4","number":"1","subject":"Bump version to 0.6.0","owner":{"name":"Administrator","email":"admin@example.com","username":"admin"},"url":"http://localhost:8080/1","commitMessage":"Bump version to 0.6.0\n\nChange-Id: If70442f674c595a59f3e44280570e760ba3584c4\n","createdOn":1524584729,"lastUpdated":1524584975,"open":true,"status":"NEW","comments":[{"timestamp":1524584729,"reviewer":{"name":"Administrator","email":"admin@example.com","username":"admin"},"message":"Uploaded patch set 1."},{"timestamp":1524584975,"reviewer":{"name":"jdoe","email":"john.doe@localhost","username":"jdoe"},"message":"Patch Set 1:\n\n(1 comment)"}],"currentPatchSet":{"number":"1","revision":"3f58af760fc1e39fcc4a85b8ab6a6be032cf2ae2","parents":["578bc1e684098d2ac597e030442c3472f15ac3ad"],"ref":"refs/changes/01/1/1","uploader":{"name":"Administrator","email":"admin@example.com","username":"admin"},"createdOn":1524584729,"author":{"name":"jdoe","email":"jdoe@example.com","username":""},"isDraft":false,"kind":"REWORK","comments":[{"file":"/COMMIT_MSG","line":1,"reviewer":{"name":"jdoe","email":"john.doe@localhost","username":"jdoe"},"message":"This is a multiline\ncomment\non some change."}],"sizeInsertions":2,"sizeDeletions":-2}}"#;
+
     fn get_event() -> gerrit::Event {
         let event: Result<gerrit::Event, _> = serde_json::from_str(EVENT_JSON);
+        assert!(event.is_ok());
+        event.unwrap()
+    }
+
+    fn get_change_with_comments() -> gerrit::Change {
+        let event: Result<gerrit::Change, _> = serde_json::from_str(CHANGE_JSON_WITH_COMMENTS);
         assert!(event.is_ok());
         event.unwrap()
     }
@@ -1201,5 +1229,16 @@ mod test {
 
         event.comment = Some("Nope, colleague comment!".into());
         assert!(!has_inline_comments(&event));
+    }
+
+    #[test]
+    fn test_format_comments() {
+        let mut event = get_change_with_comments();
+        event.current_patch_set = None;
+        assert_eq!(format_comments(event), None);
+
+        let event = get_change_with_comments();
+        assert_eq!(format_comments(event),
+            Some("`/COMMIT_MSG`\n\n> [Line 1](https://localhost:8080/#/c/1/1//COMMIT_MSG@1) by jdoe: This is a multiline\n> comment\n> on some change.".into()));
     }
 }
