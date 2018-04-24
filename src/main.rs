@@ -111,10 +111,7 @@ fn main() {
 
     // create gerrit event stream listener
     let gerrit_config = config.gerrit.clone();
-    info!(
-        "(Re)connecting to Gerrit over ssh: {}",
-        gerrit_config.host
-    );
+    info!("(Re)connecting to Gerrit over ssh: {}", gerrit_config.host);
 
     let (gerrit_change_id_sink, gerrit_change_response_stream) = gerrit::change_sink(
         gerrit_config.host.clone(),
