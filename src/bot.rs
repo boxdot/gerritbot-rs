@@ -540,18 +540,11 @@ pub enum Task {
 }
 
 const GREETINGS_MSG: &str =
-r#"Hi. I am GerritBot (**in a beta phase**). I can watch Gerrit reviews for you, and notify you about new +1/-1's.
+r#"Hi. I am GerritBot. I can watch Gerrit reviews for you, and notify you about new +1/-1's.
 
 To enable notifications, just type in **enable**. A small note: your email in Spark and in Gerrit has to be the same. Otherwise, I can't match your accounts.
 
 For more information, type in **help**.
-
-By the way, my icon is made by
-[ Madebyoliver ](http://www.flaticon.com/authors/madebyoliver)
-from
-[ www.flaticon.com ](http://www.flaticon.com)
-and is licensed by
-[ CC 3.0 BY](http://creativecommons.org/licenses/by/3.0/).
 "#;
 
 const HELP_MSG: &str = r#"Commands:
