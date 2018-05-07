@@ -8,6 +8,7 @@ spark:
   bot_token: ""
   # optional, add a webhook URL is you want to register it automatically on Cisco Spark
   # webhook_url: "https://endpoint.example.org"
+  output_mode: Spark
   mode: 
     Sqs:
       uri: "https://sqs.us-east-1.amazonaws.com/xxxxxxxxxxx/gerribot-rs"

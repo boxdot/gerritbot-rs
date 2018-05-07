@@ -9,6 +9,7 @@ extern crate lazy_static;
 #[macro_use]
 extern crate log;
 extern crate lru_time_cache;
+extern crate notify_rust;
 extern crate regex;
 extern crate rlua;
 extern crate router;
@@ -39,8 +40,9 @@ mod sqs;
 use spark::SparkClient;
 
 fn spark_client_from_config(spark_config: args::SparkConfig) -> Rc<SparkClient> {
-    if !spark_config.bot_token.is_empty() {
-        Rc::new(
+    match spark_config.output_mode {
+        args::OutputConfig::Spark => {
+            Rc::new(
             spark::WebClient::new(
                 spark_config.api_uri,
                 spark_config.bot_token,
@@ -48,11 +50,16 @@ fn spark_client_from_config(spark_config: args::SparkConfig) -> Rc<SparkClient> 
             ).unwrap_or_else(|err| {
                 error!("Could not create spark client: {}", err);
                 std::process::exit(1);
-            }),
-        )
-    } else {
-        warn!("Using console as Spark client due to empty bot_token.");
-        Rc::new(spark::ConsoleClient::new())
+            }))
+        },
+        args::OutputConfig::Console => {
+            warn!("Using console as Spark client due to empty bot_token.");
+            Rc::new(spark::ConsoleClient::new())
+        },
+        args::OutputConfig::Notifications => {
+            warn!("Using dbus notification as Spark client");
+            Rc::new(spark::NotificationClient::new())
+        }
     }
 }
 

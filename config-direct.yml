@@ -8,9 +8,11 @@ spark:
   bot_token: ""
   # optional, add a webhook URL is you want to register it automatically on Cisco Spark
   # webhook_url: "https://endpoint.example.org"
+  output_mode: Notifications
   mode:
     Direct:
       endpoint: "localhost:8888"
+      output: Spark 
 
 bot:
   msg_expiration: 4

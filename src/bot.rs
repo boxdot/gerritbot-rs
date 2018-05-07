@@ -230,16 +230,19 @@ impl Bot {
 
     fn format_msg(event: &gerrit::Event, approval: &gerrit::Approval, is_human: bool) -> String {
         let filename = String::from("scripts/format.lua");
-        let mut script = String::new();
-        File::open(&Path::new(&filename))
-            .unwrap()
-            .read_to_string(&mut script)
-            .unwrap();
+        let script = File::open(&Path::new(&filename))
+            .map_err(|err| err.to_string())
+            .and_then(|mut file| {
+                let mut contents = String::new();
+                file.read_to_string(&mut contents)
+                    .map_err(|err| err.to_string())
+                    .map(|_| contents)
+            }).unwrap();
 
         let lua = Lua::new();
         let globals = lua.globals();
-        lua.eval::<()>(&script, None).unwrap();
-        let f: LuaFunction = globals.get("main").unwrap();
+        lua.eval::<()>(&script, None).map_err(|err| err.to_string()).unwrap();
+        let f: LuaFunction = globals.get("main").map_err(|err| err.to_string()).unwrap();
         let lua_event = lua.create_table().unwrap();
 
         lua_event
