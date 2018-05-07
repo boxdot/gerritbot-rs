@@ -31,6 +31,14 @@ pub struct SparkConfig {
     pub api_uri: String,
     pub webhook_url: Option<String>,
     pub mode: ModeConfig,
+    pub output_mode: OutputConfig
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub enum OutputConfig {
+    Spark,
+    Console,
+    Notifications
 }
 
 #[derive(Debug, Deserialize, Clone)]

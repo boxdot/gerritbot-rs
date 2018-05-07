@@ -8,7 +8,7 @@ matrix:
     - rust: nightly
 before_install:
   - sudo apt-get update -qq
-  - sudo apt-get install libssh2-1-dev -y
+  - sudo apt-get install libdbus-1-dev libssh2-1-dev -y
 script:
   - cargo build --verbose --all
   - cargo test --verbose --all

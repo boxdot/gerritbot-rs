@@ -8,6 +8,7 @@ use hyper;
 use hyper_native_tls;
 use iron::prelude::*;
 use iron::status;
+use notify_rust::Notification;
 use regex::Regex;
 use router::Router;
 use serde;
@@ -403,6 +404,34 @@ impl SparkClient for ConsoleClient {
             message.text = "Placeholder text".into();
             Ok(message)
         }
+    }
+}
+
+pub struct NotificationClient;
+
+impl NotificationClient {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl SparkClient for NotificationClient {
+    fn id(&self) -> &str {
+        "notify-dbus-client"
+    }
+
+    fn reply(&self, person_id: &str, msg: &str) {
+        Notification::new()
+            .summary("Gerrit Bot")
+            .body(msg)
+            .show().unwrap();
+    }
+
+    fn get_message(&self, message_id: &str) -> Result<Message, Error> {
+        let mut message = Message::default();
+        message.id = message_id.into();
+        message.text = "Placeholder text".into();
+        Ok(message)
     }
 }
 
