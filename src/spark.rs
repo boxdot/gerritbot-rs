@@ -392,6 +392,7 @@ impl SparkClient for WebClient {
         let mut message: Message = serde_json::from_reader(resp).map_err(Error::from)?;
         let memberships = &self.get_memberships(&message.room_id)?;
         message.is_in_group = memberships.items.len() > 1;
+        message.text = self.get_message(&message.id)?.text;
         Ok(message)
     }
 }
@@ -469,14 +470,6 @@ impl SparkClient for NotificationClient {
 }
 
 impl Message {
-    /// Load text from Spark for a received message
-    /// Note: Spark does not send the text with the message to the registered post hook.
-    pub fn load_text<C: SparkClient + ?Sized>(&mut self, client: &C) -> Result<(), Error> {
-        let msg = client.get_message(&self.id)?;
-        self.text = msg.text;
-        Ok(())
-    }
-
     /// Convert Spark message to bot action
     pub fn into_action(self) -> bot::Action {
         lazy_static! {
@@ -540,15 +533,7 @@ pub fn webhook_event_stream<C: 'static + SparkClient + ?Sized>(
 
     let bot_id = String::from(client.id());
     let stream = rx.filter(move |msg| msg.person_id != bot_id)
-        .map(move |mut msg| {
-            debug!("Loading text for message: {:#?}", msg);
-            if let Err(err) = msg.load_text(&*client) {
-                error!("Could not load post's text: {}", err);
-                return None;
-            }
-            Some(msg)
-        })
-        .filter_map(|msg| msg.map(Message::into_action))
+        .map(Message::into_action)
         .map_err(|err| format!("Error from Spark: {:?}", err));
 
     // start listening
@@ -586,15 +571,7 @@ pub fn sqs_event_stream<C: SparkClient + 'static + ?Sized>(
             }
         })
         .filter(move |msg| msg.person_id != bot_id)
-        .map(move |mut msg| {
-            debug!("Loading text for message: {:#?}", msg);
-            if let Err(err) = msg.load_text(&*client) {
-                error!("Could not load post's text: {}", err);
-                return None;
-            }
-            Some(msg)
-        })
-        .filter_map(|msg| msg.map(Message::into_action))
+        .map(Message::into_action)
         .map_err(|err| format!("Error from Spark: {:?}", err));
     Ok(Box::new(sqs_stream))
 }
