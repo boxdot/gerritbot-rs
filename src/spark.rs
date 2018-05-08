@@ -122,6 +122,27 @@ pub struct Message {
     // a message contained in a post does not have text loaded
     #[serde(default)]
     text: String,
+    #[serde(default)]
+    is_in_group: bool
+}
+
+#[derive(Deserialize, Debug, Default)]
+pub struct Memberships {
+    pub items: Vec<Membership>
+}
+
+#[derive(Deserialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Membership {
+    created: Option<DateTime<Utc>>,
+    id: String,
+    pub room_id: String,
+    pub person_id: String,
+    pub person_email: String,
+    pub person_display_name: String,
+    person_org_id: String,
+    pub is_moderator: bool,
+    pub is_monitor: bool
 }
 
 #[derive(Deserialize, Debug)]
@@ -277,6 +298,14 @@ impl WebClient {
         Ok(details.id)
     }
 
+    fn get_memberships(&self, room_id: &str) -> Result<Memberships, Error> {
+        let resp = get_json_with_token(
+            &(self.url.clone() + "/memberships?room_id=" + room_id),
+            &self.bot_token,
+        )?;
+        serde_json::from_reader(resp).map_err(Error::from)
+    }
+
     fn register_webhook(&self, url: &str) -> Result<(), Error> {
         let json = json!({
             "name": "gerritbot",
@@ -360,7 +389,10 @@ impl SparkClient for WebClient {
             &(self.url.clone() + "/messages/" + message_id),
             &self.bot_token,
         )?;
-        serde_json::from_reader(resp).map_err(Error::from)
+        let mut message: Message = serde_json::from_reader(resp).map_err(Error::from)?;
+        let memberships = &self.get_memberships(&message.room_id)?;
+        message.is_in_group = memberships.items.len() > 1;
+        Ok(message)
     }
 }
 
