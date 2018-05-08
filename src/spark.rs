@@ -1,6 +1,7 @@
 use std::{error, fmt, io, thread};
 use std::rc::Rc;
 
+use chrono::{DateTime, Utc};
 use futures::future::Future;
 use futures::{Sink, Stream};
 use futures::sync::mpsc::{channel, Sender};
@@ -111,7 +112,7 @@ struct Post {
 #[derive(Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
-    created: Option<String>,
+    created: Option<DateTime<Utc>>,
     id: String,
     pub person_email: String,
     pub person_id: String,
