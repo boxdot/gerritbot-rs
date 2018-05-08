@@ -423,7 +423,7 @@ impl SparkClient for NotificationClient {
 
     fn reply(&self, person_id: &str, msg: &str) {
         Notification::new()
-            .summary("Gerrit Bot")
+            .summary(&format!("Gerrit Bot for {}", &person_id))
             .body(msg)
             .show().unwrap();
     }
