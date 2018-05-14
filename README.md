@@ -67,7 +67,7 @@ capabilities. Admins and Non-interactive users should have such.
 The state of the bot is stored in the `state.json` file in the same directory, where the bot is
 running.
 
-**This is my first Rust project. Any constructive criticism is welcome.**
+The Gerrit version which was tested is 1.14.x.
 
 ## License
 
