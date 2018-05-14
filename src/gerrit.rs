@@ -42,7 +42,7 @@ pub struct Approval {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct PatchSet {
-    pub number: String,
+    pub number: u32,
     pub revision: String,
     pub parents: Vec<String>,
     #[serde(rename = "ref")]
@@ -72,7 +72,7 @@ pub struct Change {
     pub project: String,
     pub branch: String,
     pub id: String,
-    pub number: String,
+    pub number: u32,
     pub subject: String,
     pub topic: Option<String>,
     pub owner: User,
