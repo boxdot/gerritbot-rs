@@ -1,13 +1,13 @@
 # Gerritbot [![Build Status](https://travis-ci.org/boxdot/gerritbot-rs.svg?branch=master)](https://travis-ci.org/boxdot/gerritbot-rs)
 
-A [Cisco Spark](https://www.ciscospark.com) bot, which notifies you about new review approvals
+A [Cisco WebEx Teams](https://teams.webex.com) bot, which notifies you about new review approvals
 (i.e. +2/+1/-1/-2 etc.) from [Gerrit](https://www.gerritcodereview.com).
 
 ![screenshot](assets/screenshot.png)
 
 ## How to use:
 
-1. Register a developer account at https://developer.ciscospark.com.
+1. Register a developer account at https://developer.webex.com.
 2. Create a new bot and write down its **api key**.
 3. Build and run the bot in direct or SQS mode (cf. below).
 
@@ -19,10 +19,10 @@ The bot can run in two modes.
 
 ### Direct mode
 
-The bot is listening on a specified endpoint for incoming incoming Spark messages. For that, you
+The bot is listening on a specified endpoint for incoming incoming WebEx Teams messages. For that, you
 need to provide the endpoint url to the bot by setting `spark.webhook_url` in the configuration file.
-The bot will register the url for you through the Cisco Spask API. Alternatively, you can also register the
-url yourself at [https://developer.ciscospark.com](https://developer.ciscospark.com). In that case,
+The bot will register the url for you through the Cisco WebEx Teams API. Alternatively, you can also register the
+url yourself at [https://developer.webex.com](https://developer.webex.com). In that case,
 do not provide the option `spark.webhook_url`, since otherwise it will overwrite you manually
 configured url.
 
@@ -34,7 +34,7 @@ Example:
 $ cargo run -- --config config-direct.yml
 ```
 
-In this setup, the bot is listening for the incoming messages at `localhost:8888`, where Spark will
+In this setup, the bot is listening for the incoming messages at `localhost:8888`, where WebEx Teams will
 send the messages to the endpoint `https://endpoint.example.org`. This is useful to test the bot in
 a local environment. For an easy way to get a public url connected to a local endpoint cf.
 [https://ngrok.com](https://ngrok.com).
@@ -42,8 +42,8 @@ a local environment. For an easy way to get a public url connected to a local en
 
 ### AWS SQS mode
 
-The bot is polling the Cisco Spark messages from an AWS SQS queue provided by the configuration
- `spark.sqs` and `spark.sqs_region`. The url of the queue can be registered in Spark in
+The bot is polling the WebEx Teams messages from an AWS SQS queue provided by the configuration
+ `spark.sqs` and `spark.sqs_region`. The url of the queue can be registered in WebEx Teams in
 the same way as in direct mode.
 
 See configuration example file in [config-sqs.yml](config-sqs.yml) in the repository.
@@ -57,7 +57,7 @@ $ cargo run -- --config-sqs.yml
 This is useful, when the bot is running in a private network and does not have a connection to the
 internet. SQS is playing the role of a gateway between the internet and the internal traffic.
 
-To forward the Spark messages to a SQS use an AWS API Gateway.
+To forward the WebEx Teams messages to a SQS use an AWS API Gateway.
 
 ## Gerrit
 
