@@ -568,6 +568,8 @@ const HELP_MSG: &str = r#"Commands:
 `status` -- Show if I am notifying you, and a little bit more information. 😉
 
 `help` -- This message
+
+This project is open source, feel free to help us at: https://github.com/boxdot/gerritbot-rs
 "#;
 
 /// Action controller
