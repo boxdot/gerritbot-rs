@@ -307,7 +307,7 @@ impl WebClient {
         delete_with_token(&(self.url.clone() + "/webhooks/" + id), &self.bot_token)
             .map_err(Error::from)
             .and_then(|resp| {
-                if resp.status != hyper::status::StatusCode::NoContent {
+                if resp.status != hyper::status::StatusCode::NoContent && resp.status != hyper::status::StatusCode::NotFound {
                     Err(Error::DeleteWebhook(format!(
                         "Could not delete webhook: {}",
                         resp.status
