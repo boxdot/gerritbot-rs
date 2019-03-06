@@ -1,31 +1,13 @@
 #![deny(bare_trait_objects)]
 
-extern crate docopt;
-extern crate futures;
-extern crate hyper;
-extern crate hyper_native_tls;
-extern crate iron;
-extern crate itertools;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
 extern crate log;
-extern crate lru_time_cache;
-extern crate notify_rust;
-extern crate regex;
-extern crate rlua;
-extern crate router;
-extern crate rusoto_core;
-extern crate rusoto_sqs;
-extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 #[macro_use]
 extern crate serde_json;
-extern crate serde_yaml;
-extern crate ssh2;
-extern crate stderrlog;
-extern crate tokio_core;
 
 use futures::{Future, Sink, Stream};
 use std::time::Duration;
