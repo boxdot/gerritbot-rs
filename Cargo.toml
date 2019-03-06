@@ -3,6 +3,7 @@ name = "gerritbot"
 version = "0.7.0"
 authors = ["boxdot <d@zerovolt.org>"]
 license = "MIT/Apache-2.0"
+edition = "2018"
 
 [dependencies]
 docopt = "0.8"
