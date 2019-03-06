@@ -4,8 +4,8 @@ services:
   gerrit:
     image: openfrontier/gerrit:2.13.x
     ports:
-      - 8080:8080
-      - 29418:29418
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:29418:29418"
     volumes:
       - ./.git:/root/src.git:ro
       - ./testing/data:/root/data
