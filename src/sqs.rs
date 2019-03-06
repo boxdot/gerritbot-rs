@@ -28,10 +28,10 @@ impl error::Error for Error {
         }
     }
 
-    fn cause(&self) -> Option<&error::Error> {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match *self {
-            Error::Credentials(ref err) => err.cause(),
-            Error::Tls(ref err) => err.cause(),
+            Error::Credentials(ref err) => err.source(),
+            Error::Tls(ref err) => err.source(),
         }
     }
 }

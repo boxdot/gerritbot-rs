@@ -212,13 +212,13 @@ impl error::Error for Error {
         }
     }
 
-    fn cause(&self) -> Option<&error::Error> {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match *self {
-            Error::HyperError(ref err) => err.cause(),
-            Error::SqsError(ref err) => err.cause(),
-            Error::JsonError(ref err) => err.cause(),
+            Error::HyperError(ref err) => err.source(),
+            Error::SqsError(ref err) => err.source(),
+            Error::JsonError(ref err) => err.source(),
             Error::RegisterWebhook(_) | Error::DeleteWebhook(_) => None,
-            Error::IoError(ref err) => err.cause(),
+            Error::IoError(ref err) => err.source(),
         }
     }
 }
