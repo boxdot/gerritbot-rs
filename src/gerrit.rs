@@ -11,7 +11,7 @@ use serde_json;
 use futures::sync::mpsc::{channel, Receiver, Sender};
 use futures::{Future, Sink, Stream};
 
-use bot;
+use crate::bot;
 
 /// Gerrit username
 pub type Username = String;

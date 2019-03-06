@@ -12,8 +12,8 @@ use regex::Regex;
 use rlua::{Function as LuaFunction, Lua};
 use serde_json;
 
-use gerrit;
-use spark;
+use crate::gerrit;
+use crate::spark;
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Filter {
@@ -797,7 +797,7 @@ mod test {
 
     use serde_json;
 
-    use gerrit;
+    use crate::gerrit;
     use super::*;
 
     #[test]

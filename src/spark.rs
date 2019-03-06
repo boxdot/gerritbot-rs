@@ -16,8 +16,8 @@ use serde_json;
 use tokio_core;
 use rusoto_core;
 
-use bot;
-use sqs;
+use crate::bot;
+use crate::sqs;
 
 //
 // Helper functions
