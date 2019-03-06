@@ -2,7 +2,7 @@ version: "3.4"
 
 services:
   gerrit:
-    image: openfrontier/gerrit:2.13.x
+    image: openfrontier/gerrit:2.14.x
     ports:
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:29418:29418"

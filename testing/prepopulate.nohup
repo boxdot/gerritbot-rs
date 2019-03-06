@@ -17,7 +17,7 @@ generate_ssh_key() {
   fi
 
   echo -n "Uploading SSH public-key to Gerrit user ${1}: "
-  curl -s --digest --user admin:secret -X POST --url "http://localhost:8080/a/accounts/${1}/sshkeys" --data-binary "@${ssh_key}.pub"
+  curl -s --user admin:secret -X POST --url "http://localhost:8080/a/accounts/${1}/sshkeys" --data-binary "@${ssh_key}.pub"
 
   echo -n "Test if connection works: "
   ssh -i ${ssh_key} -o StrictHostKeyChecking=no -p 29418 ${1}@localhost gerrit version
@@ -29,13 +29,13 @@ generate_ssh_key() {
 
 create_user() {
   echo -n "Creating user $1: "
-  curl -s --digest --user admin:secret -X PUT --url "http://localhost:8080/a/accounts/${1}" -H "Content-Type: application/json" --data "{\"name\": \"$1\", \"email\": \"$2\"}"
+  curl -s --user admin:secret -X PUT --url "http://localhost:8080/a/accounts/${1}" -H "Content-Type: application/json" --data "{\"name\": \"$1\", \"email\": \"$2\"}"
   generate_ssh_key $1 "_$1"
 }
 
 create_project() {
   echo -n "Creating project $1: "
-  curl -s --digest --user admin:secret -X PUT --url "http://localhost:8080/a/projects/${1}"
+  curl -s --user admin:secret -X PUT --url "http://localhost:8080/a/projects/${1}"
 }
 
 push_git_repo() {
