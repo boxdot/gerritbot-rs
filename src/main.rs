@@ -1,3 +1,5 @@
+#![deny(bare_trait_objects)]
+
 extern crate docopt;
 extern crate futures;
 extern crate hyper;
@@ -39,7 +41,7 @@ mod sqs;
 
 use spark::SparkClient;
 
-fn spark_client_from_config(spark_config: args::SparkConfig) -> Rc<SparkClient> {
+fn spark_client_from_config(spark_config: args::SparkConfig) -> Rc<dyn SparkClient> {
     match spark_config.output_mode {
         args::OutputConfig::Spark => {
             Rc::new(

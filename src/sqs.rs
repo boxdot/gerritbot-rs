@@ -51,7 +51,7 @@ impl From<rusoto_core::TlsError> for Error {
 pub fn sqs_receiver(
     queue_url: String,
     queue_region: Region,
-) -> Result<Box<Stream<Item = rusoto_sqs::Message, Error = ()>>, Error> {
+) -> Result<Box<dyn Stream<Item = rusoto_sqs::Message, Error = ()>>, Error> {
     // receive messages
     let aws_credentials = DefaultCredentialsProvider::new()?;
     let sqs_client = SqsClient::new(default_tls_client()?, aws_credentials, queue_region.clone());

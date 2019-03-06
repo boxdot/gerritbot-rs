@@ -493,7 +493,7 @@ pub fn webhook_event_stream<C: 'static + SparkClient + ?Sized>(
     client: Rc<C>,
     listen_url: &str,
     remote: tokio_core::reactor::Remote,
-) -> Result<Box<Stream<Item = bot::Action, Error = String>>, Error> {
+) -> Result<Box<dyn Stream<Item = bot::Action, Error = String>>, Error> {
     let (tx, rx) = channel(1);
     let mut router = Router::new();
     router.post(
@@ -534,7 +534,7 @@ pub fn sqs_event_stream<C: SparkClient + 'static + ?Sized>(
     client: Rc<C>,
     sqs_url: String,
     sqs_region: rusoto_core::Region,
-) -> Result<Box<Stream<Item = bot::Action, Error = String>>, Error> {
+) -> Result<Box<dyn Stream<Item = bot::Action, Error = String>>, Error> {
     let bot_id = String::from(client.id());
     let sqs_stream = sqs::sqs_receiver(sqs_url, sqs_region)?;
     let sqs_stream = sqs_stream
