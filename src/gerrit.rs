@@ -7,6 +7,7 @@ use std::thread;
 use log::{debug, error, info};
 use ssh2;
 use ssh2::Channel;
+use serde::Deserialize;
 use serde_json;
 
 use futures::sync::mpsc::{channel, Receiver, Sender};

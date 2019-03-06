@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use docopt::Docopt;
 use log::debug;
 use rusoto_core::Region;
+use serde::Deserialize;
 use serde_yaml;
 
 #[derive(Debug, Deserialize, Clone)]

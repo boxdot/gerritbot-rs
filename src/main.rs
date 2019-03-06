@@ -3,9 +3,6 @@
 use std::time::Duration;
 use std::rc::Rc;
 
-#[macro_use]
-extern crate serde_derive;
-
 use futures::{Future, Sink, Stream};
 use log::{debug, error, info, warn};
 
