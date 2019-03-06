@@ -420,7 +420,7 @@ impl SparkClient for NotificationClient {
         "notify-dbus-client"
     }
 
-    fn reply(&self, person_id: &str, msg: &str) {
+    fn reply(&self, _person_id: &str, msg: &str) {
         Notification::new()
             .summary("Gerrit Bot")
             .body(msg)
