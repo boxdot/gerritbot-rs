@@ -5,8 +5,6 @@ use std::rc::Rc;
 
 #[macro_use]
 extern crate serde_derive;
-#[macro_use]
-extern crate serde_json;
 
 use futures::{Future, Sink, Stream};
 use log::{debug, error, info, warn};
