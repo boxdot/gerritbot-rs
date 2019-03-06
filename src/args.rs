@@ -21,7 +21,7 @@ pub struct Config {
     pub bot: BotConfig,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct GerritConfig {
     pub host: String,
     pub username: String,
@@ -54,15 +54,6 @@ pub enum ModeConfig {
 pub struct BotConfig {
     pub msg_expiration: u64,
     pub msg_capacity: usize,
-}
-
-impl Default for BotConfig {
-    fn default() -> Self {
-        Self {
-            msg_expiration: 60,
-            msg_capacity: 100,
-        }
-    }
 }
 
 const USAGE: &str = "
