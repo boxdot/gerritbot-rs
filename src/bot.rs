@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::convert;
 use std::fs::File;
-use std::io::Read;
 use std::io;
 use std::path::Path;
 use std::time::Duration;
@@ -229,45 +228,39 @@ impl Bot {
     }
 
     fn format_msg(event: &gerrit::Event, approval: &gerrit::Approval, is_human: bool) -> String {
-        let filename = String::from("scripts/format.lua");
-        let script = File::open(&Path::new(&filename))
-            .map_err(|err| err.to_string())
-            .and_then(|mut file| {
-                let mut contents = String::new();
-                file.read_to_string(&mut contents)
-                    .map_err(|err| err.to_string())
-                    .map(|_| contents)
-            })
-            .unwrap();
+        const FILENAME: &str = "scripts/format.lua";
+        let script = std::fs::read(FILENAME).unwrap();
 
         let lua = Lua::new();
-        let globals = lua.globals();
-        lua.eval::<()>(&script, None)
-            .map_err(|err| err.to_string())
-            .unwrap();
-        let f: LuaFunction = globals.get("main").map_err(|err| err.to_string()).unwrap();
-        let lua_event = lua.create_table().unwrap();
+        lua.context(|context| {
+            let globals = context.globals();
+            context.load(&script).exec()
+                .map_err(|err| err.to_string())
+                .unwrap();
+            let f: LuaFunction = globals.get("main").map_err(|err| err.to_string()).unwrap();
+            let lua_event = context.create_table().unwrap();
 
-        lua_event
-            .set("approver", event.author.as_ref().unwrap().username.clone())
-            .unwrap();
-        lua_event.set("comment", event.comment.clone()).unwrap();
-        lua_event
-            .set("value", approval.value.parse().unwrap_or(0))
-            .unwrap();
-        lua_event
-            .set("type", approval.approval_type.clone())
-            .unwrap();
-        lua_event.set("url", event.change.url.clone()).unwrap();
-        lua_event
-            .set("subject", event.change.subject.clone())
-            .unwrap();
-        lua_event
-            .set("project", event.change.project.clone())
-            .unwrap();
-        lua_event.set("is_human", is_human).unwrap();
+            lua_event
+                .set("approver", event.author.as_ref().unwrap().username.clone())
+                .unwrap();
+            lua_event.set("comment", event.comment.clone()).unwrap();
+            lua_event
+                .set("value", approval.value.parse().unwrap_or(0))
+                .unwrap();
+            lua_event
+                .set("type", approval.approval_type.clone())
+                .unwrap();
+            lua_event.set("url", event.change.url.clone()).unwrap();
+            lua_event
+                .set("subject", event.change.subject.clone())
+                .unwrap();
+            lua_event
+                .set("project", event.change.project.clone())
+                .unwrap();
+            lua_event.set("is_human", is_human).unwrap();
 
-        f.call::<_, String>(lua_event).unwrap()
+            f.call::<_, String>(lua_event).unwrap()
+        })
     }
 
     fn get_approvals_msg(&mut self, event: &gerrit::Event) -> Option<(&User, String, bool)> {
