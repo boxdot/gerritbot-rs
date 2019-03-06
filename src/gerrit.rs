@@ -11,7 +11,7 @@ use serde_json;
 use futures::sync::mpsc::{channel, Receiver, Sender};
 use futures::{Future, Sink, Stream};
 
-use bot;
+use crate::bot;
 
 /// Gerrit username
 pub type Username = String;
@@ -249,7 +249,7 @@ impl GerritConnection {
 
 fn receiver_into_event_stream(
     rx: Receiver<Result<String, StreamError>>,
-) -> Box<Stream<Item = bot::Action, Error = String>> {
+) -> Box<dyn Stream<Item = bot::Action, Error = String>> {
     let stream = rx.then(|event| {
         // parse each json message as event (if we did not get an error)
         event.unwrap().map(|event| {
@@ -267,7 +267,7 @@ pub fn event_stream(
     host: String,
     username: String,
     priv_key_path: PathBuf,
-) -> Box<Stream<Item = bot::Action, Error = String>> {
+) -> Box<dyn Stream<Item = bot::Action, Error = String>> {
     let (main_tx, rx) = channel(1);
     thread::spawn(move || -> Result<(), ()> {
         loop {
@@ -334,7 +334,7 @@ pub fn change_sink(
 ) -> Result<
     (
         Sender<(String, Change, String)>,
-        Box<Stream<Item = bot::Action, Error = String>>,
+        Box<dyn Stream<Item = bot::Action, Error = String>>,
     ),
     String,
 > {

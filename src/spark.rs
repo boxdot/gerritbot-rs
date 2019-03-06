@@ -16,8 +16,8 @@ use serde_json;
 use tokio_core;
 use rusoto_core;
 
-use bot;
-use sqs;
+use crate::bot;
+use crate::sqs;
 
 //
 // Helper functions
@@ -212,13 +212,13 @@ impl error::Error for Error {
         }
     }
 
-    fn cause(&self) -> Option<&error::Error> {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match *self {
-            Error::HyperError(ref err) => err.cause(),
-            Error::SqsError(ref err) => err.cause(),
-            Error::JsonError(ref err) => err.cause(),
+            Error::HyperError(ref err) => err.source(),
+            Error::SqsError(ref err) => err.source(),
+            Error::JsonError(ref err) => err.source(),
             Error::RegisterWebhook(_) | Error::DeleteWebhook(_) => None,
-            Error::IoError(ref err) => err.cause(),
+            Error::IoError(ref err) => err.source(),
         }
     }
 }
@@ -420,7 +420,7 @@ impl SparkClient for NotificationClient {
         "notify-dbus-client"
     }
 
-    fn reply(&self, person_id: &str, msg: &str) {
+    fn reply(&self, _person_id: &str, msg: &str) {
         Notification::new()
             .summary("Gerrit Bot")
             .body(msg)
@@ -493,7 +493,7 @@ pub fn webhook_event_stream<C: 'static + SparkClient + ?Sized>(
     client: Rc<C>,
     listen_url: &str,
     remote: tokio_core::reactor::Remote,
-) -> Result<Box<Stream<Item = bot::Action, Error = String>>, Error> {
+) -> Result<Box<dyn Stream<Item = bot::Action, Error = String>>, Error> {
     let (tx, rx) = channel(1);
     let mut router = Router::new();
     router.post(
@@ -534,7 +534,7 @@ pub fn sqs_event_stream<C: SparkClient + 'static + ?Sized>(
     client: Rc<C>,
     sqs_url: String,
     sqs_region: rusoto_core::Region,
-) -> Result<Box<Stream<Item = bot::Action, Error = String>>, Error> {
+) -> Result<Box<dyn Stream<Item = bot::Action, Error = String>>, Error> {
     let bot_id = String::from(client.id());
     let sqs_stream = sqs::sqs_receiver(sqs_url, sqs_region)?;
     let sqs_stream = sqs_stream
