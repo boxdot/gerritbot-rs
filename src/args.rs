@@ -1,6 +1,8 @@
-use docopt::Docopt;
 use std::fs::File;
 use std::path::PathBuf;
+
+use docopt::Docopt;
+use log::debug;
 use rusoto_core::Region;
 use serde_yaml;
 

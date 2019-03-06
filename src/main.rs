@@ -1,15 +1,15 @@
 #![deny(bare_trait_objects)]
 
-#[macro_use]
-extern crate log;
+use std::time::Duration;
+use std::rc::Rc;
+
 #[macro_use]
 extern crate serde_derive;
 #[macro_use]
 extern crate serde_json;
 
 use futures::{Future, Sink, Stream};
-use std::time::Duration;
-use std::rc::Rc;
+use log::{debug, error, info, warn};
 
 #[macro_use]
 mod utils;
