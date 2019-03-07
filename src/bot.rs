@@ -106,6 +106,8 @@ pub struct Bot {
     person_id_index: HashMap<String, usize>,
     #[serde(skip_serializing, skip_deserializing)]
     email_index: HashMap<String, usize>,
+    #[serde(skip_serializing, skip_deserializing)]
+    format_script: String,
 }
 
 #[derive(Debug)]
@@ -134,6 +136,23 @@ pub enum AddFilterResult {
     FilterNotConfigured,
 }
 
+fn get_default_format_script() -> &'static str {
+    const DEFAULT_FORMAT_SCRIPT: &str = include_str!("../scripts/format.lua");
+    check_format_script_syntax(DEFAULT_FORMAT_SCRIPT).unwrap_or_else(|err| panic!("invalid format script: {}", err));
+    DEFAULT_FORMAT_SCRIPT
+}
+
+
+fn check_format_script_syntax(script_source: &str) -> Result<(), String> {
+    let lua = Lua::new();
+    lua.context(|context| {
+        let globals = context.globals();
+        context.load(script_source).exec().map_err(|err| format!("syntax error: {}", err))?;
+        let _: LuaFunction = globals.get("main").map_err(|_| "main function missing")?;
+        Ok(())
+    })
+}
+
 impl Bot {
     pub fn new() -> Bot {
         Bot {
@@ -141,7 +160,14 @@ impl Bot {
             msg_cache: None,
             person_id_index: HashMap::new(),
             email_index: HashMap::new(),
+            format_script: get_default_format_script().to_string(),
         }
+    }
+
+    pub fn set_format_script(&mut self, script_source: String) -> Result<(), String> {
+        check_format_script_syntax(&script_source)?;
+        self.format_script = script_source;
+        Ok(())
     }
 
     #[allow(dead_code)]
@@ -155,6 +181,7 @@ impl Bot {
             ),
             person_id_index: HashMap::new(),
             email_index: HashMap::new(),
+            format_script: get_default_format_script().to_string(),
         }
     }
 
@@ -230,39 +257,30 @@ impl Bot {
         user
     }
 
-    fn format_msg(event: &gerrit::Event, approval: &gerrit::Approval, is_human: bool) -> String {
-        const FILENAME: &str = "scripts/format.lua";
-        let script = std::fs::read(FILENAME).unwrap();
+    fn format_msg(script_source: &str, event: &gerrit::Event, approval: &gerrit::Approval, is_human: bool) -> Result<String, String> {
+        fn create_lua_event<'lua>(context: rlua::Context<'lua>, event: &gerrit::Event, approval: &gerrit::Approval, is_human: bool) -> Result<rlua::Table<'lua>, rlua::Error> {
+            let lua_event = context.create_table()?;
+            lua_event
+                .set("approver", event.author.as_ref().map(|user| user.username.as_ref()).unwrap_or("<unknown user>").to_string())?;
+            lua_event.set("comment", event.comment.clone())?;
+            lua_event.set("value", approval.value.parse().unwrap_or(0))?;
+            lua_event.set("type", approval.approval_type.clone())?;
+            lua_event.set("url", event.change.url.clone())?;
+            lua_event.set("subject", event.change.subject.clone())?;
+            lua_event.set("project", event.change.project.clone())?;
+            lua_event.set("is_human", is_human)?;
+            Ok(lua_event)
+        }
 
         let lua = Lua::new();
-        lua.context(|context| {
+        lua.context(|context| -> Result<String, String> {
             let globals = context.globals();
-            context.load(&script).exec()
-                .map_err(|err| err.to_string())
-                .unwrap();
-            let f: LuaFunction = globals.get("main").map_err(|err| err.to_string()).unwrap();
-            let lua_event = context.create_table().unwrap();
+            context.load(script_source).exec().map_err(|err| format!("syntax error: {}", err))?;
+            let f: LuaFunction = globals.get("main").map_err(|_| "main function missing".to_string())?;
+            let lua_event = create_lua_event(context, event, approval, is_human)
+                .map_err(|err| format!("failed to create lua event table: {}", err))?;
 
-            lua_event
-                .set("approver", event.author.as_ref().unwrap().username.clone())
-                .unwrap();
-            lua_event.set("comment", event.comment.clone()).unwrap();
-            lua_event
-                .set("value", approval.value.parse().unwrap_or(0))
-                .unwrap();
-            lua_event
-                .set("type", approval.approval_type.clone())
-                .unwrap();
-            lua_event.set("url", event.change.url.clone()).unwrap();
-            lua_event
-                .set("subject", event.change.subject.clone())
-                .unwrap();
-            lua_event
-                .set("project", event.change.project.clone())
-                .unwrap();
-            lua_event.set("is_human", is_human).unwrap();
-
-            f.call::<_, String>(lua_event).unwrap()
+            f.call::<_, String>(lua_event).map_err(|err| format!("lua formatting function failed: {}", err))
         })
     }
 
@@ -320,7 +338,14 @@ impl Bot {
                     return None;
                 }
 
-                let msg = Self::format_msg(event, approval, is_human);
+                let msg = match Self::format_msg(&self.format_script, event, approval, is_human) {
+                    Ok(msg) => msg,
+                    Err(err) => {
+                        error!("message formatting failed: {}", err);
+                        return None;
+                    },
+                };
+
                 // if user has configured and enabled a filter try to apply it
                 if self.is_filtered(user_pos, &msg) {
                     return None;
@@ -396,6 +421,7 @@ impl Bot {
         let f = File::open(filename)?;
         let mut bot: Bot = serde_json::from_reader(f)?;
         bot.index_users();
+        bot.format_script = get_default_format_script().to_string();
         Ok(bot)
     }
 
@@ -1076,10 +1102,10 @@ mod test {
         let mut bot = Bot::new();
         bot.add_user("author_spark_id", "author@example.com");
         let event = get_event();
-        let res = Bot::format_msg(&event, &event.approvals.as_ref().unwrap()[0], true);
+        let res = Bot::format_msg(get_default_format_script(), &event, &event.approvals.as_ref().unwrap()[0], true);
         assert_eq!(
             res,
-            "[Some review.](http://localhost/42) (demo-project) 👍 +2 (Code-Review) from approver\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE"
+            Ok("[Some review.](http://localhost/42) (demo-project) 👍 +2 (Code-Review) from approver\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE".to_string())
         );
     }
 
@@ -1089,8 +1115,8 @@ mod test {
         bot.add_user("author_spark_id", "author@example.com");
         let mut event = get_event();
         event.approvals.as_mut().unwrap()[0].approval_type = String::from("Some new type");
-        let res = Bot::format_msg(&event, &event.approvals.as_ref().unwrap()[0], true);
-        assert!(res.is_empty());
+        let res = Bot::format_msg(get_default_format_script(), &event, &event.approvals.as_ref().unwrap()[0], true);
+        assert_eq!(res.map(|s| s.is_empty()), Ok(true));
     }
 
     #[test]

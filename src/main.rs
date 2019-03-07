@@ -75,6 +75,12 @@ fn main() {
             Duration::from_secs(config.bot.msg_expiration),
         );
     };
+    if let Some(format_script) = config.bot.format_script {
+        bot.set_format_script(format_script).unwrap_or_else(|err| {
+            error!("Failed to set format script: {:?}", err);
+            std::process::exit(1);
+        });
+    }
 
     // event loop
     let mut core = tokio_core::reactor::Core::new().unwrap();
