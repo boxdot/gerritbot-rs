@@ -13,8 +13,6 @@ use ssh2::Channel;
 use futures::sync::mpsc::{channel, Receiver, Sender};
 use futures::{Future, Sink, Stream};
 
-use crate::bot;
-
 /// Gerrit username
 pub type Username = String;
 
@@ -129,18 +127,6 @@ pub struct Event {
     pub created_on: u32,
 }
 
-impl Event {
-    pub fn into_action(self) -> bot::Action {
-        if self.event_type == EventType::CommentAdded && self.approvals.is_some() {
-            bot::Action::UpdateApprovals(Box::new(self))
-        } else if self.event_type == EventType::ReviewerAdded {
-            bot::Action::ReviewerAdded(Box::new(self))
-        } else {
-            bot::Action::NoOp
-        }
-    }
-}
-
 #[derive(Debug)]
 pub enum StreamError {
     Io(io::Error),
@@ -251,19 +237,17 @@ impl GerritConnection {
 
 fn receiver_into_event_stream(
     rx: Receiver<Result<String, StreamError>>,
-) -> Box<dyn Stream<Item = bot::Action, Error = String>> {
+) -> Box<dyn Stream<Item = Event, Error = String>> {
     let stream = rx
-        .then(|event| {
-            // parse each json message as event (if we did not get an error)
-            event.unwrap().map(|event| {
-                let json: String = event;
-                let res = serde_json::from_str(&json);
-                debug!("Incoming Gerrit event: {:#?}", res);
-                res.ok()
-            })
-        })
-        .filter_map(|event| event.map(Event::into_action))
-        .map_err(|err| format!("Stream error from Gerrit: {:?}", err));
+        // Receiver itself never fails, lower result value.
+        .then(|event_data_result: Result<_, ()>| event_data_result.unwrap())
+        .map_err(|err| format!("Stream error from Gerrit: {:?}", err))
+        .filter_map(|event_data| {
+            let event_result = serde_json::from_str(&event_data);
+            debug!("Incoming Gerrit event: {:#?}", event_result);
+            // Ignore JSON decoding errors.
+            event_result.ok()
+        });
     Box::new(stream)
 }
 
@@ -271,7 +255,7 @@ pub fn event_stream(
     host: String,
     username: String,
     priv_key_path: PathBuf,
-) -> Box<dyn Stream<Item = bot::Action, Error = String>> {
+) -> Box<dyn Stream<Item = Event, Error = String>> {
     let (main_tx, rx) = channel(1);
     thread::spawn(move || -> Result<(), ()> {
         loop {
@@ -326,6 +310,13 @@ pub fn event_stream(
     receiver_into_event_stream(rx)
 }
 
+#[derive(Debug)]
+pub struct ChangeDetails {
+    pub user: String,
+    pub message: String,
+    pub change: Change,
+}
+
 /// Create a channel accepting change ids and a stream of reponses with `Change` corresponding to
 /// incoming change ids.
 ///
@@ -338,7 +329,7 @@ pub fn change_sink(
 ) -> Result<
     (
         Sender<(String, Change, String)>,
-        Box<dyn Stream<Item = bot::Action, Error = String>>,
+        Box<dyn Stream<Item = ChangeDetails, Error = String>>,
     ),
     String,
 > {
@@ -361,11 +352,11 @@ pub fn change_sink(
         });
 
         if let Ok(_) = res {
-            return Ok(bot::Action::ChangeFetched(
-                user.clone(),
-                message.clone(),
-                Box::new(change),
-            ));
+            return Ok(ChangeDetails {
+                user: user.clone(),
+                message: message.clone(),
+                change: change.clone(),
+            });
         } else {
             info!(
                 "Reconnecting to Gerrit over SSH for sending commands: {}",
@@ -393,7 +384,11 @@ pub fn change_sink(
                     };
                     debug!("Got comments: {:#?}", comments);
                     change.current_patch_set = comments;
-                    Ok(bot::Action::ChangeFetched(user, message, Box::new(change)))
+                    Ok(ChangeDetails {
+                        user,
+                        message,
+                        change,
+                    })
                 })
         }
     });

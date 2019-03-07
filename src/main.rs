@@ -1,5 +1,6 @@
 #![deny(bare_trait_objects)]
 
+use std::convert::identity;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -126,12 +127,18 @@ fn main() {
     let spark_client = spark_client_from_config(config.spark.clone());
     let handle = core.handle();
     let actions = spark_stream
-        .select(gerrit_stream)
-        .select(gerrit_change_response_stream)
-        .filter(|action| match *action {
-            bot::Action::NoOp => false,
-            _ => true,
-        })
+        .select(
+            gerrit_stream
+                .map(|event| bot::Bot::handle_gerrit_event(event))
+                .filter_map(identity),
+        )
+        .select(gerrit_change_response_stream.map(
+            |gerrit::ChangeDetails {
+                 user,
+                 message,
+                 change,
+             }| bot::Action::ChangeFetched(user, message, change),
+        ))
         .filter_map(move |action| {
             debug!("Handle action: {:#?}", action);
 

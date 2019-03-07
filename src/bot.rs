@@ -188,6 +188,17 @@ impl Bot {
         }
     }
 
+    /// Transform a gerrit event into a bot action.
+    pub fn handle_gerrit_event(event: gerrit::Event) -> Option<Action> {
+        if event.event_type == gerrit::EventType::CommentAdded && event.approvals.is_some() {
+            Some(Action::UpdateApprovals(Box::new(event)))
+        } else if event.event_type == gerrit::EventType::ReviewerAdded {
+            Some(Action::ReviewerAdded(Box::new(event)))
+        } else {
+            None
+        }
+    }
+
     pub fn init_msg_cache(&mut self, capacity: usize, expiration: Duration) {
         self.msg_cache = Some(
             LruCache::<MsgCacheLine, ()>::with_expiry_duration_and_capacity(expiration, capacity),
@@ -561,12 +572,7 @@ pub enum Action {
     FilterEnable(spark::PersonId),
     FilterDisable(spark::PersonId),
     ReviewerAdded(Box<gerrit::Event>),
-    ChangeFetched(
-        spark::PersonId,
-        String, /* message */
-        Box<gerrit::Change>,
-    ),
-    NoOp,
+    ChangeFetched(spark::PersonId, String /* message */, gerrit::Change),
 }
 
 #[derive(Debug)]
@@ -769,9 +775,8 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
         }
         Action::ChangeFetched(person_id, message, change) => {
             Some(Task::Reply(Response::new(
-                person_id, format_msg_with_comments(message, *change))))
+                person_id, format_msg_with_comments(message, change))))
         }
-        Action::NoOp => None,
     };
     (bot, task)
 }
