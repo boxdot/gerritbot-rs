@@ -34,14 +34,14 @@ pub struct SparkConfig {
     pub api_uri: String,
     pub webhook_url: Option<String>,
     pub mode: ModeConfig,
-    pub output_mode: OutputConfig
+    pub output_mode: OutputConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub enum OutputConfig {
     Spark,
     Console,
-    Notifications
+    Notifications,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -54,6 +54,7 @@ pub enum ModeConfig {
 pub struct BotConfig {
     pub msg_expiration: u64,
     pub msg_capacity: usize,
+    pub format_script: Option<String>,
 }
 
 const USAGE: &str = "

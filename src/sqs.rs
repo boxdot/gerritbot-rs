@@ -1,7 +1,7 @@
 use std::{error, fmt, thread};
 
-use futures::{Future, Sink, Stream};
 use futures::sync::mpsc::channel;
+use futures::{Future, Sink, Stream};
 use log::{error, warn};
 use rusoto_core::{self, default_tls_client, DefaultCredentialsProvider, Region};
 use rusoto_sqs::{self, DeleteMessageRequest, ReceiveMessageRequest, Sqs, SqsClient};

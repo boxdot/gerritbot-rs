@@ -1,9 +1,9 @@
-use std::{error, fmt, io, thread};
 use std::rc::Rc;
+use std::{error, fmt, io, thread};
 
 use futures::future::Future;
-use futures::{Sink, Stream};
 use futures::sync::mpsc::{channel, Sender};
+use futures::{Sink, Stream};
 use hyper;
 use hyper_native_tls;
 use iron::prelude::*;
@@ -13,12 +13,12 @@ use log::{debug, error, info};
 use notify_rust::Notification;
 use regex::Regex;
 use router::Router;
+use rusoto_core;
 use serde;
 use serde::Deserialize;
 use serde_json;
 use serde_json::{json, json_internal};
 use tokio_core;
-use rusoto_core;
 
 use crate::bot;
 use crate::sqs;
@@ -311,7 +311,9 @@ impl WebClient {
         delete_with_token(&(self.url.clone() + "/webhooks/" + id), &self.bot_token)
             .map_err(Error::from)
             .and_then(|resp| {
-                if resp.status != hyper::status::StatusCode::NoContent && resp.status != hyper::status::StatusCode::NotFound {
+                if resp.status != hyper::status::StatusCode::NoContent
+                    && resp.status != hyper::status::StatusCode::NotFound
+                {
                     Err(Error::DeleteWebhook(format!(
                         "Could not delete webhook: {}",
                         resp.status
@@ -428,7 +430,8 @@ impl SparkClient for NotificationClient {
         Notification::new()
             .summary("Gerrit Bot")
             .body(msg)
-            .show().unwrap();
+            .show()
+            .unwrap();
     }
 
     fn get_message(&self, message_id: &str) -> Result<Message, Error> {
@@ -510,7 +513,8 @@ pub fn webhook_event_stream<C: 'static + SparkClient + ?Sized>(
     );
 
     let bot_id = String::from(client.id());
-    let stream = rx.filter(move |msg| msg.person_id != bot_id)
+    let stream = rx
+        .filter(move |msg| msg.person_id != bot_id)
         .map(move |mut msg| {
             debug!("Loading text for message: {:#?}", msg);
             if let Err(err) = msg.load_text(&*client) {

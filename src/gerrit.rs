@@ -5,10 +5,10 @@ use std::path::PathBuf;
 use std::thread;
 
 use log::{debug, error, info};
-use ssh2;
-use ssh2::Channel;
 use serde::Deserialize;
 use serde_json;
+use ssh2;
+use ssh2::Channel;
 
 use futures::sync::mpsc::{channel, Receiver, Sender};
 use futures::{Future, Sink, Stream};
@@ -252,15 +252,17 @@ impl GerritConnection {
 fn receiver_into_event_stream(
     rx: Receiver<Result<String, StreamError>>,
 ) -> Box<dyn Stream<Item = bot::Action, Error = String>> {
-    let stream = rx.then(|event| {
-        // parse each json message as event (if we did not get an error)
-        event.unwrap().map(|event| {
-            let json: String = event;
-            let res = serde_json::from_str(&json);
-            debug!("Incoming Gerrit event: {:#?}", res);
-            res.ok()
+    let stream = rx
+        .then(|event| {
+            // parse each json message as event (if we did not get an error)
+            event.unwrap().map(|event| {
+                let json: String = event;
+                let res = serde_json::from_str(&json);
+                debug!("Incoming Gerrit event: {:#?}", res);
+                res.ok()
+            })
         })
-    }).filter_map(|event| event.map(Event::into_action))
+        .filter_map(|event| event.map(Event::into_action))
         .map_err(|err| format!("Stream error from Gerrit: {:?}", err));
     Box::new(stream)
 }
