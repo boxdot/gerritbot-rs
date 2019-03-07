@@ -1,7 +1,7 @@
 #![deny(bare_trait_objects)]
 
-use std::time::Duration;
 use std::rc::Rc;
+use std::time::Duration;
 
 use futures::{Future, Sink, Stream};
 use log::{debug, error, info, warn};
@@ -18,21 +18,21 @@ use spark::SparkClient;
 
 fn spark_client_from_config(spark_config: args::SparkConfig) -> Rc<dyn SparkClient> {
     match spark_config.output_mode {
-        args::OutputConfig::Spark => {
-            Rc::new(
+        args::OutputConfig::Spark => Rc::new(
             spark::WebClient::new(
                 spark_config.api_uri,
                 spark_config.bot_token,
                 spark_config.webhook_url,
-            ).unwrap_or_else(|err| {
+            )
+            .unwrap_or_else(|err| {
                 error!("Could not create spark client: {}", err);
                 std::process::exit(1);
-            }))
-        },
+            }),
+        ),
         args::OutputConfig::Console => {
             warn!("Using console as Spark client due to empty bot_token.");
             Rc::new(spark::ConsoleClient::new())
-        },
+        }
         args::OutputConfig::Notifications => {
             warn!("Using dbus notification as Spark client");
             Rc::new(spark::NotificationClient::new())
@@ -107,7 +107,8 @@ fn main() {
         gerrit_config.host.clone(),
         gerrit_config.username.clone(),
         gerrit_config.priv_key_path.clone(),
-    ).unwrap_or_else(|err| {
+    )
+    .unwrap_or_else(|err| {
         error!(
             "Could not connect to Gerrit via SSH for sending commands: {}",
             err

@@ -138,16 +138,19 @@ pub enum AddFilterResult {
 
 fn get_default_format_script() -> &'static str {
     const DEFAULT_FORMAT_SCRIPT: &str = include_str!("../scripts/format.lua");
-    check_format_script_syntax(DEFAULT_FORMAT_SCRIPT).unwrap_or_else(|err| panic!("invalid format script: {}", err));
+    check_format_script_syntax(DEFAULT_FORMAT_SCRIPT)
+        .unwrap_or_else(|err| panic!("invalid format script: {}", err));
     DEFAULT_FORMAT_SCRIPT
 }
-
 
 fn check_format_script_syntax(script_source: &str) -> Result<(), String> {
     let lua = Lua::new();
     lua.context(|context| {
         let globals = context.globals();
-        context.load(script_source).exec().map_err(|err| format!("syntax error: {}", err))?;
+        context
+            .load(script_source)
+            .exec()
+            .map_err(|err| format!("syntax error: {}", err))?;
         let _: LuaFunction = globals.get("main").map_err(|_| "main function missing")?;
         Ok(())
     })
@@ -214,7 +217,8 @@ impl Bot {
         person_id: &str,
         email: &str,
     ) -> &'a mut User {
-        let pos = self.users
+        let pos = self
+            .users
             .iter()
             .position(|u| u.spark_person_id == person_id);
         let user: &'a mut User = match pos {
@@ -257,11 +261,28 @@ impl Bot {
         user
     }
 
-    fn format_msg(script_source: &str, event: &gerrit::Event, approval: &gerrit::Approval, is_human: bool) -> Result<String, String> {
-        fn create_lua_event<'lua>(context: rlua::Context<'lua>, event: &gerrit::Event, approval: &gerrit::Approval, is_human: bool) -> Result<rlua::Table<'lua>, rlua::Error> {
+    fn format_msg(
+        script_source: &str,
+        event: &gerrit::Event,
+        approval: &gerrit::Approval,
+        is_human: bool,
+    ) -> Result<String, String> {
+        fn create_lua_event<'lua>(
+            context: rlua::Context<'lua>,
+            event: &gerrit::Event,
+            approval: &gerrit::Approval,
+            is_human: bool,
+        ) -> Result<rlua::Table<'lua>, rlua::Error> {
             let lua_event = context.create_table()?;
-            lua_event
-                .set("approver", event.author.as_ref().map(|user| user.username.as_ref()).unwrap_or("<unknown user>").to_string())?;
+            lua_event.set(
+                "approver",
+                event
+                    .author
+                    .as_ref()
+                    .map(|user| user.username.as_ref())
+                    .unwrap_or("<unknown user>")
+                    .to_string(),
+            )?;
             lua_event.set("comment", event.comment.clone())?;
             lua_event.set("value", approval.value.parse().unwrap_or(0))?;
             lua_event.set("type", approval.approval_type.clone())?;
@@ -275,12 +296,18 @@ impl Bot {
         let lua = Lua::new();
         lua.context(|context| -> Result<String, String> {
             let globals = context.globals();
-            context.load(script_source).exec().map_err(|err| format!("syntax error: {}", err))?;
-            let f: LuaFunction = globals.get("main").map_err(|_| "main function missing".to_string())?;
+            context
+                .load(script_source)
+                .exec()
+                .map_err(|err| format!("syntax error: {}", err))?;
+            let f: LuaFunction = globals
+                .get("main")
+                .map_err(|_| "main function missing".to_string())?;
             let lua_event = create_lua_event(context, event, approval, is_human)
                 .map_err(|err| format!("failed to create lua event table: {}", err))?;
 
-            f.call::<_, String>(lua_event).map_err(|err| format!("lua formatting function failed: {}", err))
+            f.call::<_, String>(lua_event)
+                .map_err(|err| format!("lua formatting function failed: {}", err))
         })
     }
 
@@ -343,7 +370,7 @@ impl Bot {
                     Err(err) => {
                         error!("message formatting failed: {}", err);
                         return None;
-                    },
+                    }
                 };
 
                 // if user has configured and enabled a filter try to apply it
@@ -814,13 +841,13 @@ fn format_msg_with_comments(message: String, change: gerrit::Change) -> String {
 
 #[cfg(test)]
 mod test {
-    use std::time::Duration;
     use std::thread;
+    use std::time::Duration;
 
     use serde_json;
 
-    use crate::gerrit;
     use super::*;
+    use crate::gerrit;
 
     #[test]
     fn add_user() {
@@ -854,14 +881,13 @@ mod test {
             let mut bot = Bot::new();
             let num_users = bot.num_users();
             bot.enable("some_person_id", "some@example.com", enable);
-            assert!(
-                bot.users
-                    .iter()
-                    .position(|u| u.spark_person_id == "some_person_id"
-                        && u.email == "some@example.com"
-                        && u.enabled == enable)
-                    .is_some()
-            );
+            assert!(bot
+                .users
+                .iter()
+                .position(|u| u.spark_person_id == "some_person_id"
+                    && u.email == "some@example.com"
+                    && u.enabled == enable)
+                .is_some());
             assert!(bot.num_users() == num_users + 1);
         };
         test(true);
@@ -876,14 +902,13 @@ mod test {
             let num_users = bot.num_users();
 
             bot.enable("some_person_id", "some@example.com", enable);
-            assert!(
-                bot.users
-                    .iter()
-                    .position(|u| u.spark_person_id == "some_person_id"
-                        && u.email == "some@example.com"
-                        && u.enabled == enable)
-                    .is_some()
-            );
+            assert!(bot
+                .users
+                .iter()
+                .position(|u| u.spark_person_id == "some_person_id"
+                    && u.email == "some@example.com"
+                    && u.enabled == enable)
+                .is_some());
             assert!(bot.num_users() == num_users);
         };
         test(true);
@@ -1102,7 +1127,12 @@ mod test {
         let mut bot = Bot::new();
         bot.add_user("author_spark_id", "author@example.com");
         let event = get_event();
-        let res = Bot::format_msg(get_default_format_script(), &event, &event.approvals.as_ref().unwrap()[0], true);
+        let res = Bot::format_msg(
+            get_default_format_script(),
+            &event,
+            &event.approvals.as_ref().unwrap()[0],
+            true,
+        );
         assert_eq!(
             res,
             Ok("[Some review.](http://localhost/42) (demo-project) 👍 +2 (Code-Review) from approver\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE".to_string())
@@ -1115,7 +1145,12 @@ mod test {
         bot.add_user("author_spark_id", "author@example.com");
         let mut event = get_event();
         event.approvals.as_mut().unwrap()[0].approval_type = String::from("Some new type");
-        let res = Bot::format_msg(get_default_format_script(), &event, &event.approvals.as_ref().unwrap()[0], true);
+        let res = Bot::format_msg(
+            get_default_format_script(),
+            &event,
+            &event.approvals.as_ref().unwrap()[0],
+            true,
+        );
         assert_eq!(res.map(|s| s.is_empty()), Ok(true));
     }
 
@@ -1126,15 +1161,13 @@ mod test {
 
         let res = bot.add_filter("some_person_id", ".some_weard_regex/[");
         assert_eq!(res, Err(AddFilterResult::InvalidFilter));
-        assert!(
-            bot.users
-                .iter()
-                .position(
-                    |u| u.spark_person_id == "some_person_id" && u.email == "some@example.com"
-                        && u.filter == None
-                )
-                .is_some()
-        );
+        assert!(bot
+            .users
+            .iter()
+            .position(|u| u.spark_person_id == "some_person_id"
+                && u.email == "some@example.com"
+                && u.filter == None)
+            .is_some());
 
         let res = bot.enable_filter("some_person_id", true);
         assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
@@ -1149,15 +1182,13 @@ mod test {
 
         let res = bot.add_filter("some_person_id", ".*some_word.*");
         assert!(res.is_ok());
-        assert!(
-            bot.users
-                .iter()
-                .position(
-                    |u| u.spark_person_id == "some_person_id" && u.email == "some@example.com"
-                        && u.filter == Some(Filter::new(".*some_word.*"))
-                )
-                .is_some()
-        );
+        assert!(bot
+            .users
+            .iter()
+            .position(|u| u.spark_person_id == "some_person_id"
+                && u.email == "some@example.com"
+                && u.filter == Some(Filter::new(".*some_word.*")))
+            .is_some());
 
         {
             let filter = bot.get_filter("some_person_id");
@@ -1165,15 +1196,13 @@ mod test {
         }
         let res = bot.enable_filter("some_person_id", false);
         assert_eq!(res, Ok(String::from(".*some_word.*")));
-        assert!(
-            bot.users
-                .iter()
-                .position(
-                    |u| u.spark_person_id == "some_person_id" && u.email == "some@example.com"
-                        && u.filter.as_ref().map(|f| f.enabled) == Some(false)
-                )
-                .is_some()
-        );
+        assert!(bot
+            .users
+            .iter()
+            .position(|u| u.spark_person_id == "some_person_id"
+                && u.email == "some@example.com"
+                && u.filter.as_ref().map(|f| f.enabled) == Some(false))
+            .is_some());
         {
             let filter = bot.get_filter("some_person_id").unwrap().unwrap();
             assert_eq!(filter.regex, ".*some_word.*");
@@ -1181,15 +1210,13 @@ mod test {
         }
         let res = bot.enable_filter("some_person_id", true);
         assert_eq!(res, Ok(String::from(".*some_word.*")));
-        assert!(
-            bot.users
-                .iter()
-                .position(
-                    |u| u.spark_person_id == "some_person_id" && u.email == "some@example.com"
-                        && u.filter.as_ref().map(|f| f.enabled) == Some(true)
-                )
-                .is_some()
-        );
+        assert!(bot
+            .users
+            .iter()
+            .position(|u| u.spark_person_id == "some_person_id"
+                && u.email == "some@example.com"
+                && u.filter.as_ref().map(|f| f.enabled) == Some(true))
+            .is_some());
         {
             let filter = bot.get_filter("some_person_id");
             assert_eq!(filter, Ok(Some(&Filter::new(".*some_word.*"))));
