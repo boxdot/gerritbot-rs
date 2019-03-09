@@ -237,8 +237,8 @@ impl GerritConnection {
 
 fn receiver_into_event_stream(
     rx: Receiver<Result<String, StreamError>>,
-) -> Box<dyn Stream<Item = Event, Error = String>> {
-    let stream = rx
+) -> impl Stream<Item = Event, Error = String> {
+    rx
         // Receiver itself never fails, lower result value.
         .then(|event_data_result: Result<_, ()>| event_data_result.unwrap())
         .map_err(|err| format!("Stream error from Gerrit: {:?}", err))
@@ -247,15 +247,14 @@ fn receiver_into_event_stream(
             debug!("Incoming Gerrit event: {:#?}", event_result);
             // Ignore JSON decoding errors.
             event_result.ok()
-        });
-    Box::new(stream)
+        })
 }
 
 pub fn event_stream(
     host: String,
     username: String,
     priv_key_path: PathBuf,
-) -> Box<dyn Stream<Item = Event, Error = String>> {
+) -> impl Stream<Item = Event, Error = String> {
     let (main_tx, rx) = channel(1);
     thread::spawn(move || -> Result<(), ()> {
         loop {

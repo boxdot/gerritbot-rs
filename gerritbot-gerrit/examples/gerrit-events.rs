@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use futures::Stream as _;
 use log::error;
 use structopt::StructOpt;
-use tokio_core;
+use tokio;
 
 use gerritbot_gerrit as gerrit;
 
@@ -40,8 +40,7 @@ fn main() {
         args.private_key_path,
     );
 
-    let mut core = tokio_core::reactor::Core::new().unwrap();
-    let _ = core.run(
+    tokio::run(
         gerrit_stream
             .map_err(|err| error!("there was an error: {}", err))
             .for_each(|event| {
