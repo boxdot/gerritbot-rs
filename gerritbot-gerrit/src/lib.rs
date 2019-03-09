@@ -1,17 +1,18 @@
 use std::fmt;
-use std::io::{self, BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, Read as _};
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::thread;
 
+use backoff::Operation as _; // for retry_notify
+use futures::sync::mpsc::{channel, Receiver, Sender};
+use futures::sync::oneshot;
+use futures::{Future, Sink as _, Stream};
 use log::{debug, error, info};
 use serde::Deserialize;
 use serde_json;
 use ssh2;
 use ssh2::Channel;
-
-use futures::sync::mpsc::{channel, Receiver, Sender};
-use futures::{Future, Sink, Stream};
 
 /// Gerrit username
 pub type Username = String;
@@ -232,6 +233,109 @@ impl GerritConnection {
         self.tcp = tcp;
 
         Ok(())
+    }
+}
+
+struct CommandRequest {
+    command: String,
+    sender: oneshot::Sender<Result<String, String>>,
+}
+
+pub struct CommandRunner {
+    sender: Sender<CommandRequest>,
+}
+
+impl CommandRunner {
+    pub fn new(connection: GerritConnection) -> Result<Self, String> {
+        let (sender, receiver) = channel(1);
+
+        thread::Builder::new()
+            .name("SSH command runner".to_string())
+            .spawn(move || Self::run_commands(connection, receiver))
+            .expect("failed to spawn thread");
+
+        Ok(Self { sender })
+    }
+
+    fn run_commands(connection: GerritConnection, receiver: Receiver<CommandRequest>) {
+        let mut connection = connection;
+        let mut connection_healthy = true;
+
+        for request in receiver.wait() {
+            let CommandRequest { command, sender } = match request {
+                Ok(request) => request,
+                // other end was closed
+                Err(_) => {
+                    debug!("command runner thread shutting down");
+                    return;
+                }
+            };
+
+            let command_result = loop {
+                if !connection_healthy {
+                    info!("reconnecting");
+                    let mut backoff = backoff::ExponentialBackoff::default();
+                    let mut reconnect =
+                        || connection.reconnect().map_err(backoff::Error::Transient);
+
+                    // TODO: if reconnection fails permanently, this will
+                    // prevent the runtime from shutting down. Switch to a
+                    // futures aware sleep that is interruptible.
+                    reconnect
+                        .retry_notify(&mut backoff, |e, _| error!("reconnect failed: {}", e))
+                        .unwrap();
+                    info!("connection restored");
+                    connection_healthy = true;
+                }
+
+                let mut ssh_channel = match connection.session.channel_session() {
+                    Ok(channel) => channel,
+                    Err(e) => {
+                        error!("failed to create ssh session channel: {}", e);
+                        connection_healthy = false;
+                        continue;
+                    }
+                };
+
+                if let Err(e) = ssh_channel.exec(&command) {
+                    error!("failed to request exec channel: {}", e);
+                    break Err(format!("failed to request exec channel: {}", e));
+                }
+
+                let mut data = String::new();
+
+                if let Err(e) = ssh_channel.read_to_string(&mut data) {
+                    break Err(format!("failed to read from channel: {}", e));
+                }
+
+                match ssh_channel
+                    .close()
+                    .and_then(|()| ssh_channel.wait_close())
+                    .and_then(|()| ssh_channel.exit_status())
+                {
+                    Ok(0) => break Ok(data),
+                    Ok(i) => break Err(format!("command exited with status {}", i)),
+                    Err(e) => break Err(format!("failed to close command channel: {}", e)),
+                }
+            };
+
+            if let Err(_) = sender.send(command_result) {
+                // receiver was closed, this is either an error or a signal to exit
+                debug!("failed to send command result");
+                return;
+            }
+        }
+    }
+
+    pub fn run_command(&mut self, command: String) -> impl Future<Item = String, Error = String> {
+        // create a channel that the command thread can use to send the result of the command back
+        let (sender, receiver) = oneshot::channel();
+        self.sender
+            .clone()
+            .send(CommandRequest { command, sender })
+            .map_err(|_| "command thread died before sending".to_string())
+            .and_then(|_| receiver.map_err(|_| "command thread died after sending".to_string()))
+            .and_then(|result| result)
     }
 }
 
