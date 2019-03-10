@@ -29,6 +29,7 @@ fn main() {
     let args = Args::from_args();
     stderrlog::new()
         .module(module_path!())
+        .module("gerritbot_gerrit")
         .timestamp(stderrlog::Timestamp::Second)
         .verbosity(if args.verbose { 5 } else { 2 })
         .init()
