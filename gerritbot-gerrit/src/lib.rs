@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt;
 use std::io::{self, BufRead, BufReader, Read as _};
 use std::net::TcpStream;
@@ -7,7 +8,7 @@ use std::thread;
 use backoff::Operation as _; // for retry_notify
 use futures::sync::mpsc::{channel, Receiver, Sender};
 use futures::sync::oneshot;
-use futures::{Future, Sink as _, Stream};
+use futures::{future, Future, Sink as _, Stream};
 use log::{debug, error, info};
 use serde::Deserialize;
 use serde_json;
@@ -68,6 +69,28 @@ pub struct InlineComment {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+pub enum ChangeStatus {
+    NEW,
+    DRAFT,
+    MERGED,
+    ABANDONED,
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Deserialize, Debug, Clone)]
+pub enum SubmitStatus {
+    OK,
+    NOT_READY,
+    RULE_ERROR,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmitRecord {
+    status: SubmitStatus,
+}
+
+#[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Change {
     pub project: String,
@@ -79,9 +102,11 @@ pub struct Change {
     pub owner: User,
     pub url: String,
     pub commit_message: String,
-    pub status: String,
+    pub status: ChangeStatus,
     pub current_patch_set: Option<PatchSet>,
+    pub patch_sets: Option<Vec<PatchSet>>,
     pub comments: Option<Vec<Comment>>,
+    pub submit_records: Option<Vec<SubmitRecord>>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -424,6 +449,85 @@ pub fn event_stream(
     });
 
     receiver_into_event_stream(rx)
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ExtendedInfo {
+    SubmitRecords,
+    InlineComments,
+}
+
+fn fetch_extended_info(
+    command_runner: &mut CommandRunner,
+    event: Event,
+    extended_info: &[ExtendedInfo],
+) -> Box<dyn Future<Item = Event, Error = String> + Send> {
+    if extended_info.is_empty() {
+        return Box::new(future::ok(event));
+    }
+
+    let mut query = "gerrit query --format=JSON".to_string();
+
+    if extended_info.contains(&ExtendedInfo::SubmitRecords) {
+        query += " --submit-records";
+    }
+
+    if extended_info.contains(&ExtendedInfo::InlineComments) {
+        query += " --patch-sets --comments";
+    }
+
+    query += &format!(" change:{}", event.change.id);
+
+    Box::new(
+        command_runner
+            .run_command(query)
+            .and_then(move |result| -> Result<Event, String> {
+                let mut event = event;
+                let line = result.lines().next().unwrap_or("");
+
+                let mut change: Change = serde_json::from_str(line)
+                    .map_err(|e| format!("failed to decode result: {}", e))?;
+
+                // copy patchset from change for the comments
+                if let Some(patchsets) = change.patch_sets.take() {
+                    if let Some(patchset) = patchsets
+                        .iter()
+                        .find(|patchset| patchset.number == event.patchset.number)
+                    {
+                        event.patchset = patchset.clone();
+                    }
+                }
+
+                // copy over submit records
+                event.change.submit_records = change.submit_records.take();
+
+                Ok(event)
+            }),
+    )
+}
+
+pub fn extended_event_stream<F>(
+    host: String,
+    username: String,
+    priv_key_path: PathBuf,
+    f: F,
+) -> impl Stream<Item = Event, Error = String>
+where
+    F: FnMut(&Event) -> Cow<'static, [ExtendedInfo]>,
+{
+    let command_connection =
+        GerritConnection::connect(host.clone(), username.clone(), priv_key_path.clone())
+            .expect("failed to connect");
+    let mut command_runner =
+        CommandRunner::new(command_connection).expect("failed to create command runner");
+    let mut f = f;
+
+    event_stream(host.clone(), username.clone(), priv_key_path.clone()).and_then(
+        move |event| -> Box<dyn Future<Item = Event, Error = String> + Send> {
+            let extended_info = f(&event);
+            fetch_extended_info(&mut command_runner, event, extended_info.as_ref())
+        },
+    )
 }
 
 #[derive(Debug)]
