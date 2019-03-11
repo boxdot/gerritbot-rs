@@ -1,7 +1,7 @@
 use std::fmt;
 use std::io::{self, BufRead, BufReader, Read as _};
 use std::net::TcpStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread;
 
 use backoff::Operation as _; // for retry_notify
@@ -164,7 +164,7 @@ fn send_terminate_msg<T>(
 pub struct GerritConnection {
     pub session: ssh2::Session,
     /// tcp has to be kept alive with session together, even if it is never used directly
-    tcp: Box<TcpStream>,
+    tcp: TcpStream,
     // Data needed for reconnection in case this connection was terminated.
     host: String,
     username: String,
@@ -172,28 +172,41 @@ pub struct GerritConnection {
 }
 
 impl GerritConnection {
-    pub fn connect(host: String, username: String, priv_key_path: PathBuf) -> Result<Self, String> {
-        let pub_key_path = get_pub_key_path(&priv_key_path);
-        debug!("Will use public key: {}", pub_key_path.to_str().unwrap());
-
+    fn connect_session(
+        host: &str,
+        username: &str,
+        pub_key_path: &Path,
+        priv_key_path: &Path,
+    ) -> Result<(ssh2::Session, TcpStream), String> {
         let mut session = ssh2::Session::new().unwrap();
 
         debug!("Connecting to tcp: {}", &host);
-        let tcp = Box::new(TcpStream::connect(&host).or_else(|err| {
+
+        let tcp = TcpStream::connect(&host).or_else(|err| {
             Err(format!(
                 "Could not connect to gerrit at {}: {:?}",
                 host, err
             ))
-        })?);
+        })?;
 
         session
-            .handshake(&*tcp)
+            .handshake(&tcp)
             .or_else(|err| Err(format!("Could not connect to gerrit: {:?}", err)))?;
 
         // Try to authenticate
         session
             .userauth_pubkey_file(&username, Some(&pub_key_path), &priv_key_path, None)
             .or_else(|err| Err(format!("Could not authenticate: {:?}", err)))?;
+
+        Ok((session, tcp))
+    }
+
+    pub fn connect(host: String, username: String, priv_key_path: PathBuf) -> Result<Self, String> {
+        let pub_key_path = get_pub_key_path(&priv_key_path);
+        debug!("Will use public key: {}", pub_key_path.to_str().unwrap());
+
+        let (session, tcp) =
+            Self::connect_session(&host, &username, &pub_key_path, &priv_key_path)?;
 
         Ok(Self {
             session,
@@ -205,29 +218,13 @@ impl GerritConnection {
     }
 
     pub fn reconnect(&mut self) -> Result<(), String> {
-        let mut session = ssh2::Session::new().unwrap();
-        let tcp = Box::new(TcpStream::connect(&self.host).or_else(|err| {
-            Err(format!(
-                "Could not connect to gerrit at {}: {:?}",
-                self.host, err
-            ))
-        })?);
-
-        session
-            .handshake(&*tcp)
-            .or_else(|err| Err(format!("Could not connect to gerrit: {:?}", err)))?;
-
-        // Try to authenticate
         let pub_key_path = get_pub_key_path(&self.priv_key_path);
-        debug!("Will use public key: {}", pub_key_path.to_str().unwrap());
-        session
-            .userauth_pubkey_file(
-                &self.username,
-                Some(&pub_key_path),
-                &self.priv_key_path,
-                None,
-            )
-            .or_else(|err| Err(format!("Could not authenticate: {:?}", err)))?;
+        let (session, tcp) = Self::connect_session(
+            &self.host,
+            &self.username,
+            &pub_key_path,
+            &self.priv_key_path,
+        )?;
 
         self.session = session;
         self.tcp = tcp;
