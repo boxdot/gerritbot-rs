@@ -217,6 +217,7 @@ impl GerritConnection {
         })
     }
 
+    /// Reconnect once.
     pub fn reconnect(&mut self) -> Result<(), String> {
         let pub_key_path = get_pub_key_path(&self.priv_key_path);
         let (session, tcp) = Self::connect_session(
@@ -230,6 +231,26 @@ impl GerritConnection {
         self.tcp = tcp;
 
         Ok(())
+    }
+
+    /// Reconnect repeatedly with exponential backoff. This will try to
+    /// reconnect indefinitely.
+    pub fn reconnect_repeatedly(&mut self) -> Result<(), String> {
+        let mut backoff = backoff::ExponentialBackoff::default();
+        let mut reconnect = || self.reconnect().map_err(backoff::Error::Transient);
+
+        // TODO: if reconnection fails permanently, this will prevent the
+        // runtime from shutting down. Try to find a way to sleep that is
+        // futures aware sleep and interruptible.
+        reconnect
+            .retry_notify(&mut backoff, |e, _| error!("reconnect failed: {}", e))
+            .map_err(|e| match e {
+                // neither of these should happen unless we reconfigure backoff
+                // not to retry indefinitely
+                backoff::Error::Transient(e) | backoff::Error::Permanent(e) => {
+                    format!("reconnect failed: {}", e)
+                }
+            })
     }
 }
 
@@ -271,17 +292,12 @@ impl CommandRunner {
             let command_result = loop {
                 if !connection_healthy {
                     info!("reconnecting");
-                    let mut backoff = backoff::ExponentialBackoff::default();
-                    let mut reconnect =
-                        || connection.reconnect().map_err(backoff::Error::Transient);
 
-                    // TODO: if reconnection fails permanently, this will
-                    // prevent the runtime from shutting down. Switch to a
-                    // futures aware sleep that is interruptible.
-                    reconnect
-                        .retry_notify(&mut backoff, |e, _| error!("reconnect failed: {}", e))
-                        .unwrap();
-                    info!("connection restored");
+                    if let Err(e) = connection.reconnect_repeatedly() {
+                        error!("reconnect failed permanently: {}", e);
+                        return;
+                    }
+
                     connection_healthy = true;
                 }
 
