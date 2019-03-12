@@ -188,6 +188,29 @@ impl Bot {
         }
     }
 
+    /// Transform a spark command message into a bot action.
+    pub fn handle_command(command_message: spark::CommandMessage) -> Option<Action> {
+        let spark::CommandMessage {
+            sender_id,
+            sender_email,
+            command,
+        } = command_message;
+
+        use spark::Command;
+
+        match command {
+            Command::Enable => Some(Action::Enable(sender_id, sender_email)),
+            Command::Disable => Some(Action::Disable(sender_id, sender_email)),
+            Command::ShowStatus => Some(Action::Status(sender_id)),
+            Command::ShowHelp => Some(Action::Help(sender_id)),
+            Command::ShowFilter => Some(Action::FilterStatus(sender_id)),
+            Command::EnableFilter => Some(Action::FilterEnable(sender_id)),
+            Command::DisableFilter => Some(Action::FilterDisable(sender_id)),
+            Command::SetFilter(f) => Some(Action::FilterAdd(sender_id, f)),
+            Command::Unknown => Some(Action::Unknown(sender_id)),
+        }
+    }
+
     /// Transform a gerrit event into a bot action.
     pub fn handle_gerrit_event(event: gerrit::Event) -> Option<Action> {
         if event.event_type == gerrit::EventType::CommentAdded && event.approvals.is_some() {

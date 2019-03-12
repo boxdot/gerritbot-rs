@@ -20,7 +20,6 @@ use serde_json;
 use serde_json::{json, json_internal};
 use tokio_core;
 
-use crate::bot;
 use crate::sqs;
 
 //
@@ -442,6 +441,24 @@ impl SparkClient for NotificationClient {
     }
 }
 
+pub struct CommandMessage {
+    pub sender_email: String,
+    pub sender_id: String,
+    pub command: Command,
+}
+
+pub enum Command {
+    Enable,
+    Disable,
+    ShowStatus,
+    ShowHelp,
+    ShowFilter,
+    EnableFilter,
+    DisableFilter,
+    SetFilter(String),
+    Unknown,
+}
+
 impl Message {
     /// Load text from Spark for a received message
     /// Note: Spark does not send the text with the message to the registered post hook.
@@ -451,27 +468,33 @@ impl Message {
         Ok(())
     }
 
-    /// Convert Spark message to bot action
-    pub fn into_action(self) -> bot::Action {
+    /// Convert Spark message to command
+    pub fn into_command(self) -> CommandMessage {
         lazy_static! {
             static ref FILTER_REGEX: Regex = Regex::new(r"(?i)^filter (.*)$").unwrap();
         };
 
-        match &self.text.trim().to_lowercase()[..] {
-            "enable" => bot::Action::Enable(self.person_id, self.person_email),
-            "disable" => bot::Action::Disable(self.person_id, self.person_email),
-            "status" => bot::Action::Status(self.person_id),
-            "help" => bot::Action::Help(self.person_id),
-            "filter" => bot::Action::FilterStatus(self.person_id),
-            "filter enable" => bot::Action::FilterEnable(self.person_id),
-            "filter disable" => bot::Action::FilterDisable(self.person_id),
-            _ => match FILTER_REGEX
+        let sender_email = self.person_email;
+        let sender_id = self.person_id;
+        let command = match &self.text.trim().to_lowercase()[..] {
+            "enable" => Command::Enable,
+            "disable" => Command::Disable,
+            "status" => Command::ShowStatus,
+            "help" => Command::ShowHelp,
+            "filter" => Command::ShowFilter,
+            "filter enable" => Command::EnableFilter,
+            "filter disable" => Command::DisableFilter,
+            _ => FILTER_REGEX
                 .captures(&self.text.trim()[..])
                 .and_then(|cap| cap.get(1))
-            {
-                Some(m) => bot::Action::FilterAdd(self.person_id, String::from(m.as_str())),
-                None => bot::Action::Unknown(self.person_id),
-            },
+                .map(|m| Command::SetFilter(m.as_str().to_string()))
+                .unwrap_or(Command::Unknown),
+        };
+
+        CommandMessage {
+            sender_email,
+            sender_id,
+            command,
         }
     }
 }
@@ -500,7 +523,7 @@ pub fn webhook_event_stream<C: 'static + SparkClient + ?Sized>(
     client: Rc<C>,
     listen_url: &str,
     remote: tokio_core::reactor::Remote,
-) -> Result<Box<dyn Stream<Item = bot::Action, Error = String>>, Error> {
+) -> Result<Box<dyn Stream<Item = CommandMessage, Error = String>>, Error> {
     let (tx, rx) = channel(1);
     let mut router = Router::new();
     router.post(
@@ -515,7 +538,7 @@ pub fn webhook_event_stream<C: 'static + SparkClient + ?Sized>(
     let bot_id = String::from(client.id());
     let stream = rx
         .filter(move |msg| msg.person_id != bot_id)
-        .map(move |mut msg| {
+        .filter_map(move |mut msg| {
             debug!("Loading text for message: {:#?}", msg);
             if let Err(err) = msg.load_text(&*client) {
                 error!("Could not load post's text: {}", err);
@@ -523,7 +546,7 @@ pub fn webhook_event_stream<C: 'static + SparkClient + ?Sized>(
             }
             Some(msg)
         })
-        .filter_map(|msg| msg.map(Message::into_action))
+        .map(|msg| msg.into_command())
         .map_err(|err| format!("Error from Spark: {:?}", err));
 
     // start listening
@@ -542,7 +565,7 @@ pub fn sqs_event_stream<C: SparkClient + 'static + ?Sized>(
     client: Rc<C>,
     sqs_url: String,
     sqs_region: rusoto_core::Region,
-) -> Result<Box<dyn Stream<Item = bot::Action, Error = String>>, Error> {
+) -> Result<Box<dyn Stream<Item = CommandMessage, Error = String>>, Error> {
     let bot_id = String::from(client.id());
     let sqs_stream = sqs::sqs_receiver(sqs_url, sqs_region)?;
     let sqs_stream = sqs_stream
@@ -561,7 +584,7 @@ pub fn sqs_event_stream<C: SparkClient + 'static + ?Sized>(
             }
         })
         .filter(move |msg| msg.person_id != bot_id)
-        .map(move |mut msg| {
+        .filter_map(move |mut msg| {
             debug!("Loading text for message: {:#?}", msg);
             if let Err(err) = msg.load_text(&*client) {
                 error!("Could not load post's text: {}", err);
@@ -569,7 +592,7 @@ pub fn sqs_event_stream<C: SparkClient + 'static + ?Sized>(
             }
             Some(msg)
         })
-        .filter_map(|msg| msg.map(Message::into_action))
+        .map(|msg| msg.into_command())
         .map_err(|err| format!("Error from Spark: {:?}", err));
     Ok(Box::new(sqs_stream))
 }

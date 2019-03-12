@@ -130,11 +130,9 @@ fn main() {
     let spark_client = spark_client_from_config(config.spark.clone());
     let handle = core.handle();
     let actions = spark_stream
-        .select(
-            gerrit_stream
-                .map(|event| bot::Bot::handle_gerrit_event(event))
-                .filter_map(identity),
-        )
+        .map(|command| bot::Bot::handle_command(command))
+        .select(gerrit_stream.map(|event| bot::Bot::handle_gerrit_event(event)))
+        .filter_map(identity)
         .select(gerrit_change_response_stream.map(
             |gerrit::ChangeDetails {
                  user,
