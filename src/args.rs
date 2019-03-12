@@ -85,10 +85,15 @@ pub fn parse_config(path: PathBuf) -> Config {
         eprintln!("{}", USAGE);
         ::std::process::exit(1)
     });
-    let config: Config = serde_yaml::from_reader(file).unwrap_or_else(|e| {
+    let mut config: Config = serde_yaml::from_reader(file).unwrap_or_else(|e| {
         eprintln!("Could not parse config file: {}", e);
         ::std::process::exit(2)
     });
+    // tilde expand the private key path
+    config.gerrit.priv_key_path =
+        shellexpand::tilde(&config.gerrit.priv_key_path.to_string_lossy())
+            .into_owned()
+            .into();
     debug!("{:#?}", config);
     config
 }
