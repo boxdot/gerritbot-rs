@@ -35,7 +35,7 @@ fn main() {
         .init()
         .unwrap();
 
-    let connection = gerrit::GerritConnection::connect(
+    let connection = gerrit::Connection::connect(
         format!("{}:{}", args.hostname, args.port),
         args.username,
         args.private_key_path,

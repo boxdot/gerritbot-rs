@@ -37,7 +37,7 @@ fn main() {
         .unwrap();
 
     let connect = || {
-        gerrit::GerritConnection::connect(
+        gerrit::Connection::connect(
             format!("{}:{}", args.hostname, args.port),
             args.username.clone(),
             args.private_key_path.clone(),

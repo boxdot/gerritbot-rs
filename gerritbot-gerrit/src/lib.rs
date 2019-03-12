@@ -186,7 +186,7 @@ fn send_terminate_msg<T>(
     Err(())
 }
 
-pub struct GerritConnection {
+pub struct Connection {
     pub session: ssh2::Session,
     /// tcp has to be kept alive with session together, even if it is never used directly
     tcp: TcpStream,
@@ -196,7 +196,7 @@ pub struct GerritConnection {
     priv_key_path: PathBuf,
 }
 
-impl GerritConnection {
+impl Connection {
     fn connect_session(
         host: &str,
         username: &str,
@@ -289,7 +289,7 @@ pub struct CommandRunner {
 }
 
 impl CommandRunner {
-    pub fn new(connection: GerritConnection) -> Result<Self, String> {
+    pub fn new(connection: Connection) -> Result<Self, String> {
         let (sender, receiver) = channel(1);
 
         thread::Builder::new()
@@ -300,7 +300,7 @@ impl CommandRunner {
         Ok(Self { sender })
     }
 
-    fn run_commands(connection: GerritConnection, receiver: Receiver<CommandRequest>) {
+    fn run_commands(connection: Connection, receiver: Receiver<CommandRequest>) {
         let mut connection = connection;
         let mut connection_healthy = true;
 
@@ -392,7 +392,7 @@ fn receiver_into_event_stream(
         })
 }
 
-pub fn event_stream(connection: GerritConnection) -> impl Stream<Item = Event, Error = String> {
+pub fn event_stream(connection: Connection) -> impl Stream<Item = Event, Error = String> {
     let (main_tx, rx) = channel(1);
     thread::spawn(move || -> Result<(), ()> {
         let mut conn = connection;
@@ -506,8 +506,8 @@ fn fetch_extended_info(
 }
 
 pub fn extended_event_stream<F>(
-    stream_connection: GerritConnection,
-    command_connection: GerritConnection,
+    stream_connection: Connection,
+    command_connection: Connection,
     f: F,
 ) -> impl Stream<Item = Event, Error = String>
 where
@@ -538,7 +538,7 @@ pub struct ChangeDetails {
 /// Note: If connection to Gerrit is lost, the stream will try to establish a new one for every
 /// incoming change id.
 pub fn change_sink(
-    connection: GerritConnection,
+    connection: Connection,
 ) -> Result<
     (
         Sender<(String, Change, String)>,
