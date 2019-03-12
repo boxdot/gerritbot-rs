@@ -392,23 +392,22 @@ fn receiver_into_event_stream(
         })
 }
 
-pub fn event_stream(
-    host: String,
-    username: String,
-    priv_key_path: PathBuf,
-) -> impl Stream<Item = Event, Error = String> {
+pub fn event_stream(connection: GerritConnection) -> impl Stream<Item = Event, Error = String> {
     let (main_tx, rx) = channel(1);
     thread::spawn(move || -> Result<(), ()> {
+        let mut conn = connection;
+        let mut first = true;
         loop {
-            info!("(Re)connecting to Gerrit over SSH: {}", &host);
-            let conn =
-                GerritConnection::connect(host.clone(), username.clone(), priv_key_path.clone())
-                    .or_else(|err| {
-                        send_terminate_msg(
-                            &main_tx.clone(),
-                            format!("Could not connect to Gerrit: {}", err),
-                        )
-                    })?;
+            if first {
+                first = false;
+            } else {
+                conn.reconnect().or_else(|err| {
+                    send_terminate_msg(
+                        &main_tx.clone(),
+                        format!("Could not connect to Gerrit: {}", err),
+                    )
+                })?;
+            }
 
             let mut ssh_channel = conn.session.channel_session().or_else(|err| {
                 send_terminate_msg(
@@ -507,22 +506,18 @@ fn fetch_extended_info(
 }
 
 pub fn extended_event_stream<F>(
-    host: String,
-    username: String,
-    priv_key_path: PathBuf,
+    stream_connection: GerritConnection,
+    command_connection: GerritConnection,
     f: F,
 ) -> impl Stream<Item = Event, Error = String>
 where
     F: FnMut(&Event) -> Cow<'static, [ExtendedInfo]>,
 {
-    let command_connection =
-        GerritConnection::connect(host.clone(), username.clone(), priv_key_path.clone())
-            .expect("failed to connect");
     let mut command_runner =
         CommandRunner::new(command_connection).expect("failed to create command runner");
     let mut f = f;
 
-    event_stream(host.clone(), username.clone(), priv_key_path.clone()).and_then(
+    event_stream(stream_connection).and_then(
         move |event| -> Box<dyn Future<Item = Event, Error = String> + Send> {
             let extended_info = f(&event);
             fetch_extended_info(&mut command_runner, event, extended_info.as_ref())
@@ -543,9 +538,7 @@ pub struct ChangeDetails {
 /// Note: If connection to Gerrit is lost, the stream will try to establish a new one for every
 /// incoming change id.
 pub fn change_sink(
-    host: String,
-    username: String,
-    priv_key_path: PathBuf,
+    connection: GerritConnection,
 ) -> Result<
     (
         Sender<(String, Change, String)>,
@@ -553,7 +546,7 @@ pub fn change_sink(
     ),
     String,
 > {
-    let mut conn = GerritConnection::connect(host, username, priv_key_path)?;
+    let mut conn = connection;
     let (tx, rx) = channel::<(String, Change, String)>(1);
     let response_stream = rx.then(move |data| {
         let (user, mut change, message) = data.expect("receiver should never fail");

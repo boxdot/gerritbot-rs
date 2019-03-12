@@ -36,17 +36,24 @@ fn main() {
         .init()
         .unwrap();
 
-    let gerrit_stream = gerrit::extended_event_stream(
-        format!("{}:{}", args.hostname, args.port),
-        args.username,
-        args.private_key_path,
-        |_| {
-            Cow::Borrowed(&[
-                gerrit::ExtendedInfo::SubmitRecords,
-                gerrit::ExtendedInfo::InlineComments,
-            ])
-        },
-    );
+    let connect = || {
+        gerrit::GerritConnection::connect(
+            format!("{}:{}", args.hostname, args.port),
+            args.username.clone(),
+            args.private_key_path.clone(),
+        )
+        .unwrap_or_else(|e| {
+            error!("failed to connect to gerrit: {}", e);
+            std::process::exit(1);
+        })
+    };
+
+    let gerrit_stream = gerrit::extended_event_stream(connect(), connect(), |_| {
+        Cow::Borrowed(&[
+            gerrit::ExtendedInfo::SubmitRecords,
+            gerrit::ExtendedInfo::InlineComments,
+        ])
+    });
 
     tokio::run(
         gerrit_stream

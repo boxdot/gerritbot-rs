@@ -35,11 +35,17 @@ fn main() {
         .init()
         .unwrap();
 
-    let gerrit_stream = gerrit::event_stream(
+    let connection = gerrit::GerritConnection::connect(
         format!("{}:{}", args.hostname, args.port),
         args.username,
         args.private_key_path,
-    );
+    )
+    .unwrap_or_else(|e| {
+        error!("failed to connect to gerrit: {}", e);
+        std::process::exit(1);
+    });
+
+    let gerrit_stream = gerrit::event_stream(connection);
 
     tokio::run(
         gerrit_stream
