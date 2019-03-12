@@ -1,11 +1,10 @@
-use std::path::PathBuf;
-use std::rc::Rc;
-
+use futures::future::lazy;
 use futures::Stream as _;
 use log::{error, info};
 use serde::Deserialize;
+use std::path::PathBuf;
 use structopt::StructOpt;
-use tokio_core;
+use tokio;
 use toml;
 
 use gerritbot_spark as spark;
@@ -17,7 +16,7 @@ struct SparkConfig {
     bot_token: String,
     api_uri: String,
     webhook_url: String,
-    endpoint_url: String,
+    listen_address: String,
 }
 
 #[derive(StructOpt, Debug)]
@@ -47,9 +46,6 @@ fn main() {
             std::process::exit(1);
         });
 
-    // event loop
-    let mut core = tokio_core::reactor::Core::new().unwrap();
-
     let client = spark::WebClient::new(
         spark_config.api_uri,
         spark_config.bot_token,
@@ -59,21 +55,18 @@ fn main() {
         error!("Could not create spark client: {}", e);
         std::process::exit(1);
     });
-    let client = Rc::new(client);
-    let stream =
-        spark::webhook_event_stream(client.clone(), &spark_config.endpoint_url, core.remote())
-            .unwrap_or_else(|e| {
-                error!("Could not create spark stream: {}", e);
-                std::process::exit(1)
-            });
+    let endpoint_address = spark_config.listen_address.parse().unwrap_or_else(|e| {
+        error!("failed to parse endpoint url: {}", e);
+        std::process::exit(1);
+    });
 
-    core.run(stream.for_each(move |command_message| {
-        info!("got a command: {:?}", command_message);
-        client.reply(
-            &command_message.sender_id,
-            &format!("got command: {:?}", command_message.command),
-        );
-        Ok(())
-    }))
-    .unwrap_or_else(|e| error!("main loop exited: {}", e));
+    tokio::run(lazy(move || {
+        let stream = spark::webhook_event_stream(&endpoint_address);
+
+        stream.for_each(move |post| {
+            info!("got a post: {:?}", post);
+            client.reply(&post.data.person_id, &format!("got post:\n```\n{:#?}\n```", post));
+            Ok(())
+        })
+    }));
 }

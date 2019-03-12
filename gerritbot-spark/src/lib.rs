@@ -1,24 +1,21 @@
+use std::net::SocketAddr;
 use std::rc::Rc;
-use std::{error, fmt, io, thread};
+use std::{error, fmt, io};
 
 use futures::future::Future;
-use futures::sync::mpsc::{channel, Sender};
+use futures::sync::mpsc::channel;
 use futures::{Sink, Stream};
 use hyper;
-use hyper_native_tls;
-use iron::prelude::*;
-use iron::status;
 use lazy_static::lazy_static;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use notify_rust::Notification;
 use regex::Regex;
-use router::Router;
+use reqwest;
 use rusoto_core;
 use serde;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json;
 use serde_json::json;
-use tokio_core;
 
 mod sqs;
 
@@ -26,59 +23,34 @@ mod sqs;
 // Helper functions
 //
 
-/// Create a new hyper client for the given url.
-fn new_client(url: &str) -> hyper::Client {
-    if url.starts_with("https:") {
-        let ssl = hyper_native_tls::NativeTlsClient::new().unwrap();
-        let connector = hyper::net::HttpsConnector::new(ssl);
-        return hyper::Client::with_connector(connector);
-    }
-
-    hyper::Client::new()
-}
-
 /// Try to get json from the given url with basic token authorization.
-fn get_json_with_token(url: &str, token: &str) -> Result<hyper::client::Response, hyper::Error> {
-    let client = new_client(url);
-    let auth = hyper::header::Authorization(hyper::header::Bearer {
-        token: String::from(token),
-    });
-    client
+fn get_json_with_token(url: &str, token: &str) -> reqwest::Result<reqwest::Response> {
+    reqwest::Client::new()
         .get(url)
-        .header(hyper::header::ContentType::json())
-        .header(hyper::header::Accept::json())
-        .header(auth)
+        .bearer_auth(token)
+        .header(http::header::ACCEPT, "application/json")
         .send()
 }
 
 /// Try to post json to the given url with basic token authorization.
-fn post_with_token<T>(
-    url: &str,
-    token: &str,
-    data: &T,
-) -> Result<hyper::client::Response, hyper::Error>
+fn post_with_token<T>(url: &str, token: &str, data: &T) -> reqwest::Result<reqwest::Response>
 where
-    T: serde::ser::Serialize,
+    T: Serialize,
 {
-    let client = new_client(url);
-    let payload = serde_json::to_string(data).unwrap();
-    let auth = hyper::header::Authorization(String::from("Bearer ") + token);
-    client
+    reqwest::Client::new()
         .post(url)
-        .header(hyper::header::ContentType::json())
-        .header(auth)
-        .body(&payload)
+        .bearer_auth(token)
+        .header(http::header::ACCEPT, "application/json")
+        .json(&data)
         .send()
 }
 
 /// Try to post json to the given url with basic token authorization.
-fn delete_with_token(url: &str, token: &str) -> Result<hyper::client::Response, hyper::Error> {
-    let client = new_client(url);
-    let auth = hyper::header::Authorization(String::from("Bearer ") + token);
-    client
+fn delete_with_token(url: &str, token: &str) -> reqwest::Result<reqwest::Response> {
+    reqwest::Client::new()
         .delete(url)
-        .header(hyper::header::ContentType::json())
-        .header(auth)
+        .bearer_auth(token)
+        .header(http::header::ACCEPT, "application/json")
         .send()
 }
 
@@ -93,14 +65,14 @@ pub type PersonId = String;
 pub type Email = String;
 
 /// Webhook's post request from Spark API
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
-struct Post {
+pub struct Post {
     actor_id: String,
     app_id: String,
     created: String,
     created_by: String,
-    data: Message,
+    pub data: Message,
     event: String,
     id: String,
     name: String,
@@ -111,7 +83,7 @@ struct Post {
     target_url: String,
 }
 
-#[derive(Deserialize, Debug, Default)]
+#[derive(Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
     created: Option<String>,
@@ -182,7 +154,7 @@ pub struct WebClient {
 
 #[derive(Debug)]
 pub enum Error {
-    HyperError(hyper::Error),
+    ReqwestError(reqwest::Error),
     SqsError(sqs::Error),
     JsonError(serde_json::Error),
     RegisterWebhook(String),
@@ -193,7 +165,7 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Error::HyperError(ref err) => fmt::Display::fmt(err, f),
+            Error::ReqwestError(ref err) => fmt::Display::fmt(err, f),
             Error::SqsError(ref err) => fmt::Display::fmt(err, f),
             Error::JsonError(ref err) => fmt::Display::fmt(err, f),
             Error::RegisterWebhook(ref msg) | Error::DeleteWebhook(ref msg) => {
@@ -207,7 +179,7 @@ impl fmt::Display for Error {
 impl error::Error for Error {
     fn description(&self) -> &str {
         match *self {
-            Error::HyperError(ref err) => err.description(),
+            Error::ReqwestError(ref err) => err.description(),
             Error::SqsError(ref err) => err.description(),
             Error::JsonError(ref err) => err.description(),
             Error::RegisterWebhook(ref msg) | Error::DeleteWebhook(ref msg) => msg,
@@ -217,7 +189,7 @@ impl error::Error for Error {
 
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match *self {
-            Error::HyperError(ref err) => err.source(),
+            Error::ReqwestError(ref err) => err.source(),
             Error::SqsError(ref err) => err.source(),
             Error::JsonError(ref err) => err.source(),
             Error::RegisterWebhook(_) | Error::DeleteWebhook(_) => None,
@@ -226,9 +198,9 @@ impl error::Error for Error {
     }
 }
 
-impl From<hyper::Error> for Error {
-    fn from(err: hyper::Error) -> Self {
-        Error::HyperError(err)
+impl From<reqwest::Error> for Error {
+    fn from(err: reqwest::Error) -> Self {
+        Error::ReqwestError(err)
     }
 }
 
@@ -289,10 +261,10 @@ impl WebClient {
         post_with_token(&(self.url.clone() + "/webhooks"), &self.bot_token, &json)
             .map_err(Error::from)
             .and_then(|resp| {
-                if resp.status != hyper::status::StatusCode::Ok {
+                if resp.status() != http::StatusCode::OK {
                     Err(Error::RegisterWebhook(format!(
                         "Could not register Spark's webhook: {}",
-                        resp.status
+                        resp.status()
                     )))
                 } else {
                     Ok(())
@@ -310,12 +282,12 @@ impl WebClient {
         delete_with_token(&(self.url.clone() + "/webhooks/" + id), &self.bot_token)
             .map_err(Error::from)
             .and_then(|resp| {
-                if resp.status != hyper::status::StatusCode::NoContent
-                    && resp.status != hyper::status::StatusCode::NotFound
+                if resp.status() != http::StatusCode::NO_CONTENT
+                    && resp.status() != http::StatusCode::NOT_FOUND
                 {
                     Err(Error::DeleteWebhook(format!(
                         "Could not delete webhook: {}",
-                        resp.status
+                        resp.status()
                     )))
                 } else {
                     Ok(())
@@ -501,66 +473,98 @@ impl Message {
     }
 }
 
-/// Post hook from Spark
-pub fn webhook_handler(
-    req: &mut Request,
-    remote: &tokio_core::reactor::Remote,
-    tx: Sender<Message>,
-) -> IronResult<Response> {
-    let new_post: Post = match serde_json::from_reader(&mut req.body) {
-        Ok(post) => post,
-        Err(err) => {
-            error!("Could not parse post: {}", err);
-            return Ok(Response::with(status::Ok));
-        }
-    };
+fn reject_webhook_request(
+    request: &hyper::Request<hyper::Body>,
+) -> Option<hyper::Response<hyper::Body>> {
+    use hyper::{Body, Response};
 
-    let msg = new_post.data;
-    remote.spawn(move |_| tx.send(msg).map_err(|_| ()).map(|_| ()));
-
-    Ok(Response::with(status::Ok))
+    if request.uri() != "/" {
+        // only accept requests at "/"
+        Some(
+            Response::builder()
+                .status(http::StatusCode::NOT_FOUND)
+                .body(Body::empty())
+                .unwrap(),
+        )
+    } else if request.method() != http::Method::POST {
+        // only accept POST
+        Some(
+            Response::builder()
+                .status(http::StatusCode::METHOD_NOT_ALLOWED)
+                .body(Body::empty())
+                .unwrap(),
+        )
+    } else if !request
+        .headers()
+        .get(http::header::CONTENT_TYPE)
+        .map(|v| v.as_bytes().starts_with(&b"application/json"[..]))
+        .unwrap_or(false)
+    {
+        // require "content-type: application/json"
+        Some(
+            Response::builder()
+                .status(http::StatusCode::UNSUPPORTED_MEDIA_TYPE)
+                .body(Body::empty())
+                .unwrap(),
+        )
+    } else {
+        None
+    }
 }
 
-pub fn webhook_event_stream<C: 'static + SparkClient + ?Sized>(
-    client: Rc<C>,
-    listen_url: &str,
-    remote: tokio_core::reactor::Remote,
-) -> Result<Box<dyn Stream<Item = CommandMessage, Error = String>>, Error> {
+pub fn webhook_event_stream(listen_address: &SocketAddr) -> impl Stream<Item = Post, Error = ()> {
+    use hyper::{Body, Response};
     let (tx, rx) = channel(1);
-    let mut router = Router::new();
-    router.post(
-        "/",
-        move |req: &mut Request| {
-            debug!("Incoming webhook post request");
-            webhook_handler(req, &remote, tx.clone())
-        },
-        "post",
-    );
+    let listen_address = listen_address.clone();
 
-    let bot_id = String::from(client.id());
-    let stream = rx
-        .filter(move |msg| msg.person_id != bot_id)
-        .filter_map(move |mut msg| {
-            debug!("Loading text for message: {:#?}", msg);
-            if let Err(err) = msg.load_text(&*client) {
-                error!("Could not load post's text: {}", err);
-                return None;
+    // very simple webhook listener
+    let server = hyper::Server::bind(&listen_address).serve(move || {
+        info!("listening to Spark on {}", listen_address);
+        let tx = tx.clone();
+
+        hyper::service::service_fn_ok(move |request: hyper::Request<Body>| {
+            debug!("webhook request: {:?}", request);
+
+            if let Some(error_response) = reject_webhook_request(&request) {
+                // reject requests we don't understand
+                warn!("rejecting webhook request: {:?}", error_response);
+                error_response
+            } else {
+                let tx = tx.clone();
+                // now try to read the body
+                let f = request
+                    // consume the request and use the body
+                    .into_body()
+                    .map_err(|e| error!("failed to read post body: {}", e))
+                    // collect body chunks into vector
+                    // is there a better way to do this, maybe?
+                    .fold(Vec::new(), |mut v, chunk| {
+                        v.extend_from_slice(chunk.as_ref());
+                        futures::future::ok(v)
+                    })
+                    // decode the json
+                    .and_then(|v| {
+                        serde_json::from_slice::<Post>(&v)
+                            .map_err(|e| error!("failed to decode post body: {}", e))
+                    })
+                    // send through channel
+                    .and_then(|post| {
+                        tx.send(post.clone())
+                            .map_err(|e| error!("failed to send post body: {}", e))
+                            .map(|_| ())
+                    });
+
+                // spawn a future so all of the above actually happens
+                tokio::spawn(f);
+
+                Response::new(Body::empty())
             }
-            Some(msg)
         })
-        .map(|msg| msg.into_command())
-        .map_err(|err| format!("Error from Spark: {:?}", err));
-
-    // start listening
-    let listen_url_string = listen_url.to_string();
-    thread::spawn(move || {
-        let mut iron = Iron::new(Chain::new(router));
-        iron.threads = 2;
-        iron.http(&listen_url_string).unwrap()
     });
-    info!("Listening to Spark on {}", listen_url);
 
-    Ok(Box::new(stream))
+    tokio::spawn(server.map_err(|e| error!("webhook server error: {}", e)));
+
+    rx
 }
 
 pub fn sqs_event_stream<C: SparkClient + 'static + ?Sized>(
