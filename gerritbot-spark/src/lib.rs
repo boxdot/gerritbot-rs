@@ -441,12 +441,14 @@ impl SparkClient for NotificationClient {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct CommandMessage {
     pub sender_email: String,
     pub sender_id: String,
     pub command: Command,
 }
 
+#[derive(Debug, Clone)]
 pub enum Command {
     Enable,
     Disable,
