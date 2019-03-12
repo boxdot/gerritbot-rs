@@ -7,11 +7,12 @@ use std::time::Duration;
 use futures::{Future, Sink, Stream};
 use log::{debug, error, info, warn};
 
+use gerritbot_gerrit as gerrit;
+
 #[macro_use]
 mod utils;
 mod args;
 mod bot;
-mod gerrit;
 mod spark;
 mod sqs;
 
@@ -45,6 +46,7 @@ fn main() {
     let args = args::parse_args();
     stderrlog::new()
         .module(module_path!())
+        .module("gerritbot_gerrit")
         .quiet(args.flag_quiet)
         .timestamp(stderrlog::Timestamp::Second)
         .verbosity(if args.flag_verbose { 5 } else { 2 })
@@ -101,27 +103,28 @@ fn main() {
     });
 
     // create gerrit event stream listener
-    let gerrit_config = config.gerrit.clone();
-    info!("(Re)connecting to Gerrit over ssh: {}", gerrit_config.host);
+    let gerrit_config = &config.gerrit.clone();
 
-    let (gerrit_change_id_sink, gerrit_change_response_stream) = gerrit::change_sink(
-        gerrit_config.host.clone(),
-        gerrit_config.username.clone(),
-        gerrit_config.priv_key_path.clone(),
-    )
-    .unwrap_or_else(|err| {
-        error!(
-            "Could not connect to Gerrit via SSH for sending commands: {}",
-            err
+    let connect_to_gerrit = || {
+        info!(
+            "Connecting to gerrit with username {} at {}",
+            gerrit_config.username, gerrit_config.host
         );
-        std::process::exit(1);
-    });
+        gerrit::Connection::connect(
+            gerrit_config.host.clone(),
+            gerrit_config.username.clone(),
+            gerrit_config.priv_key_path.clone(),
+        )
+        .unwrap_or_else(|e| {
+            error!("failed to connect to gerrit: {}", e);
+            std::process::exit(1);
+        })
+    };
 
-    let gerrit_stream = gerrit::event_stream(
-        gerrit_config.host,
-        gerrit_config.username,
-        gerrit_config.priv_key_path,
-    );
+    let (gerrit_change_id_sink, gerrit_change_response_stream) =
+        gerrit::change_sink(connect_to_gerrit());
+
+    let gerrit_stream = gerrit::event_stream(connect_to_gerrit());
 
     // join spark and gerrit action streams into one and fold over actions with accumulator `bot`
     let spark_client = spark_client_from_config(config.spark.clone());

@@ -8,6 +8,7 @@ edition = "2018"
 [dependencies]
 docopt = "1.0"
 futures = "0.1"
+gerritbot-gerrit = { path = "gerritbot-gerrit" }
 hyper = "0.10"
 hyper-native-tls = "0.2"
 iron = "0.6"
