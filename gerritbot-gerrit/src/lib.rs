@@ -541,7 +541,7 @@ pub fn change_sink(
     connection: Connection,
 ) -> (
     Sender<(String, Change, String)>,
-    Box<dyn Stream<Item = ChangeDetails, Error = String>>,
+    impl Stream<Item = ChangeDetails, Error = String>,
 ) {
     let mut conn = connection;
     let (tx, rx) = channel::<(String, Change, String)>(1);
@@ -603,7 +603,7 @@ pub fn change_sink(
         }
     });
 
-    (tx, Box::new(response_stream))
+    (tx, response_stream)
 }
 
 pub fn fetch_patch_set(
