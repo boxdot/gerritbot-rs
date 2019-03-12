@@ -539,13 +539,10 @@ pub struct ChangeDetails {
 /// incoming change id.
 pub fn change_sink(
     connection: Connection,
-) -> Result<
-    (
-        Sender<(String, Change, String)>,
-        Box<dyn Stream<Item = ChangeDetails, Error = String>>,
-    ),
-    String,
-> {
+) -> (
+    Sender<(String, Change, String)>,
+    Box<dyn Stream<Item = ChangeDetails, Error = String>>,
+) {
     let mut conn = connection;
     let (tx, rx) = channel::<(String, Change, String)>(1);
     let response_stream = rx.then(move |data| {
@@ -606,7 +603,7 @@ pub fn change_sink(
         }
     });
 
-    Ok((tx, Box::new(response_stream)))
+    (tx, Box::new(response_stream))
 }
 
 pub fn fetch_patch_set(
