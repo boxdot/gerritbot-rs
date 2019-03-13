@@ -1,3 +1,5 @@
+#![allow(unused_imports, unused_variables)]
+
 use futures::future::lazy;
 use futures::{Future as _, Stream as _};
 use log::{error, info};
@@ -8,8 +10,6 @@ use tokio;
 use toml;
 
 use gerritbot_spark as spark;
-
-use spark::SparkClient as _;
 
 #[derive(Debug, Deserialize, Clone)]
 struct SparkConfig {
@@ -45,40 +45,48 @@ fn main() {
             error!("failed to read config file: {}", e);
             std::process::exit(1);
         });
-
-    let client = spark::WebClient::new(
-        spark_config.api_uri,
-        spark_config.bot_token,
-        Some(spark_config.webhook_url),
-    )
-    .unwrap_or_else(|e| {
-        error!("Could not create spark client: {}", e);
-        std::process::exit(1);
-    });
-    let endpoint_address = spark_config.listen_address.parse().unwrap_or_else(|e| {
-        error!("failed to parse endpoint url: {}", e);
-        std::process::exit(1);
-    });
-
-    tokio::run(lazy(move || {
-        let spark::RawWebhookServer { messages, server } =
-            spark::start_webhook_server(&endpoint_address);
-
-        // consume messages
-        let messages_future = messages.for_each(move |post| {
-            info!("got a post: {:?}", post);
-            client.reply(
-                &post.data.person_id,
-                &format!("got post:\n```\n{:#?}\n```", post),
-            );
-            Ok(())
+    let endpoint_address: std::net::SocketAddr =
+        spark_config.listen_address.parse().unwrap_or_else(|e| {
+            error!("failed to parse endpoint url: {}", e);
+            std::process::exit(1);
         });
 
-        // run server future and messages future
-        server
-            .map_err(|e| error!("webhook server error: {}", e))
-            .select(messages_future)
-            // stop when the first future completes
-            .then(|_| Ok(()))
+    tokio::run(lazy(move || {
+        let webhook_url = spark_config.webhook_url.clone();
+
+        spark::Client::new(spark_config.api_uri.clone(), spark_config.bot_token.clone())
+            .map_err(|e| error!("failed to create spark client: {}", e))
+            .and_then(move |client| {
+                info!("created spark client: {}", client.id());
+
+                let next_client = client.clone();
+
+                client
+                    .register_webhook(&webhook_url)
+                    .map_err(|e| error!("failed to register webhook: {}", e))
+                    .map(move |()| next_client)
+            })
+            .and_then(move |client| {
+                let spark::RawWebhookServer { messages, server } =
+                    spark::start_webhook_server(&endpoint_address);
+
+                // consume messages
+                let messages_future = messages.for_each(move |post| {
+                    info!("got a post: {:?}", post);
+                    client
+                        .reply(
+                            &post.data.person_id,
+                            &format!("got post:\n```\n{:#?}\n```", post),
+                        )
+                        .map_err(|e| error!("failed to send message: {}", e))
+                });
+
+                // run server future and messages future
+                server
+                    .map_err(|e| error!("webhook server error: {}", e))
+                    .select(messages_future)
+                    // stop when the first future completes
+                    .then(|_| Ok(()))
+            })
     }));
 }

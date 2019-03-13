@@ -1,58 +1,16 @@
 use std::net::SocketAddr;
-use std::rc::Rc;
 use std::{error, fmt, io};
 
-use futures::future::Future;
+use futures::future::{self, Future};
 use futures::sync::mpsc::channel;
-use futures::{Sink, Stream};
-use hyper;
+use futures::{IntoFuture as _, Sink, Stream};
 use lazy_static::lazy_static;
 use log::{debug, error, info, warn};
-use notify_rust::Notification;
 use regex::Regex;
-use reqwest;
-use rusoto_core;
-use serde;
 use serde::{Deserialize, Serialize};
-use serde_json;
 use serde_json::json;
 
-mod sqs;
-
-//
-// Helper functions
-//
-
-/// Try to get json from the given url with basic token authorization.
-fn get_json_with_token(url: &str, token: &str) -> reqwest::Result<reqwest::Response> {
-    reqwest::Client::new()
-        .get(url)
-        .bearer_auth(token)
-        .header(http::header::ACCEPT, "application/json")
-        .send()
-}
-
-/// Try to post json to the given url with basic token authorization.
-fn post_with_token<T>(url: &str, token: &str, data: &T) -> reqwest::Result<reqwest::Response>
-where
-    T: Serialize,
-{
-    reqwest::Client::new()
-        .post(url)
-        .bearer_auth(token)
-        .header(http::header::ACCEPT, "application/json")
-        .json(&data)
-        .send()
-}
-
-/// Try to post json to the given url with basic token authorization.
-fn delete_with_token(url: &str, token: &str) -> reqwest::Result<reqwest::Response> {
-    reqwest::Client::new()
-        .delete(url)
-        .bearer_auth(token)
-        .header(http::header::ACCEPT, "application/json")
-        .send()
-}
+// mod sqs;
 
 //
 // Spark data model
@@ -113,7 +71,16 @@ struct PersonDetails {
     person_type: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+struct WebhookRegistration {
+    name: String,
+    target_url: String,
+    resource: String,
+    event: String,
+}
+
+#[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 struct Webhook {
     id: String,
@@ -129,7 +96,7 @@ struct Webhook {
     created: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 struct Webhooks {
     items: Vec<Webhook>,
@@ -139,23 +106,19 @@ struct Webhooks {
 // Client
 //
 
-pub trait SparkClient {
-    fn id(&self) -> &str;
-    fn reply(&self, person_id: &str, msg: &str);
-    fn get_message(&self, message_id: &str) -> Result<Message, Error>;
-}
-
 #[derive(Debug, Clone)]
-pub struct WebClient {
+pub struct Client {
+    client: reqwest::r#async::Client,
     url: String,
     bot_token: String,
-    pub bot_id: String,
+    bot_id: String,
 }
 
 #[derive(Debug)]
 pub enum Error {
     ReqwestError(reqwest::Error),
-    SqsError(sqs::Error),
+    HyperError(hyper::Error),
+    // SqsError(sqs::Error),
     JsonError(serde_json::Error),
     RegisterWebhook(String),
     DeleteWebhook(String),
@@ -166,7 +129,8 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Error::ReqwestError(ref err) => fmt::Display::fmt(err, f),
-            Error::SqsError(ref err) => fmt::Display::fmt(err, f),
+            Error::HyperError(ref err) => fmt::Display::fmt(err, f),
+            //Error::SqsError(ref err) => fmt::Display::fmt(err, f),
             Error::JsonError(ref err) => fmt::Display::fmt(err, f),
             Error::RegisterWebhook(ref msg) | Error::DeleteWebhook(ref msg) => {
                 fmt::Display::fmt(msg, f)
@@ -180,7 +144,8 @@ impl error::Error for Error {
     fn description(&self) -> &str {
         match *self {
             Error::ReqwestError(ref err) => err.description(),
-            Error::SqsError(ref err) => err.description(),
+            Error::HyperError(ref err) => err.description(),
+            // Error::SqsError(ref err) => err.description(),
             Error::JsonError(ref err) => err.description(),
             Error::RegisterWebhook(ref msg) | Error::DeleteWebhook(ref msg) => msg,
             Error::IoError(ref err) => err.description(),
@@ -190,7 +155,8 @@ impl error::Error for Error {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match *self {
             Error::ReqwestError(ref err) => err.source(),
-            Error::SqsError(ref err) => err.source(),
+            Error::HyperError(ref err) => err.source(),
+            // Error::SqsError(ref err) => err.source(),
             Error::JsonError(ref err) => err.source(),
             Error::RegisterWebhook(_) | Error::DeleteWebhook(_) => None,
             Error::IoError(ref err) => err.source(),
@@ -204,11 +170,19 @@ impl From<reqwest::Error> for Error {
     }
 }
 
+impl From<hyper::Error> for Error {
+    fn from(err: hyper::Error) -> Self {
+        Error::HyperError(err)
+    }
+}
+
+/*
 impl From<sqs::Error> for Error {
     fn from(err: sqs::Error) -> Self {
         Error::SqsError(err)
     }
 }
+*/
 
 impl From<serde_json::Error> for Error {
     fn from(err: serde_json::Error) -> Self {
@@ -222,194 +196,132 @@ impl From<io::Error> for Error {
     }
 }
 
-impl WebClient {
+impl Client {
     pub fn new(
         spark_api_url: String,
         bot_token: String,
-        webhook_url: Option<String>,
-    ) -> Result<Self, Error> {
-        let mut client = Self {
+    ) -> impl Future<Item = Self, Error = Error> {
+        let bootstrap_client = Client {
+            client: reqwest::r#async::Client::new(),
             url: spark_api_url,
             bot_token: bot_token,
             bot_id: String::new(),
         };
 
-        client.bot_id = client.get_bot_id()?;
-        debug!("Bot id: {}", client.bot_id);
-
-        if let Some(webhook_url) = webhook_url {
-            client.replace_webhook_url(&webhook_url)?;
-            info!("Registered Spark's webhook url: {}", webhook_url);
-        }
-
-        Ok(client)
+        bootstrap_client.get_bot_id().map(|bot_id| Client {
+            bot_id: bot_id,
+            ..bootstrap_client
+        })
     }
 
-    fn get_bot_id(&self) -> Result<String, Error> {
-        let resp = get_json_with_token(&(self.url.clone() + "/people/me"), &self.bot_token)?;
-        let details: PersonDetails = serde_json::from_reader(resp)?;
-        Ok(details.id)
+    /// Try to get json from the given url with basic token authorization.
+    fn api_get_json<T>(&self, resource: &str) -> impl Future<Item = T, Error = Error>
+    where
+        for<'a> T: Deserialize<'a>,
+    {
+        reqwest::r#async::Client::new()
+            .get(&format!("{}/{}", self.url, resource))
+            .bearer_auth(&self.bot_token)
+            .header(http::header::ACCEPT, "application/json")
+            .send()
+            .from_err()
+            .and_then(|response| decode_json_body(response.into_body()))
     }
 
-    fn register_webhook(&self, url: &str) -> Result<(), Error> {
-        let json = json!({
-            "name": "gerritbot",
-            "targetUrl": String::from(url),
-            "resource": "messages",
-            "event": "created"
-        });
-        post_with_token(&(self.url.clone() + "/webhooks"), &self.bot_token, &json)
-            .map_err(Error::from)
-            .and_then(|resp| {
-                if resp.status() != http::StatusCode::OK {
-                    Err(Error::RegisterWebhook(format!(
-                        "Could not register Spark's webhook: {}",
-                        resp.status()
-                    )))
-                } else {
-                    Ok(())
-                }
-            })
+    /// Try to post json to the given url with basic token authorization.
+    fn api_post_json<T>(&self, resource: &str, data: &T) -> impl Future<Item = (), Error = Error>
+    where
+        T: Serialize,
+    {
+        self.client
+            .post(&format!("{}/{}", self.url, resource))
+            .bearer_auth(&self.bot_token)
+            .header(http::header::ACCEPT, "application/json")
+            .json(&data)
+            .send()
+            .from_err()
+            .map(|_| ())
     }
 
-    fn list_webhooks(&self) -> Result<Webhooks, Error> {
-        let resp = get_json_with_token(&(self.url.clone() + "/webhooks"), &self.bot_token)?;
-        let webhooks: Webhooks = serde_json::from_reader(resp)?;
-        Ok(webhooks)
+    /// Try to post json to the given url with basic token authorization.
+    fn api_delete(&self, resource: &str) -> impl Future<Item = (), Error = Error> {
+        self.client
+            .delete(&format!("{}/{}", self.url, resource))
+            .bearer_auth(&self.bot_token)
+            .header(http::header::ACCEPT, "application/json")
+            .send()
+            .from_err()
+            .map(|_| ())
     }
 
-    fn delete_webhook(&self, id: &str) -> Result<(), Error> {
-        delete_with_token(&(self.url.clone() + "/webhooks/" + id), &self.bot_token)
-            .map_err(Error::from)
-            .and_then(|resp| {
-                if resp.status() != http::StatusCode::NO_CONTENT
-                    && resp.status() != http::StatusCode::NOT_FOUND
+    fn get_bot_id(&self) -> impl Future<Item = String, Error = Error> {
+        self.api_get_json("people/me")
+            .map(|details: PersonDetails| details.id)
+    }
+
+    fn add_webhook(&self, url: &str) -> impl Future<Item = (), Error = Error> {
+        let webhook = WebhookRegistration {
+            name: "gerritbot".to_string(),
+            target_url: url.to_string(),
+            resource: "messages".to_string(),
+            event: "created".to_string(),
+        };
+
+        debug!("adding webhook: {:?}", webhook);
+
+        self.api_post_json("webhooks", &webhook)
+            .map(|()| debug!("added webhook"))
+    }
+
+    fn list_webhooks(&self) -> impl Future<Item = Webhooks, Error = Error> {
+        self.api_get_json("webhooks")
+    }
+
+    fn delete_webhook(&self, id: &str) -> impl Future<Item = (), Error = Error> {
+        self.api_delete(&format!("webhooks/{}", id))
+            .or_else(|e| match e {
+                Error::ReqwestError(ref e)
+                    if e.status() == Some(http::StatusCode::NO_CONTENT)
+                        || e.status() == Some(http::StatusCode::NOT_FOUND) =>
                 {
-                    Err(Error::DeleteWebhook(format!(
-                        "Could not delete webhook: {}",
-                        resp.status()
-                    )))
-                } else {
                     Ok(())
                 }
+                _ => Err(Error::DeleteWebhook(format!(
+                    "Could not delete webhook: {}",
+                    e
+                ))),
             })
+            .map(|()| debug!("deleted webhook"))
     }
 
-    fn replace_webhook_url(&self, url: &str) -> Result<(), Error> {
-        // remove all other webhooks
-        let webhooks = self.list_webhooks()?;
-        let to_remove = webhooks.items.into_iter().filter_map(|webhook| {
-            if webhook.resource == "messages" && webhook.event == "created" {
-                Some(webhook)
-            } else {
-                None
-            }
-        });
-        for webhook in to_remove {
-            self.delete_webhook(&webhook.id)?;
-            debug!("Removed webhook from Spark: {}", webhook.target_url);
-        }
-
-        // register new webhook
-        self.register_webhook(url)
+    pub fn register_webhook<'a>(self, url: &str) -> impl Future<Item = (), Error = Error> {
+        let url = url.to_string();
+        let delete_client = self.clone();
+        let add_client = self.clone();
+        self.list_webhooks()
+            .map(|webhooks| futures::stream::iter_ok(webhooks.items))
+            .flatten_stream()
+            .filter(|webhook| webhook.resource == "messages" && webhook.event == "created")
+            .inspect(|webhook| debug!("Removing webhook from Spark: {}", webhook.target_url))
+            .for_each(move |webhook| delete_client.delete_webhook(&webhook.id))
+            .and_then(move |()| add_client.add_webhook(&url))
     }
-}
 
-impl SparkClient for WebClient {
-    fn id(&self) -> &str {
+    pub fn id(&self) -> &str {
         &self.bot_id
     }
 
-    fn reply(&self, person_id: &str, msg: &str) {
+    pub fn reply(&self, person_id: &str, msg: &str) -> impl Future<Item = (), Error = Error> {
         let json = json!({
             "toPersonId": person_id,
             "markdown": msg,
         });
-        let res = post_with_token(&(self.url.clone() + "/messages"), &self.bot_token, &json);
-        if let Err(err) = res {
-            error!("Could not reply to gerrit: {:?}", err);
-        }
+        debug!("send message to {}", person_id);
+        self.api_post_json("messages", &json)
     }
 
-    fn get_message(&self, message_id: &str) -> Result<Message, Error> {
-        let resp = get_json_with_token(
-            &(self.url.clone() + "/messages/" + message_id),
-            &self.bot_token,
-        )?;
-        serde_json::from_reader(resp).map_err(Error::from)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ConsoleClient {
-    stdin_enabled: bool,
-}
-
-impl ConsoleClient {
-    /// Create a console client which resolves the message text always with a placeholder text.
-    pub fn new() -> Self {
-        Self {
-            stdin_enabled: false,
-        }
-    }
-
-    // Create a console client which resolves the message text from stdin.
-    pub fn _with_stdin() -> Self {
-        Self {
-            stdin_enabled: true,
-        }
-    }
-}
-
-impl SparkClient for ConsoleClient {
-    fn id(&self) -> &str {
-        "console-client"
-    }
-
-    fn reply(&self, person_id: &str, msg: &str) {
-        print!("Would reply to {}: {}", person_id, msg);
-    }
-
-    fn get_message(&self, message_id: &str) -> Result<Message, Error> {
-        if self.stdin_enabled {
-            let mut line = String::new();
-            io::stdin().read_line(&mut line)?;
-            serde_json::from_str(&line).map_err(Error::from)
-        } else {
-            let mut message = Message::default();
-            message.id = message_id.into();
-            message.text = "Placeholder text".into();
-            Ok(message)
-        }
-    }
-}
-
-pub struct NotificationClient;
-
-impl NotificationClient {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-impl SparkClient for NotificationClient {
-    fn id(&self) -> &str {
-        "notify-dbus-client"
-    }
-
-    fn reply(&self, _person_id: &str, msg: &str) {
-        Notification::new()
-            .summary("Gerrit Bot")
-            .body(msg)
-            .show()
-            .unwrap();
-    }
-
-    fn get_message(&self, message_id: &str) -> Result<Message, Error> {
-        let mut message = Message::default();
-        message.id = message_id.into();
-        message.text = "Placeholder text".into();
-        Ok(message)
+    pub fn get_message(&self, message_id: &str) -> impl Future<Item = Message, Error = Error> {
+        self.api_get_json(&format!("messages/{}", message_id))
     }
 }
 
@@ -436,11 +348,11 @@ pub enum Command {
 impl Message {
     /// Load text from Spark for a received message
     /// Note: Spark does not send the text with the message to the registered post hook.
-    pub fn load_text<C: SparkClient + ?Sized>(&mut self, client: &C) -> Result<(), Error> {
-        let msg = client.get_message(&self.id)?;
-        self.text = msg.text;
-        Ok(())
-    }
+    // pub fn load_text<C: SparkClient + ?Sized>(&mut self, client: &C) -> Result<(), Error> {
+    //     let msg = client.get_message(&self.id)?;
+    //     self.text = msg.text;
+    //     Ok(())
+    // }
 
     /// Convert Spark message to command
     pub fn into_command(self) -> CommandMessage {
@@ -512,6 +424,23 @@ fn reject_webhook_request(
     }
 }
 
+/// Decode json body of HTTP request or response.
+fn decode_json_body<T, B, C, E>(body: B) -> impl Future<Item = T, Error = Error>
+where
+    for<'a> T: Deserialize<'a>,
+    B: Stream<Item = C, Error = E>,
+    C: AsRef<[u8]>,
+    Error: From<E>,
+{
+    // TODO: find a way to avoid copying here
+    body.fold(Vec::new(), |mut v, chunk| {
+        v.extend_from_slice(chunk.as_ref());
+        future::ok(v)
+    })
+    .from_err()
+    .and_then(|v| serde_json::from_slice::<T>(&v).into_future().from_err())
+}
+
 pub struct RawWebhookServer<M, S>
 where
     M: Stream<Item = Post, Error = ()>,
@@ -548,25 +477,12 @@ pub fn start_webhook_server(
                 error_response
             } else {
                 let message_sink = message_sink.clone();
-                // now try to read the body
-                let f = request
-                    // consume the request and use the body
-                    .into_body()
-                    .map_err(|e| error!("failed to read post body: {}", e))
-                    // collect body chunks into vector
-                    // is there a better way to do this, maybe?
-                    .fold(Vec::new(), |mut v, chunk| {
-                        v.extend_from_slice(chunk.as_ref());
-                        futures::future::ok(v)
-                    })
-                    // decode the json
-                    .and_then(|v| {
-                        serde_json::from_slice::<Post>(&v)
-                            .map_err(|e| error!("failed to decode post body: {}", e))
-                    })
-                    // send through channel
-                    .and_then(|post| {
-                        message_sink.send(post.clone())
+                // now try to decode the body
+                let f = decode_json_body(request.into_body())
+                    .map_err(|e| error!("failed to decode post body: {}", e))
+                    .and_then(|post: Post| {
+                        message_sink
+                            .send(post.clone())
                             .map_err(|e| error!("failed to send post body: {}", e))
                             .map(|_| ())
                     });
@@ -583,6 +499,7 @@ pub fn start_webhook_server(
     RawWebhookServer { messages, server }
 }
 
+/*
 pub fn sqs_event_stream<C: SparkClient + 'static + ?Sized>(
     client: Rc<C>,
     sqs_url: String,
@@ -618,3 +535,4 @@ pub fn sqs_event_stream<C: SparkClient + 'static + ?Sized>(
         .map_err(|err| format!("Error from Spark: {:?}", err));
     Ok(Box::new(sqs_stream))
 }
+*/
