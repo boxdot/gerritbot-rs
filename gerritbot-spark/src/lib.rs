@@ -512,15 +512,32 @@ fn reject_webhook_request(
     }
 }
 
-pub fn webhook_event_stream(listen_address: &SocketAddr) -> impl Stream<Item = Post, Error = ()> {
+pub struct RawWebhookServer<M, S>
+where
+    M: Stream<Item = Post, Error = ()>,
+    S: Future<Item = (), Error = hyper::Error>,
+{
+    /// Stream of webhook posts.
+    pub messages: M,
+    /// Future of webhook server. Must be run in order for messages to produce
+    /// anything.
+    pub server: S,
+}
+
+pub fn start_webhook_server(
+    listen_address: &SocketAddr,
+) -> RawWebhookServer<
+    impl Stream<Item = Post, Error = ()>,
+    impl Future<Item = (), Error = hyper::Error>,
+> {
     use hyper::{Body, Response};
-    let (tx, rx) = channel(1);
+    let (message_sink, messages) = channel(1);
     let listen_address = listen_address.clone();
 
     // very simple webhook listener
     let server = hyper::Server::bind(&listen_address).serve(move || {
         info!("listening to Spark on {}", listen_address);
-        let tx = tx.clone();
+        let message_sink = message_sink.clone();
 
         hyper::service::service_fn_ok(move |request: hyper::Request<Body>| {
             debug!("webhook request: {:?}", request);
@@ -530,7 +547,7 @@ pub fn webhook_event_stream(listen_address: &SocketAddr) -> impl Stream<Item = P
                 warn!("rejecting webhook request: {:?}", error_response);
                 error_response
             } else {
-                let tx = tx.clone();
+                let message_sink = message_sink.clone();
                 // now try to read the body
                 let f = request
                     // consume the request and use the body
@@ -549,12 +566,13 @@ pub fn webhook_event_stream(listen_address: &SocketAddr) -> impl Stream<Item = P
                     })
                     // send through channel
                     .and_then(|post| {
-                        tx.send(post.clone())
+                        message_sink.send(post.clone())
                             .map_err(|e| error!("failed to send post body: {}", e))
                             .map(|_| ())
                     });
 
                 // spawn a future so all of the above actually happens
+                // XXX: maybe send future over the stream instead?
                 tokio::spawn(f);
 
                 Response::new(Body::empty())
@@ -562,9 +580,7 @@ pub fn webhook_event_stream(listen_address: &SocketAddr) -> impl Stream<Item = P
         })
     });
 
-    tokio::spawn(server.map_err(|e| error!("webhook server error: {}", e)));
-
-    rx
+    RawWebhookServer { messages, server }
 }
 
 pub fn sqs_event_stream<C: SparkClient + 'static + ?Sized>(

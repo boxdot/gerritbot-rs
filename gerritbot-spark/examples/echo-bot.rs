@@ -1,5 +1,5 @@
 use futures::future::lazy;
-use futures::Stream as _;
+use futures::{Future as _, Stream as _};
 use log::{error, info};
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -61,12 +61,24 @@ fn main() {
     });
 
     tokio::run(lazy(move || {
-        let stream = spark::webhook_event_stream(&endpoint_address);
+        let spark::RawWebhookServer { messages, server } =
+            spark::start_webhook_server(&endpoint_address);
 
-        stream.for_each(move |post| {
+        // consume messages
+        let messages_future = messages.for_each(move |post| {
             info!("got a post: {:?}", post);
-            client.reply(&post.data.person_id, &format!("got post:\n```\n{:#?}\n```", post));
+            client.reply(
+                &post.data.person_id,
+                &format!("got post:\n```\n{:#?}\n```", post),
+            );
             Ok(())
-        })
+        });
+
+        // run server future and messages future
+        server
+            .map_err(|e| error!("webhook server error: {}", e))
+            .select(messages_future)
+            // stop when the first future completes
+            .then(|_| Ok(()))
     }));
 }
