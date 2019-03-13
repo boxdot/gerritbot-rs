@@ -54,6 +54,8 @@ pub struct Message {
     // a message contained in a post does not have text loaded
     #[serde(default)]
     text: String,
+    markdown: Option<String>,
+    html: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -453,7 +455,7 @@ where
     pub server: S,
 }
 
-pub fn start_webhook_server(
+pub fn start_raw_webhook_server(
     listen_address: &SocketAddr,
 ) -> RawWebhookServer<
     impl Stream<Item = Post, Error = ()>,
@@ -497,6 +499,50 @@ pub fn start_webhook_server(
     });
 
     RawWebhookServer { messages, server }
+}
+
+pub struct WebhookServer<M, S>
+where
+    M: Stream<Item = Message, Error = ()>,
+    S: Future<Item = (), Error = hyper::Error>,
+{
+    /// Stream of webhook posts.
+    pub messages: M,
+    /// Future of webhook server. Must be run in order for messages to produce
+    /// anything.
+    pub server: S,
+}
+
+pub fn start_webhook_server(
+    listen_address: &SocketAddr,
+    client: Client,
+) -> WebhookServer<
+    impl Stream<Item = Message, Error = ()>,
+    impl Future<Item = (), Error = hyper::Error>,
+> {
+    let RawWebhookServer {
+        messages: raw_messages,
+        server,
+    } = start_raw_webhook_server(listen_address);
+
+    let own_id = client.id().to_string();
+
+    let messages = raw_messages
+        // ignore own messages
+        .filter(move |post| post.data.person_id != own_id)
+        .and_then(move |post| {
+            client.get_message(&post.data.id).then(|message_result| {
+                future::ok(
+                    message_result
+                        .map_err(|e| error!("failed to fetch message: {}", e))
+                        .map(Some)
+                        .unwrap_or(None),
+                )
+            })
+        })
+        .filter_map(std::convert::identity);
+
+    WebhookServer { messages, server }
 }
 
 /*

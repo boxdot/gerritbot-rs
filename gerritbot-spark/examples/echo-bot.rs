@@ -67,16 +67,16 @@ fn main() {
                     .map(move |()| next_client)
             })
             .and_then(move |client| {
-                let spark::RawWebhookServer { messages, server } =
-                    spark::start_webhook_server(&endpoint_address);
+                let spark::WebhookServer { messages, server } =
+                    spark::start_webhook_server(&endpoint_address, client.clone());
 
                 // consume messages
-                let messages_future = messages.for_each(move |post| {
-                    info!("got a post: {:?}", post);
+                let messages_future = messages.for_each(move |message| {
+                    debug!("got a message: {:?}", message);
                     client
                         .reply(
-                            &post.data.person_id,
-                            &format!("got post:\n```\n{:#?}\n```", post),
+                            &message.person_id,
+                            &format!("got post:\n```\n{:#?}\n```", message),
                         )
                         .map_err(|e| error!("failed to send message: {}", e))
                 });
