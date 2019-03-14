@@ -41,7 +41,7 @@ pub fn sqs_receiver(
     .filter_map(identity)
     // delete messages from the queue
     .and_then(
-        move |receive_result| -> Box<dyn Future<Item = Vec<Message>, Error = ()>> {
+        move |receive_result| -> Box<dyn Future<Item = Vec<Message>, Error = ()> + Send> {
             let messages = receive_result.messages.unwrap_or_else(Vec::new);
 
             if messages.len() > 0 {
