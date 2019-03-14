@@ -599,7 +599,7 @@ pub fn raw_sqs_event_stream(
             future::ok(
                 serde_json::from_str(&data)
                     // log and ignore errors
-                    .map_err(|e| error!("failed to sqs message body: {}", e))
+                    .map_err(|e| error!("failed to parse sqs message body: {}", e))
                     .ok(),
             )
         })

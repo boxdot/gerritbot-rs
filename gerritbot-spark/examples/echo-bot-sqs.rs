@@ -18,7 +18,7 @@ struct SparkConfig {
     api_uri: String,
     webhook_url: String,
     sqs_url: String,
-    sqs_region: rusoto_core::Region,
+    sqs_region: String,
 }
 
 #[derive(StructOpt, Debug)]
@@ -47,6 +47,10 @@ fn main() {
             error!("failed to read config file: {}", e);
             std::process::exit(1);
         });
+    let sqs_region: rusoto_core::Region = spark_config.sqs_region.parse().unwrap_or_else(|e| {
+            error!("invalid sqs_region: {}", e);
+            std::process::exit(1);
+    });
 
     tokio::run(lazy(move || {
         let webhook_url = spark_config.webhook_url.clone();
@@ -66,7 +70,7 @@ fn main() {
             .and_then(move |client| {
                 spark::sqs_event_stream(
                     spark_config.sqs_url.clone(),
-                    spark_config.sqs_region,
+                    sqs_region,
                     client.clone(),
                 )
                 .for_each(move |message| {
