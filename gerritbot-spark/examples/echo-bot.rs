@@ -2,7 +2,7 @@
 
 use futures::future::lazy;
 use futures::{Future as _, Stream as _};
-use log::{error, info};
+use log::{debug, error, info};
 use serde::Deserialize;
 use std::path::PathBuf;
 use structopt::StructOpt;

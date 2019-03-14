@@ -4,9 +4,7 @@ use std::{error, fmt, io};
 use futures::future::{self, Future};
 use futures::sync::mpsc::channel;
 use futures::{IntoFuture as _, Sink, Stream};
-use lazy_static::lazy_static;
 use log::{debug, error, info, warn};
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -345,46 +343,6 @@ pub enum Command {
     DisableFilter,
     SetFilter(String),
     Unknown,
-}
-
-impl Message {
-    /// Load text from Spark for a received message
-    /// Note: Spark does not send the text with the message to the registered post hook.
-    // pub fn load_text<C: SparkClient + ?Sized>(&mut self, client: &C) -> Result<(), Error> {
-    //     let msg = client.get_message(&self.id)?;
-    //     self.text = msg.text;
-    //     Ok(())
-    // }
-
-    /// Convert Spark message to command
-    pub fn into_command(self) -> CommandMessage {
-        lazy_static! {
-            static ref FILTER_REGEX: Regex = Regex::new(r"(?i)^filter (.*)$").unwrap();
-        };
-
-        let sender_email = self.person_email;
-        let sender_id = self.person_id;
-        let command = match &self.text.trim().to_lowercase()[..] {
-            "enable" => Command::Enable,
-            "disable" => Command::Disable,
-            "status" => Command::ShowStatus,
-            "help" => Command::ShowHelp,
-            "filter" => Command::ShowFilter,
-            "filter enable" => Command::EnableFilter,
-            "filter disable" => Command::DisableFilter,
-            _ => FILTER_REGEX
-                .captures(&self.text.trim()[..])
-                .and_then(|cap| cap.get(1))
-                .map(|m| Command::SetFilter(m.as_str().to_string()))
-                .unwrap_or(Command::Unknown),
-        };
-
-        CommandMessage {
-            sender_email,
-            sender_id,
-            command,
-        }
-    }
 }
 
 fn reject_webhook_request(
