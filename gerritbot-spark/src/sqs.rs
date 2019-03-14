@@ -40,49 +40,47 @@ pub fn sqs_receiver(
     .then(|result| future::ok(result.ok()))
     .filter_map(identity)
     // delete messages from the queue
-    .and_then(
-        move |receive_result| -> Box<dyn Future<Item = Vec<Message>, Error = ()> + Send> {
-            let messages = receive_result.messages.unwrap_or_else(Vec::new);
+    .and_then(move |receive_result| {
+        let messages = receive_result.messages.unwrap_or_else(Vec::new);
 
-            if messages.len() > 0 {
-                // prepare delete request
-                let delete_request = DeleteMessageBatchRequest {
-                    entries: messages
-                        .iter()
-                        .filter_map(|message| message.receipt_handle.clone())
-                        .enumerate()
-                        .map(|(index, receipt_handle)| DeleteMessageBatchRequestEntry {
-                            id: index.to_string(),
-                            receipt_handle,
-                        })
-                        .collect(),
-                    ..delete_request.clone()
-                };
+        if messages.len() > 0 {
+            // prepare delete request
+            let delete_request = DeleteMessageBatchRequest {
+                entries: messages
+                    .iter()
+                    .filter_map(|message| message.receipt_handle.clone())
+                    .enumerate()
+                    .map(|(index, receipt_handle)| DeleteMessageBatchRequestEntry {
+                        id: index.to_string(),
+                        receipt_handle,
+                    })
+                    .collect(),
+                ..delete_request.clone()
+            };
 
-                // send delete request
-                Box::new(delete_client.delete_message_batch(delete_request).then(
-                    |delete_request_result| {
-                        // log errors, if any
-                        match delete_request_result {
-                            Ok(ref delete_result) if delete_result.failed.len() > 0 => {
-                                warn!("failed to delete some messages: {:?}", delete_result.failed);
-                            }
-                            Ok(_) => (),
-                            Err(e) => {
-                                error!("message delete request failed: {}", e);
-                            }
+            // send delete request
+            future::Either::A(delete_client.delete_message_batch(delete_request).then(
+                |delete_request_result| {
+                    // log errors, if any
+                    match delete_request_result {
+                        Ok(ref delete_result) if delete_result.failed.len() > 0 => {
+                            warn!("failed to delete some messages: {:?}", delete_result.failed);
                         }
+                        Ok(_) => (),
+                        Err(e) => {
+                            error!("message delete request failed: {}", e);
+                        }
+                    }
 
-                        // forward messages
-                        future::ok(messages)
-                    },
-                ))
-            } else {
-                // timeout, no messages received
-                Box::new(future::ok(messages))
-            }
-        },
-    )
+                    // forward messages
+                    future::ok(messages)
+                },
+            ))
+        } else {
+            // timeout, no messages received
+            future::Either::B(future::ok(messages))
+        }
+    })
     // flatten messages to return one by one
     .map(|messages| stream::iter_ok(messages))
     .flatten()
