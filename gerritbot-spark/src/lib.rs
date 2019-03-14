@@ -533,6 +533,29 @@ pub fn start_raw_webhook_server(
     RawWebhookServer { messages, server }
 }
 
+/// Fetch messages from webhook message stream using client. Skip messages from
+/// own id, log and then ignore errors.
+fn fetch_messages<M>(client: Client, raw_messages: M) -> impl Stream<Item = Message, Error = ()>
+where
+    M: Stream<Item = WebhookMessage, Error = ()>,
+{
+    let own_id = client.id().clone();
+    raw_messages
+        // ignore own messages
+        .filter(move |post| post.data.person_id != own_id)
+        .and_then(move |post| {
+            client.get_message(&post.data.id).then(|message_result| {
+                future::ok(
+                    message_result
+                        .map_err(|e| error!("failed to fetch message: {}", e))
+                        .map(Some)
+                        .unwrap_or(None),
+                )
+            })
+        })
+        .filter_map(std::convert::identity)
+}
+
 pub struct WebhookServer<M, S>
 where
     M: Stream<Item = Message, Error = ()>,
@@ -557,22 +580,7 @@ pub fn start_webhook_server(
         server,
     } = start_raw_webhook_server(listen_address);
 
-    let own_id = client.id().clone();
-
-    let messages = raw_messages
-        // ignore own messages
-        .filter(move |post| post.data.person_id != own_id)
-        .and_then(move |post| {
-            client.get_message(&post.data.id).then(|message_result| {
-                future::ok(
-                    message_result
-                        .map_err(|e| error!("failed to fetch message: {}", e))
-                        .map(Some)
-                        .unwrap_or(None),
-                )
-            })
-        })
-        .filter_map(std::convert::identity);
+    let messages = fetch_messages(client, raw_messages);
 
     WebhookServer { messages, server }
 }
@@ -594,4 +602,13 @@ pub fn raw_sqs_event_stream(
             )
         })
         .filter_map(identity)
+}
+
+pub fn sqs_event_stream(
+    sqs_url: String,
+    sqs_region: rusoto_core::Region,
+    client: Client,
+) -> impl Stream<Item = Message, Error = ()> {
+    let raw_messages = raw_sqs_event_stream(sqs_url, sqs_region);
+    fetch_messages(client, raw_messages)
 }
