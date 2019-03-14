@@ -14,40 +14,108 @@ use serde_json::json;
 // Spark data model
 //
 
-/// Spark id of the user
-pub type PersonId = String;
+/// Define a newtype String.
+macro_rules! newtype_string {
+    ($type_name:ident) => {
+        #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[serde(transparent)]
+        pub struct $type_name(pub String);
 
-/// Email of the user
-pub type Email = String;
+        impl std::fmt::Display for $type_name {
+            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                self.0.fmt(f)
+            }
+        }
+    };
+}
+
+/// Spark id of the user
+newtype_string!(PersonId);
+newtype_string!(ResourceId);
+newtype_string!(Email);
+newtype_string!(WebhookId);
+newtype_string!(MessageId);
+newtype_string!(RoomId);
+
+#[derive(Deserialize, Serialize, Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum RoomType {
+    Direct,
+    Group,
+}
+
+#[derive(Deserialize, Serialize, Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum ResourceType {
+    Memberships,
+    Messages,
+    Rooms,
+}
+
+#[derive(Deserialize, Serialize, Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum EventType {
+    Created,
+    Updated,
+    Deleted,
+}
+
+fn deserialize_timestamp<'de, D>(deserializer: D) -> Result<chrono::DateTime<chrono::Utc>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    chrono::DateTime::parse_from_rfc3339(&s)
+        .map_err(serde::de::Error::custom)
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+}
+
+fn serialize_timestamp<S>(
+    timestamp: &chrono::DateTime<chrono::Utc>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&timestamp.to_rfc3339())
+}
+
+#[derive(Deserialize, Serialize, Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(transparent)]
+pub struct Timestamp(
+    #[serde(deserialize_with = "deserialize_timestamp")]
+    #[serde(serialize_with = "serialize_timestamp")]
+    chrono::DateTime<chrono::Utc>,
+);
 
 /// Webhook's post request from Spark API
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
-pub struct Post {
-    actor_id: String,
+pub struct WebhookMessage {
+    id: WebhookId,
+    actor_id: PersonId,
     app_id: String,
-    created: String,
-    created_by: String,
+    created: Timestamp,
+    created_by: PersonId,
     pub data: Message,
-    event: String,
-    id: String,
+    event: EventType,
     name: String,
     org_id: String,
     owned_by: String,
-    resource: String,
+    resource: ResourceId,
     status: String,
     target_url: String,
 }
 
-#[derive(Deserialize, Debug, Clone, Default)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
-    created: Option<String>,
-    id: String,
-    pub person_email: String,
-    pub person_id: String,
-    room_id: String,
-    room_type: String,
+    created: Option<Timestamp>,
+    id: MessageId,
+    pub person_email: Email,
+    pub person_id: PersonId,
+    room_id: RoomId,
+    room_type: RoomType,
 
     // a message contained in a post does not have text loaded
     #[serde(default)]
@@ -59,12 +127,12 @@ pub struct Message {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct PersonDetails {
-    id: String,
-    emails: Vec<String>,
+    id: PersonId,
+    emails: Vec<Email>,
     display_name: String,
     nick_name: Option<String>,
     org_id: String,
-    created: String,
+    created: Timestamp,
     last_activity: Option<String>,
     status: Option<String>,
     #[serde(rename = "type")]
@@ -76,24 +144,24 @@ struct PersonDetails {
 struct WebhookRegistration {
     name: String,
     target_url: String,
-    resource: String,
-    event: String,
+    resource: ResourceType,
+    event: EventType,
 }
 
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 struct Webhook {
-    id: String,
+    id: WebhookId,
     name: String,
     target_url: String,
-    resource: String,
-    event: String,
+    resource: ResourceType,
+    event: EventType,
     org_id: String,
     created_by: String,
     app_id: String,
     owned_by: String,
     status: String,
-    created: String,
+    created: Timestamp,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -111,7 +179,7 @@ pub struct Client {
     client: reqwest::r#async::Client,
     url: String,
     bot_token: String,
-    bot_id: String,
+    bot_id: PersonId,
 }
 
 #[derive(Debug)]
@@ -205,7 +273,7 @@ impl Client {
             client: reqwest::r#async::Client::new(),
             url: spark_api_url,
             bot_token: bot_token,
-            bot_id: String::new(),
+            bot_id: PersonId(String::new()),
         };
 
         bootstrap_client.get_bot_id().map(|bot_id| Client {
@@ -254,7 +322,7 @@ impl Client {
             .map(|_| ())
     }
 
-    fn get_bot_id(&self) -> impl Future<Item = String, Error = Error> {
+    fn get_bot_id(&self) -> impl Future<Item = PersonId, Error = Error> {
         self.api_get_json("people/me")
             .map(|details: PersonDetails| details.id)
     }
@@ -263,8 +331,8 @@ impl Client {
         let webhook = WebhookRegistration {
             name: "gerritbot".to_string(),
             target_url: url.to_string(),
-            resource: "messages".to_string(),
-            event: "created".to_string(),
+            resource: ResourceType::Messages,
+            event: EventType::Created,
         };
 
         debug!("adding webhook: {:?}", webhook);
@@ -277,7 +345,7 @@ impl Client {
         self.api_get_json("webhooks")
     }
 
-    fn delete_webhook(&self, id: &str) -> impl Future<Item = (), Error = Error> {
+    fn delete_webhook(&self, id: &WebhookId) -> impl Future<Item = (), Error = Error> {
         self.api_delete(&format!("webhooks/{}", id))
             .or_else(|e| match e {
                 Error::ReqwestError(ref e)
@@ -301,17 +369,19 @@ impl Client {
         self.list_webhooks()
             .map(|webhooks| futures::stream::iter_ok(webhooks.items))
             .flatten_stream()
-            .filter(|webhook| webhook.resource == "messages" && webhook.event == "created")
+            .filter(|webhook| {
+                webhook.resource == ResourceType::Messages && webhook.event == EventType::Created
+            })
             .inspect(|webhook| debug!("Removing webhook from Spark: {}", webhook.target_url))
             .for_each(move |webhook| delete_client.delete_webhook(&webhook.id))
             .and_then(move |()| add_client.add_webhook(&url))
     }
 
-    pub fn id(&self) -> &str {
+    pub fn id(&self) -> &PersonId {
         &self.bot_id
     }
 
-    pub fn reply(&self, person_id: &str, msg: &str) -> impl Future<Item = (), Error = Error> {
+    pub fn reply(&self, person_id: &PersonId, msg: &str) -> impl Future<Item = (), Error = Error> {
         let json = json!({
             "toPersonId": person_id,
             "markdown": msg,
@@ -320,7 +390,10 @@ impl Client {
         self.api_post_json("messages", &json)
     }
 
-    pub fn get_message(&self, message_id: &str) -> impl Future<Item = Message, Error = Error> {
+    pub fn get_message(
+        &self,
+        message_id: &MessageId,
+    ) -> impl Future<Item = Message, Error = Error> {
         self.api_get_json(&format!("messages/{}", message_id))
     }
 }
@@ -403,7 +476,7 @@ where
 
 pub struct RawWebhookServer<M, S>
 where
-    M: Stream<Item = Post, Error = ()>,
+    M: Stream<Item = WebhookMessage, Error = ()>,
     S: Future<Item = (), Error = hyper::Error>,
 {
     /// Stream of webhook posts.
@@ -416,16 +489,16 @@ where
 pub fn start_raw_webhook_server(
     listen_address: &SocketAddr,
 ) -> RawWebhookServer<
-    impl Stream<Item = Post, Error = ()>,
+    impl Stream<Item = WebhookMessage, Error = ()>,
     impl Future<Item = (), Error = hyper::Error>,
 > {
     use hyper::{Body, Response};
     let (message_sink, messages) = channel(1);
-    let listen_address = listen_address.clone();
+
+    info!("listening to Spark on {}", listen_address);
 
     // very simple webhook listener
     let server = hyper::Server::bind(&listen_address).serve(move || {
-        info!("listening to Spark on {}", listen_address);
         let message_sink = message_sink.clone();
 
         hyper::service::service_fn_ok(move |request: hyper::Request<Body>| {
@@ -440,7 +513,7 @@ pub fn start_raw_webhook_server(
                 // now try to decode the body
                 let f = decode_json_body(request.into_body())
                     .map_err(|e| error!("failed to decode post body: {}", e))
-                    .and_then(|post: Post| {
+                    .and_then(|post: WebhookMessage| {
                         message_sink
                             .send(post.clone())
                             .map_err(|e| error!("failed to send post body: {}", e))
@@ -483,7 +556,7 @@ pub fn start_webhook_server(
         server,
     } = start_raw_webhook_server(listen_address);
 
-    let own_id = client.id().to_string();
+    let own_id = client.id().clone();
 
     let messages = raw_messages
         // ignore own messages
@@ -514,7 +587,7 @@ pub fn sqs_event_stream<C: SparkClient + 'static + ?Sized>(
     let sqs_stream = sqs_stream
         .filter_map(|sqs_message| {
             if let Some(body) = sqs_message.body {
-                let new_post: Post = match serde_json::from_str(&body) {
+                let new_post: WebhookMessage = match serde_json::from_str(&body) {
                     Ok(post) => post,
                     Err(err) => {
                         error!("Could not parse post: {}", err);
