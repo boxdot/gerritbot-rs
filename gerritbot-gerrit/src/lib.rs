@@ -460,9 +460,9 @@ fn fetch_extended_info(
     command_runner: &mut CommandRunner,
     event: Event,
     extended_info: &[ExtendedInfo],
-) -> Box<dyn Future<Item = Event, Error = String> + Send> {
+) -> impl Future<Item = Event, Error = String> {
     if extended_info.is_empty() {
-        return Box::new(future::ok(event));
+        return future::Either::A(future::ok(event));
     }
 
     let mut query = "gerrit query --format=JSON".to_string();
@@ -477,32 +477,30 @@ fn fetch_extended_info(
 
     query += &format!(" change:{}", event.change.id);
 
-    Box::new(
-        command_runner
-            .run_command(query)
-            .and_then(move |result| -> Result<Event, String> {
-                let mut event = event;
-                let line = result.lines().next().unwrap_or("");
+    future::Either::B(command_runner.run_command(query).and_then(
+        move |result| -> Result<Event, String> {
+            let mut event = event;
+            let line = result.lines().next().unwrap_or("");
 
-                let mut change: Change = serde_json::from_str(line)
-                    .map_err(|e| format!("failed to decode result: {}", e))?;
+            let mut change: Change = serde_json::from_str(line)
+                .map_err(|e| format!("failed to decode result: {}", e))?;
 
-                // copy patchset from change for the comments
-                if let Some(patchsets) = change.patch_sets.take() {
-                    if let Some(patchset) = patchsets
-                        .iter()
-                        .find(|patchset| patchset.number == event.patchset.number)
-                    {
-                        event.patchset = patchset.clone();
-                    }
+            // copy patchset from change for the comments
+            if let Some(patchsets) = change.patch_sets.take() {
+                if let Some(patchset) = patchsets
+                    .iter()
+                    .find(|patchset| patchset.number == event.patchset.number)
+                {
+                    event.patchset = patchset.clone();
                 }
+            }
 
-                // copy over submit records
-                event.change.submit_records = change.submit_records.take();
+            // copy over submit records
+            event.change.submit_records = change.submit_records.take();
 
-                Ok(event)
-            }),
-    )
+            Ok(event)
+        },
+    ))
 }
 
 pub fn extended_event_stream<F>(
@@ -517,12 +515,10 @@ where
         CommandRunner::new(command_connection).expect("failed to create command runner");
     let mut f = f;
 
-    event_stream(stream_connection).and_then(
-        move |event| -> Box<dyn Future<Item = Event, Error = String> + Send> {
-            let extended_info = f(&event);
-            fetch_extended_info(&mut command_runner, event, extended_info.as_ref())
-        },
-    )
+    event_stream(stream_connection).and_then(move |event| {
+        let extended_info = f(&event);
+        fetch_extended_info(&mut command_runner, event, extended_info.as_ref())
+    })
 }
 
 #[derive(Debug)]
