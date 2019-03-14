@@ -1,3 +1,6 @@
+// need to raise recursion limit because many combinators
+#![recursion_limit = "128"]
+
 use futures::future::lazy;
 use futures::{Future as _, Stream as _};
 use log::{debug, error, info};
@@ -14,7 +17,8 @@ struct SparkConfig {
     bot_token: String,
     api_uri: String,
     webhook_url: String,
-    listen_address: String,
+    sqs_url: String,
+    sqs_region: rusoto_core::Region,
 }
 
 #[derive(StructOpt, Debug)]
@@ -43,11 +47,6 @@ fn main() {
             error!("failed to read config file: {}", e);
             std::process::exit(1);
         });
-    let endpoint_address: std::net::SocketAddr =
-        spark_config.listen_address.parse().unwrap_or_else(|e| {
-            error!("failed to parse endpoint url: {}", e);
-            std::process::exit(1);
-        });
 
     tokio::run(lazy(move || {
         let webhook_url = spark_config.webhook_url.clone();
@@ -65,11 +64,12 @@ fn main() {
                     .map(move |()| next_client)
             })
             .and_then(move |client| {
-                let spark::WebhookServer { messages, server } =
-                    spark::start_webhook_server(&endpoint_address, client.clone());
-
-                // consume messages
-                let messages_future = messages.for_each(move |message| {
+                spark::sqs_event_stream(
+                    spark_config.sqs_url.clone(),
+                    spark_config.sqs_region,
+                    client.clone(),
+                )
+                .for_each(move |message| {
                     debug!("got a message: {:?}", message);
                     client
                         .reply(
@@ -77,14 +77,7 @@ fn main() {
                             &format!("got post:\n```\n{:#?}\n```", message),
                         )
                         .map_err(|e| error!("failed to send message: {}", e))
-                });
-
-                // run server future and messages future
-                server
-                    .map_err(|e| error!("webhook server error: {}", e))
-                    .select(messages_future)
-                    // stop when the first future completes
-                    .then(|_| Ok(()))
+                })
             })
     }));
 }

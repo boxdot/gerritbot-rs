@@ -65,10 +65,7 @@ pub fn sqs_receiver(
                         // log errors, if any
                         match delete_request_result {
                             Ok(ref delete_result) if delete_result.failed.len() > 0 => {
-                                warn!(
-                                    "failed to delete some messages: {:?}",
-                                    delete_result.failed
-                                );
+                                warn!("failed to delete some messages: {:?}", delete_result.failed);
                             }
                             Ok(_) => (),
                             Err(e) => {

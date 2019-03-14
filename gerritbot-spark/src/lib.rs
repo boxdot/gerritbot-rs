@@ -1,3 +1,5 @@
+#![deny(bare_trait_objects)]
+
 use std::convert::identity;
 use std::net::SocketAddr;
 use std::{error, fmt, io};
