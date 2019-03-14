@@ -355,7 +355,7 @@ impl CommandRunner {
                 }
             };
 
-            if let Err(_) = sender.send(command_result) {
+            if sender.send(command_result).is_err() {
                 // receiver was closed, this is either an error or a signal to exit
                 debug!("failed to send command result");
                 return;
@@ -555,12 +555,12 @@ pub fn change_sink(
             change.current_patch_set = comments;
         });
 
-        if let Ok(_) = res {
-            return Ok(ChangeDetails {
+        if res.is_ok() {
+            Ok(ChangeDetails {
                 user: user.clone(),
                 message: message.clone(),
                 change: change.clone(),
-            });
+            })
         } else {
             info!(
                 "Reconnecting to Gerrit over SSH for sending commands: {}",

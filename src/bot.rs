@@ -77,18 +77,18 @@ impl MsgCacheLine {
         approval_value: String,
     ) -> MsgCacheLine {
         MsgCacheLine::Approval {
-            user_ref: user_ref,
-            subject: subject,
-            approver: approver,
-            approval_type: approval_type,
-            approval_value: approval_value,
+            user_ref,
+            subject,
+            approver,
+            approval_type,
+            approval_value,
         }
     }
 
     fn new_reviewer_added(user_ref: usize, subject: String) -> MsgCacheLine {
         MsgCacheLine::ReviewerAdded {
-            user_ref: user_ref,
-            subject: subject,
+            user_ref,
+            subject,
         }
     }
 }
@@ -609,7 +609,7 @@ impl Response {
         A: Into<String>,
     {
         Response {
-            person_id: person_id,
+            person_id,
             message: message.into(),
         }
     }
@@ -815,7 +815,7 @@ fn has_inline_comments(event: &gerrit::Event) -> bool {
 }
 
 fn format_comments(change: gerrit::Change) -> Option<String> {
-    let change_number = change.number.clone();
+    let change_number = change.number;
     let host = change.url.split('/').nth(2).unwrap();
 
     change.current_patch_set.map(|patch_set| {
@@ -830,7 +830,7 @@ fn format_comments(change: gerrit::Change) -> Option<String> {
             .map(|(file, comments)| -> String {
                 let line_comments = comments
                     .map(|comment| {
-                        let mut lines = comment.message.split("\n");
+                        let mut lines = comment.message.split('\n');
                         let url = format!(
                             "https://{}/#/c/{}/{}/{}@{}",
                             host, change_number, patch_set_number, comment.file, comment.line

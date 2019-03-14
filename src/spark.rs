@@ -252,7 +252,7 @@ impl WebClient {
     ) -> Result<Self, Error> {
         let mut client = Self {
             url: spark_api_url,
-            bot_token: bot_token,
+            bot_token,
             bot_id: String::new(),
         };
 

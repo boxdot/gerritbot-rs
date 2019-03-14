@@ -275,12 +275,12 @@ impl Client {
         let bootstrap_client = Client {
             client: reqwest::r#async::Client::new(),
             url: spark_api_url,
-            bot_token: bot_token,
+            bot_token,
             bot_id: PersonId(String::new()),
         };
 
         bootstrap_client.get_bot_id().map(|bot_id| Client {
-            bot_id: bot_id,
+            bot_id,
             ..bootstrap_client
         })
     }
@@ -365,7 +365,7 @@ impl Client {
             .map(|()| debug!("deleted webhook"))
     }
 
-    pub fn register_webhook<'a>(self, url: &str) -> impl Future<Item = (), Error = Error> {
+    pub fn register_webhook(self, url: &str) -> impl Future<Item = (), Error = Error> {
         let url = url.to_string();
         let delete_client = self.clone();
         let add_client = self.clone();

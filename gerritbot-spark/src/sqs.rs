@@ -43,7 +43,7 @@ pub fn sqs_receiver(
     .and_then(move |receive_result| {
         let messages = receive_result.messages.unwrap_or_else(Vec::new);
 
-        if messages.len() > 0 {
+        if !messages.is_empty() {
             // prepare delete request
             let delete_request = DeleteMessageBatchRequest {
                 entries: messages
@@ -63,7 +63,7 @@ pub fn sqs_receiver(
                 |delete_request_result| {
                     // log errors, if any
                     match delete_request_result {
-                        Ok(ref delete_result) if delete_result.failed.len() > 0 => {
+                        Ok(ref delete_result) if !delete_result.failed.is_empty() => {
                             warn!("failed to delete some messages: {:?}", delete_result.failed);
                         }
                         Ok(_) => (),
@@ -82,6 +82,6 @@ pub fn sqs_receiver(
         }
     })
     // flatten messages to return one by one
-    .map(|messages| stream::iter_ok(messages))
+    .map(stream::iter_ok)
     .flatten()
 }
