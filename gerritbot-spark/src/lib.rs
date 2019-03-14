@@ -1,3 +1,4 @@
+use std::convert::identity;
 use std::net::SocketAddr;
 use std::{error, fmt, io};
 
@@ -8,7 +9,7 @@ use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-// mod sqs;
+mod sqs;
 
 //
 // Spark data model
@@ -576,40 +577,21 @@ pub fn start_webhook_server(
     WebhookServer { messages, server }
 }
 
-/*
-pub fn sqs_event_stream<C: SparkClient + 'static + ?Sized>(
-    client: Rc<C>,
+pub fn raw_sqs_event_stream(
     sqs_url: String,
     sqs_region: rusoto_core::Region,
-) -> Result<Box<dyn Stream<Item = CommandMessage, Error = String>>, Error> {
-    let bot_id = String::from(client.id());
-    let sqs_stream = sqs::sqs_receiver(sqs_url, sqs_region)?;
-    let sqs_stream = sqs_stream
-        .filter_map(|sqs_message| {
-            if let Some(body) = sqs_message.body {
-                let new_post: WebhookMessage = match serde_json::from_str(&body) {
-                    Ok(post) => post,
-                    Err(err) => {
-                        error!("Could not parse post: {}", err);
-                        return None;
-                    }
-                };
-                Some(new_post.data)
-            } else {
-                None
-            }
+) -> impl Stream<Item = WebhookMessage, Error = ()> {
+    sqs::sqs_receiver(sqs_url, sqs_region)
+        // skip messages with an empty body
+        .filter_map(|sqs_message| sqs_message.body)
+        // decode body
+        .and_then(|data| {
+            future::ok(
+                serde_json::from_str(&data)
+                    // log and ignore errors
+                    .map_err(|e| error!("failed to sqs message body: {}", e))
+                    .ok(),
+            )
         })
-        .filter(move |msg| msg.person_id != bot_id)
-        .filter_map(move |mut msg| {
-            debug!("Loading text for message: {:#?}", msg);
-            if let Err(err) = msg.load_text(&*client) {
-                error!("Could not load post's text: {}", err);
-                return None;
-            }
-            Some(msg)
-        })
-        .map(|msg| msg.into_command())
-        .map_err(|err| format!("Error from Spark: {:?}", err));
-    Ok(Box::new(sqs_stream))
+        .filter_map(identity)
 }
-*/

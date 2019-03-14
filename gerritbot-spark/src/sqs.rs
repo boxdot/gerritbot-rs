@@ -1,108 +1,92 @@
-use std::{error, fmt, thread};
+use std::convert::identity;
 
-use futures::sync::mpsc::channel;
-use futures::{Future, Sink, Stream};
+use futures::{future, stream, Future, Stream};
 use log::{error, warn};
-use rusoto_core::{self, Region};
-use rusoto_sqs::{self, DeleteMessageRequest, ReceiveMessageRequest, Sqs, SqsClient};
-
-#[derive(Debug)]
-pub enum Error {
-    Credentials(rusoto_core::CredentialsError),
-    Tls(rusoto_core::request::TlsError),
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Error::Credentials(ref err) => fmt::Display::fmt(err, f),
-            Error::Tls(ref err) => fmt::Display::fmt(err, f),
-        }
-    }
-}
-
-impl error::Error for Error {
-    fn description(&self) -> &str {
-        match *self {
-            Error::Credentials(ref err) => err.description(),
-            Error::Tls(ref err) => err.description(),
-        }
-    }
-
-    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        match *self {
-            Error::Credentials(ref err) => err.source(),
-            Error::Tls(ref err) => err.source(),
-        }
-    }
-}
-
-impl From<rusoto_core::CredentialsError> for Error {
-    fn from(err: rusoto_core::CredentialsError) -> Self {
-        Error::Credentials(err)
-    }
-}
-
-impl From<rusoto_core::request::TlsError> for Error {
-    fn from(err: rusoto_core::request::TlsError) -> Self {
-        Error::Tls(err)
-    }
-}
+use rusoto_core::Region;
+use rusoto_sqs::{
+    DeleteMessageBatchRequest, DeleteMessageBatchRequestEntry, Message, ReceiveMessageRequest,
+    Sqs as _, SqsClient,
+};
 
 pub fn sqs_receiver(
     queue_url: String,
     queue_region: Region,
-) -> Result<Box<dyn Stream<Item = rusoto_sqs::Message, Error = ()>>, Error> {
-    // receive messages
-    let sqs_client = SqsClient::new(queue_region.clone());
+) -> impl Stream<Item = Message, Error = ()> {
+    // set up receiver client and receive request template
+    let receive_client = SqsClient::new(queue_region.clone());
+    let receive_request = ReceiveMessageRequest {
+        queue_url: queue_url.clone(),
+        wait_time_seconds: Some(10),
+        max_number_of_messages: Some(10),
+        ..Default::default()
+    };
+    // set up deleter client and delete request template
+    let delete_client = SqsClient::new(queue_region.clone());
+    let delete_request = DeleteMessageBatchRequest {
+        queue_url: queue_url.clone(),
+        ..Default::default()
+    };
 
-    let mut receive_req = ReceiveMessageRequest::default();
-    receive_req.queue_url = queue_url.clone();
-    receive_req.wait_time_seconds = Some(10);
+    // repeatedly poll for messages
+    stream::unfold((), move |()| {
+        Some(
+            receive_client
+                .receive_message(receive_request.clone())
+                .map(|receive_result| (receive_result, ())),
+        )
+    })
+    // log the errors and skip the errors
+    .map_err(|e| error!("failed to receive message: {}", e))
+    .then(|result| future::ok(result.ok()))
+    .filter_map(identity)
+    // delete messages from the queue
+    .and_then(
+        move |receive_result| -> Box<dyn Future<Item = Vec<Message>, Error = ()>> {
+            let messages = receive_result.messages.unwrap_or_else(Vec::new);
 
-    let (tx, rx) = channel(1);
-    thread::spawn(move || -> Result<(), ()> {
-        loop {
-            let resp = sqs_client.receive_message(receive_req.clone()).wait();
-            match resp {
-                Ok(resp) => {
-                    if let Some(messages) = resp.messages {
-                        let mut tx_loop = tx.clone();
-                        for msg in messages {
-                            match tx_loop.clone().send(msg.clone()).wait() {
-                                Ok(s) => {
-                                    tx_loop = s;
-                                }
-                                Err(err) => {
-                                    error!("Cannot send message through channel: {:?}", err);
-                                    break;
-                                }
-                            };
+            if messages.len() > 0 {
+                // prepare delete request
+                let delete_request = DeleteMessageBatchRequest {
+                    entries: messages
+                        .iter()
+                        .filter_map(|message| message.receipt_handle.clone())
+                        .enumerate()
+                        .map(|(index, receipt_handle)| DeleteMessageBatchRequestEntry {
+                            id: index.to_string(),
+                            receipt_handle,
+                        })
+                        .collect(),
+                    ..delete_request.clone()
+                };
+
+                // send delete request
+                Box::new(delete_client.delete_message_batch(delete_request).then(
+                    |delete_request_result| {
+                        // log errors, if any
+                        match delete_request_result {
+                            Ok(ref delete_result) if delete_result.failed.len() > 0 => {
+                                warn!(
+                                    "failed to delete some messages: {:?}",
+                                    delete_result.failed
+                                );
+                            }
+                            Ok(_) => (),
+                            Err(e) => {
+                                error!("message delete request failed: {}", e);
+                            }
                         }
-                    };
-                }
-                Err(err) => warn!("SQS client error: {:?}", err),
+
+                        // forward messages
+                        future::ok(messages)
+                    },
+                ))
+            } else {
+                // timeout, no messages received
+                Box::new(future::ok(messages))
             }
-        }
-    });
-
-    // delete received messages
-    let sqs_client = SqsClient::new(queue_region);
-    let rx = rx.and_then(move |msg| {
-        if let Some(ref receipt_handle) = msg.receipt_handle {
-            let delete_req = DeleteMessageRequest {
-                queue_url: queue_url.clone(),
-                receipt_handle: receipt_handle.clone(),
-            };
-            if let Err(err) = sqs_client.delete_message(delete_req.clone()).wait() {
-                error!(
-                    "Could not delete message with handle {}: {:?}",
-                    delete_req.receipt_handle, err
-                )
-            };
-        }
-        Ok(msg)
-    });
-
-    Ok(Box::new(rx))
+        },
+    )
+    // flatten messages to return one by one
+    .map(|messages| stream::iter_ok(messages))
+    .flatten()
 }
