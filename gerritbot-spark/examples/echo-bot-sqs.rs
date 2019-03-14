@@ -7,8 +7,6 @@ use log::{debug, error, info};
 use serde::Deserialize;
 use std::path::PathBuf;
 use structopt::StructOpt;
-use tokio;
-use toml;
 
 use gerritbot_spark as spark;
 

@@ -4,8 +4,6 @@ use std::{error, fmt, io, thread};
 use futures::future::Future;
 use futures::sync::mpsc::{channel, Sender};
 use futures::{Sink, Stream};
-use hyper;
-use hyper_native_tls;
 use iron::prelude::*;
 use iron::status;
 use lazy_static::lazy_static;
@@ -13,12 +11,8 @@ use log::{debug, error, info};
 use notify_rust::Notification;
 use regex::Regex;
 use router::Router;
-use rusoto_core;
-use serde;
 use serde::Deserialize;
-use serde_json;
 use serde_json::{json, json_internal};
-use tokio_core;
 
 use crate::sqs;
 

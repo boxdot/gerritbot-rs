@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use futures::Stream as _;
 use log::error;
 use structopt::StructOpt;
-use tokio;
 
 use gerritbot_gerrit as gerrit;
 

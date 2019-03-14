@@ -11,8 +11,6 @@ use futures::sync::oneshot;
 use futures::{future, Future, Sink as _, Stream};
 use log::{debug, error, info};
 use serde::Deserialize;
-use serde_json;
-use ssh2;
 use ssh2::Channel;
 
 /// Gerrit username

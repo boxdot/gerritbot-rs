@@ -12,7 +12,6 @@ use lru_time_cache::LruCache;
 use regex::Regex;
 use rlua::{Function as LuaFunction, Lua};
 use serde::{Deserialize, Serialize};
-use serde_json;
 
 use crate::gerrit;
 use crate::spark;
@@ -871,8 +870,6 @@ fn format_msg_with_comments(message: String, change: gerrit::Change) -> String {
 mod test {
     use std::thread;
     use std::time::Duration;
-
-    use serde_json;
 
     use super::*;
     use crate::gerrit;
