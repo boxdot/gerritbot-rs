@@ -125,6 +125,7 @@ pub struct Message {
     text: String,
     markdown: Option<String>,
     html: Option<String>,
+    files: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Debug)]
