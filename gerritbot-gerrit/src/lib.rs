@@ -287,7 +287,7 @@ pub struct CommandRunner {
 }
 
 impl CommandRunner {
-    pub fn new(connection: Connection) -> Result<Self, String> {
+    pub fn new(connection: Connection) -> Self {
         let (sender, receiver) = channel(1);
 
         thread::Builder::new()
@@ -295,7 +295,7 @@ impl CommandRunner {
             .spawn(move || Self::run_commands(connection, receiver))
             .expect("failed to spawn thread");
 
-        Ok(Self { sender })
+        Self { sender }
     }
 
     fn run_commands(connection: Connection, receiver: Receiver<CommandRequest>) {
@@ -510,7 +510,7 @@ where
     F: FnMut(&Event) -> Cow<'static, [ExtendedInfo]>,
 {
     let mut command_runner =
-        CommandRunner::new(command_connection).expect("failed to create command runner");
+        CommandRunner::new(command_connection);
     let mut f = f;
 
     event_stream(stream_connection).and_then(move |event| {

@@ -45,10 +45,7 @@ fn main() {
         std::process::exit(1);
     });
 
-    let mut command_runner = gerrit::CommandRunner::new(connection).unwrap_or_else(|e| {
-        error!("failed to create command runner: {}", e);
-        std::process::exit(1);
-    });
+    let mut command_runner = gerrit::CommandRunner::new(connection);
 
     tokio::run(
         command_runner
