@@ -31,21 +31,13 @@ pub struct GerritConfig {
 pub struct SparkConfig {
     pub bot_token: String,
     pub api_uri: String,
-    pub webhook_url: Option<String>,
+    pub webhook_url: String,
     pub mode: ModeConfig,
-    pub output_mode: OutputConfig,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub enum OutputConfig {
-    Spark,
-    Console,
-    Notifications,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub enum ModeConfig {
-    Direct { endpoint: String },
+    Direct { endpoint: std::net::SocketAddr },
     Sqs { uri: String, region: Region },
 }
 

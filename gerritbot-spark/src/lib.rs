@@ -29,6 +29,12 @@ macro_rules! newtype_string {
                 self.0.fmt(f)
             }
         }
+
+        impl std::borrow::Borrow<str> for $type_name {
+            fn borrow(&self) -> &str {
+                &self.0
+            }
+        }
     };
 }
 
@@ -400,26 +406,6 @@ impl Client {
     ) -> impl Future<Item = Message, Error = Error> {
         self.api_get_json(&format!("messages/{}", message_id))
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct CommandMessage {
-    pub sender_email: String,
-    pub sender_id: String,
-    pub command: Command,
-}
-
-#[derive(Debug, Clone)]
-pub enum Command {
-    Enable,
-    Disable,
-    ShowStatus,
-    ShowHelp,
-    ShowFilter,
-    EnableFilter,
-    DisableFilter,
-    SetFilter(String),
-    Unknown,
 }
 
 fn reject_webhook_request(

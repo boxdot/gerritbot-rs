@@ -1,44 +1,45 @@
+// need to raise recursion limit because many combinators
+#![recursion_limit = "128"]
 #![deny(bare_trait_objects)]
+#![allow(unused_imports)]
 
 use std::convert::identity;
 use std::rc::Rc;
 use std::time::Duration;
 
-use futures::{Future, Sink, Stream};
+use futures::{future, future::lazy, Future, Sink, Stream};
 use log::{debug, error, info, warn};
 
 use gerritbot_gerrit as gerrit;
+use gerritbot_spark as spark;
 
-#[macro_use]
-mod utils;
 mod args;
 mod bot;
-mod spark;
-mod sqs;
 
-use spark::SparkClient;
-
-fn spark_client_from_config(spark_config: args::SparkConfig) -> Rc<dyn SparkClient> {
-    match spark_config.output_mode {
-        args::OutputConfig::Spark => Rc::new(
-            spark::WebClient::new(
-                spark_config.api_uri,
-                spark_config.bot_token,
-                spark_config.webhook_url,
+/// Create spark message stream. Returns a future representing a webhook server
+/// and a stream of messages.
+fn create_spark_message_stream(
+    spark_config: args::SparkConfig,
+    spark_client: spark::Client,
+) -> (
+    impl Future<Item = (), Error = ()>,
+    Box<dyn Stream<Item = spark::Message, Error = ()> + Send>,
+) {
+    match spark_config.mode {
+        args::ModeConfig::Direct {
+            endpoint: listen_address,
+        } => {
+            let spark::WebhookServer { server, messages } =
+                spark::start_webhook_server(&listen_address, spark_client);
+            (
+                future::Either::A(server.map_err(|e| error!("webhook server error: {}", e))),
+                Box::new(messages),
             )
-            .unwrap_or_else(|err| {
-                error!("Could not create spark client: {}", err);
-                std::process::exit(1);
-            }),
+        }
+        args::ModeConfig::Sqs { uri, region } => (
+            future::Either::B(future::empty()),
+            Box::new(spark::sqs_event_stream(uri, region, spark_client)),
         ),
-        args::OutputConfig::Console => {
-            warn!("Using console as Spark client due to empty bot_token.");
-            Rc::new(spark::ConsoleClient::new())
-        }
-        args::OutputConfig::Notifications => {
-            warn!("Using dbus notification as Spark client");
-            Rc::new(spark::NotificationClient::new())
-        }
     }
 }
 
@@ -47,64 +48,59 @@ fn main() {
     stderrlog::new()
         .module(module_path!())
         .module("gerritbot_gerrit")
+        .module("gerritbot_spark")
         .quiet(args.flag_quiet)
         .timestamp(stderrlog::Timestamp::Second)
         .verbosity(if args.flag_verbose { 5 } else { 2 })
         .init()
         .unwrap();
-    let config = args::parse_config(args.flag_config);
+    let args::Config {
+        gerrit: gerrit_config,
+        bot: bot_config,
+        spark: spark_config,
+    } = args::parse_config(args.flag_config);
 
     // load or create a new bot
-    let mut bot = match bot::Bot::load("state.json") {
-        Ok(bot) => {
+    let bot_state = bot::State::load("state.json")
+        .map(|state| {
             info!(
                 "Loaded bot from 'state.json' with {} user(s).",
-                bot.num_users()
+                state.num_users()
             );
-            bot
-        }
-        Err(err) => {
+            state
+        })
+        .unwrap_or_else(|err| {
             warn!("Could not load bot from 'state.json': {:?}", err);
-            bot::Bot::new()
-        }
-    };
-    if config.bot.msg_expiration != 0 && config.bot.msg_capacity != 0 {
-        debug!(
-            "Approval LRU cache: capacity - {}, expiration - {} sec",
-            config.bot.msg_capacity, config.bot.msg_expiration
-        );
-        bot.init_msg_cache(
-            config.bot.msg_capacity,
-            Duration::from_secs(config.bot.msg_expiration),
-        );
-    };
-    if let Some(format_script) = config.bot.format_script {
-        bot.set_format_script(format_script).unwrap_or_else(|err| {
-            error!("Failed to set format script: {:?}", err);
-            std::process::exit(1);
+            bot::State::new()
         });
-    }
 
-    // event loop
-    let mut core = tokio_core::reactor::Core::new().unwrap();
-
-    // create spark client and event stream listener
-    let spark_client = spark_client_from_config(config.spark.clone());
-    let spark_stream = match config.spark.mode.clone() {
-        args::ModeConfig::Direct { endpoint } => {
-            spark::webhook_event_stream(spark_client, &endpoint, core.remote())
+    let bot_builder = bot::Builder::new(bot_state);
+    let bot_builder = {
+        if bot_config.msg_expiration != 0 && bot_config.msg_capacity != 0 {
+            debug!(
+                "Approval LRU cache: capacity - {}, expiration - {} sec",
+                bot_config.msg_capacity, bot_config.msg_expiration
+            );
+            bot_builder.with_msg_cache(
+                bot_config.msg_capacity,
+                Duration::from_secs(bot_config.msg_expiration),
+            )
+        } else {
+            bot_builder
         }
-        args::ModeConfig::Sqs { uri, region } => spark::sqs_event_stream(spark_client, uri, region),
     };
-
-    let spark_stream = spark_stream.unwrap_or_else(|err| {
-        error!("Could not start listening to spark: {}", err);
-        std::process::exit(1);
-    });
-
-    // create gerrit event stream listener
-    let gerrit_config = &config.gerrit.clone();
-
+    let bot_builder = {
+        if let Some(format_script) = bot_config.format_script {
+            bot_builder
+                .with_format_script(format_script)
+                .unwrap_or_else(|err| {
+                    error!("Failed to set format script: {:?}", err);
+                    std::process::exit(1);
+                })
+        } else {
+            bot_builder
+        }
+    };
     let connect_to_gerrit = || {
         info!(
             "Connecting to gerrit with username {} at {}",
@@ -120,6 +116,66 @@ fn main() {
             std::process::exit(1);
         })
     };
+    let gerrit_event_stream = gerrit::extended_event_stream(
+        connect_to_gerrit(),
+        connect_to_gerrit(),
+        bot::Bot::request_extended_gerrit_info,
+    );
+    let gerrit_command_runner = gerrit::CommandRunner::new(connect_to_gerrit());
+
+    // run rest of the logic while the tokio runtime is running
+    tokio::run(lazy(move || {
+        let webhook_url = spark_config.webhook_url.clone();
+
+        spark::Client::new(spark_config.api_uri.clone(), spark_config.bot_token.clone())
+            .map_err(|e| error!("failed to create spark client: {}", e))
+            .and_then(move |client| {
+                info!("created spark client: {}", client.id());
+
+                let next_client = client.clone();
+
+                client
+                    .register_webhook(&webhook_url)
+                    .map_err(|e| error!("failed to register webhook: {}", e))
+                    .map(move |()| next_client)
+            })
+            .and_then(move |spark_client| {
+                let (spark_webhook_server, spark_messages) =
+                    create_spark_message_stream(spark_config.clone(), spark_client.clone());
+
+                let mut bot = bot_builder.build(gerrit_command_runner, spark_client);
+
+                fn ignore<T>(_: T) {}
+
+                // run webhook server or bot to completion - they should never
+                // exit unless there's an error, in which case they should print
+                // that
+                spark_webhook_server
+                    .select(bot.run(gerrit_event_stream, spark_messages))
+                    .map(ignore)
+                    .map_err(ignore)
+            })
+    }))
+
+    /*
+
+    // create spark client and event stream listener
+    // let spark_client_factory = get_spark_client_factory(spark_config.clone());
+    // let (spark_webhook
+    let spark_stream = match config.spark.mode.clone() {
+        args::ModeConfig::Direct { endpoint } => {
+            spark::webhook_event_stream(spark_client, &endpoint, core.remote())
+        }
+        args::ModeConfig::Sqs { uri, region } => spark::sqs_event_stream(spark_client, uri, region),
+    };
+
+    let spark_stream = spark_stream.unwrap_or_else(|err| {
+        error!("Could not start listening to spark: {}", err);
+        std::process::exit(1);
+    });
+
+    // create gerrit event stream listener
+    let gerrit_config = &config.gerrit.clone();
 
     let (gerrit_change_id_sink, gerrit_change_response_stream) =
         gerrit::change_sink(connect_to_gerrit());
@@ -193,4 +249,5 @@ fn main() {
         });
 
     let _ = core.run(actions);
+    */
 }

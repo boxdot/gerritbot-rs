@@ -5,6 +5,7 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
+use futures::{future::Future, stream::Stream};
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use log::{debug, error, warn};
@@ -41,14 +42,34 @@ struct User {
 }
 
 impl User {
-    fn new<A: Into<String>>(person_id: A, email: A) -> Self {
+    fn new(person_id: spark::PersonId, email: spark::Email) -> Self {
         Self {
-            spark_person_id: person_id.into(),
-            email: email.into(),
+            spark_person_id: person_id,
+            email: email,
             filter: None,
             enabled: true,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct CommandMessage {
+    pub sender_email: String,
+    pub sender_id: String,
+    pub command: Command,
+}
+
+#[derive(Debug, Clone)]
+pub enum Command {
+    Enable,
+    Disable,
+    ShowStatus,
+    ShowHelp,
+    ShowFilter,
+    EnableFilter,
+    DisableFilter,
+    SetFilter(String),
+    Unknown,
 }
 
 /// Cache line in LRU Cache containing last approval messages
@@ -86,26 +107,37 @@ impl MsgCacheLine {
     }
 
     fn new_reviewer_added(user_ref: usize, subject: String) -> MsgCacheLine {
-        MsgCacheLine::ReviewerAdded {
-            user_ref,
-            subject,
-        }
+        MsgCacheLine::ReviewerAdded { user_ref, subject }
     }
 }
 
-/// Describes a state of the bot
-#[derive(Clone, Serialize, Deserialize)]
 pub struct Bot {
-    users: Vec<User>,
-    /// We use Option<Cache> here, to be able to create an empty bot without initializing the
-    /// cache.
-    #[serde(skip_serializing, skip_deserializing)]
+    state: State,
     msg_cache: Option<LruCache<MsgCacheLine, ()>>,
+    format_script: String,
+    gerrit_command_runner: gerrit::CommandRunner,
+    spark_client: spark::Client,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct State {
+    users: Vec<User>,
     #[serde(skip_serializing, skip_deserializing)]
-    person_id_index: HashMap<String, usize>,
+    person_id_index: HashMap<spark::PersonId, usize>,
     #[serde(skip_serializing, skip_deserializing)]
-    email_index: HashMap<String, usize>,
-    #[serde(skip_serializing, skip_deserializing)]
+    email_index: HashMap<spark::Email, usize>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MsgCacheParameters {
+    capacity: usize,
+    expiration: Duration,
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct Builder {
+    state: State,
+    msg_cache_parameters: Option<MsgCacheParameters>,
     format_script: String,
 }
 
@@ -155,76 +187,23 @@ fn check_format_script_syntax(script_source: &str) -> Result<(), String> {
     })
 }
 
-impl Bot {
-    pub fn new() -> Bot {
-        Bot {
-            users: Vec::new(),
-            msg_cache: None,
-            person_id_index: HashMap::new(),
-            email_index: HashMap::new(),
-            format_script: get_default_format_script().to_string(),
-        }
+impl State {
+    pub fn new() -> Self {
+        Default::default()
     }
 
-    pub fn set_format_script(&mut self, script_source: String) -> Result<(), String> {
-        check_format_script_syntax(&script_source)?;
-        self.format_script = script_source;
-        Ok(())
-    }
+    pub fn load<P>(filename: P) -> Result<Self, BotError>
+    where
+        P: AsRef<Path>,
+    {
+        let f = File::open(filename)?;
 
-    #[allow(dead_code)]
-    pub fn with_msg_cache(capacity: usize, expiration: Duration) -> Bot {
-        Bot {
-            users: Vec::new(),
-            msg_cache: Some(
-                LruCache::<MsgCacheLine, ()>::with_expiry_duration_and_capacity(
-                    expiration, capacity,
-                ),
-            ),
-            person_id_index: HashMap::new(),
-            email_index: HashMap::new(),
-            format_script: get_default_format_script().to_string(),
-        }
-    }
-
-    /// Transform a spark command message into a bot action.
-    pub fn handle_command(command_message: spark::CommandMessage) -> Option<Action> {
-        let spark::CommandMessage {
-            sender_id,
-            sender_email,
-            command,
-        } = command_message;
-
-        use spark::Command;
-
-        match command {
-            Command::Enable => Some(Action::Enable(sender_id, sender_email)),
-            Command::Disable => Some(Action::Disable(sender_id, sender_email)),
-            Command::ShowStatus => Some(Action::Status(sender_id)),
-            Command::ShowHelp => Some(Action::Help(sender_id)),
-            Command::ShowFilter => Some(Action::FilterStatus(sender_id)),
-            Command::EnableFilter => Some(Action::FilterEnable(sender_id)),
-            Command::DisableFilter => Some(Action::FilterDisable(sender_id)),
-            Command::SetFilter(f) => Some(Action::FilterAdd(sender_id, f)),
-            Command::Unknown => Some(Action::Unknown(sender_id)),
-        }
-    }
-
-    /// Transform a gerrit event into a bot action.
-    pub fn handle_gerrit_event(event: gerrit::Event) -> Option<Action> {
-        if event.event_type == gerrit::EventType::CommentAdded && event.approvals.is_some() {
-            Some(Action::UpdateApprovals(Box::new(event)))
-        } else if event.event_type == gerrit::EventType::ReviewerAdded {
-            Some(Action::ReviewerAdded(Box::new(event)))
-        } else {
-            None
-        }
-    }
-
-    pub fn init_msg_cache(&mut self, capacity: usize, expiration: Duration) {
-        self.msg_cache = Some(
-            LruCache::<MsgCacheLine, ()>::with_expiry_duration_and_capacity(expiration, capacity),
-        );
+        serde_json::from_reader(f)
+            .map(|mut state: Self| {
+                state.index_users();
+                state
+            })
+            .map_err(BotError::from)
     }
 
     fn index_users(&mut self) {
@@ -235,25 +214,33 @@ impl Bot {
         }
     }
 
+    pub fn num_users(&self) -> usize {
+        self.users.len()
+    }
+
     // Note: This method is not idempotent, and in particular, when adding the same user twice,
     // it will completely mess up the indexes.
-    fn add_user<'a>(&'a mut self, person_id: &str, email: &str) -> &'a mut User {
+    fn add_user<'a>(
+        &'a mut self,
+        person_id: &spark::PersonId,
+        email: &spark::Email,
+    ) -> &'a mut User {
         let user_pos = self.users.len();
-        self.users.push(User::new(person_id, email));
-        self.person_id_index.insert(person_id.into(), user_pos);
-        self.email_index.insert(email.into(), user_pos);
+        self.users.push(User::new(person_id.clone(), email.clone()));
+        self.person_id_index.insert(person_id.clone(), user_pos);
+        self.email_index.insert(email.clone(), user_pos);
         self.users.last_mut().unwrap()
     }
 
     fn find_or_add_user_by_person_id<'a>(
         &'a mut self,
-        person_id: &str,
-        email: &str,
+        person_id: &spark::PersonId,
+        email: &spark::Email,
     ) -> &'a mut User {
         let pos = self
             .users
             .iter()
-            .position(|u| u.spark_person_id == person_id);
+            .position(|u| &u.spark_person_id == person_id);
         let user: &'a mut User = match pos {
             Some(pos) => &mut self.users[pos],
             None => self.add_user(person_id, email),
@@ -261,246 +248,37 @@ impl Bot {
         user
     }
 
-    fn find_user_mut<'a>(&'a mut self, person_id: &str) -> Option<&'a mut User> {
+    fn find_user_mut<'a, P: ?Sized>(&'a mut self, person_id: &P) -> Option<&'a mut User>
+    where
+        spark::PersonId: std::borrow::Borrow<P>,
+        P: std::hash::Hash + Eq,
+    {
         self.person_id_index
             .get(person_id)
             .cloned()
             .map(move |pos| &mut self.users[pos])
     }
 
-    fn find_user<'a>(&'a self, person_id: &str) -> Option<&'a User> {
+    fn find_user<'a, P: ?Sized>(&'a self, person_id: &P) -> Option<&'a User>
+    where
+        spark::PersonId: std::borrow::Borrow<P>,
+        P: std::hash::Hash + Eq,
+    {
         self.person_id_index
             .get(person_id)
             .cloned()
             .map(|pos| &self.users[pos])
     }
 
-    fn touch_cache(&mut self, key: MsgCacheLine) -> bool {
-        if let Some(cache) = self.msg_cache.as_mut() {
-            let hit = cache.get(&key).is_some();
-            if hit {
-                return true;
-            } else {
-                cache.insert(key, ());
-                return false;
-            }
-        };
-        false
-    }
-
-    fn enable<'a>(&'a mut self, person_id: &str, email: &str, enabled: bool) -> &'a User {
+    fn enable<'a>(
+        &'a mut self,
+        person_id: &spark::PersonId,
+        email: &spark::Email,
+        enabled: bool,
+    ) -> &'a User {
         let user: &'a mut User = self.find_or_add_user_by_person_id(person_id, email);
         user.enabled = enabled;
         user
-    }
-
-    fn format_msg(
-        script_source: &str,
-        event: &gerrit::Event,
-        approval: &gerrit::Approval,
-        is_human: bool,
-    ) -> Result<String, String> {
-        fn create_lua_event<'lua>(
-            context: rlua::Context<'lua>,
-            event: &gerrit::Event,
-            approval: &gerrit::Approval,
-            is_human: bool,
-        ) -> Result<rlua::Table<'lua>, rlua::Error> {
-            let lua_event = context.create_table()?;
-            lua_event.set(
-                "approver",
-                event
-                    .author
-                    .as_ref()
-                    .map(|user| user.username.as_ref())
-                    .unwrap_or("<unknown user>")
-                    .to_string(),
-            )?;
-            lua_event.set("comment", event.comment.clone())?;
-            lua_event.set("value", approval.value.parse().unwrap_or(0))?;
-            lua_event.set("type", approval.approval_type.clone())?;
-            lua_event.set("url", event.change.url.clone())?;
-            lua_event.set("subject", event.change.subject.clone())?;
-            lua_event.set("project", event.change.project.clone())?;
-            lua_event.set("is_human", is_human)?;
-            Ok(lua_event)
-        }
-
-        let lua = Lua::new();
-        lua.context(|context| -> Result<String, String> {
-            let globals = context.globals();
-            context
-                .load(script_source)
-                .exec()
-                .map_err(|err| format!("syntax error: {}", err))?;
-            let f: LuaFunction = globals
-                .get("main")
-                .map_err(|_| "main function missing".to_string())?;
-            let lua_event = create_lua_event(context, event, approval, is_human)
-                .map_err(|err| format!("failed to create lua event table: {}", err))?;
-
-            f.call::<_, String>(lua_event)
-                .map_err(|err| format!("lua formatting function failed: {}", err))
-        })
-    }
-
-    fn get_approvals_msg(&mut self, event: &gerrit::Event) -> Option<(&User, String, bool)> {
-        debug!("Incoming approvals: {:#?}", event);
-
-        if event.approvals.is_none() {
-            return None;
-        }
-
-        let approvals = tryopt![event.approvals.as_ref()];
-        let change = &event.change;
-        let approver = &tryopt![event.author.as_ref()].username;
-        if approver == &change.owner.username {
-            // No need to notify about user's own approvals.
-            return None;
-        }
-        let owner_email = tryopt![change.owner.email.as_ref()];
-
-        // try to find the use and check it is enabled
-        let user_pos = *tryopt![self.email_index.get(owner_email)];
-        if !self.users[user_pos].enabled {
-            return None;
-        }
-
-        let is_human = !approver.to_lowercase().contains("bot");
-
-        let msgs: Vec<String> = approvals
-            .iter()
-            .filter_map(|approval| {
-                // filter if there was no previous value, or value did not change, or it is 0
-                let filtered = !approval
-                    .old_value
-                    .as_ref()
-                    .map(|old_value| old_value != &approval.value && approval.value != "0")
-                    .unwrap_or(false);
-                debug!("Filtered approval: {:?}", filtered);
-                if filtered {
-                    return None;
-                }
-
-                // filter all messages that were already sent to the user recently
-                if self.touch_cache(MsgCacheLine::new_approval(
-                    user_pos,
-                    if change.topic.is_some() {
-                        change.topic.as_ref().unwrap().clone()
-                    } else {
-                        change.subject.clone()
-                    },
-                    approver.clone(),
-                    approval.approval_type.clone(),
-                    approval.value.clone(),
-                )) {
-                    debug!("Filtered approval due to cache hit.");
-                    return None;
-                }
-
-                let msg = match Self::format_msg(&self.format_script, event, approval, is_human) {
-                    Ok(msg) => msg,
-                    Err(err) => {
-                        error!("message formatting failed: {}", err);
-                        return None;
-                    }
-                };
-
-                // if user has configured and enabled a filter try to apply it
-                if self.is_filtered(user_pos, &msg) {
-                    return None;
-                }
-
-                if !msg.is_empty() {
-                    Some(msg)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if !msgs.is_empty() {
-            // We got some approvals
-            Some((&self.users[user_pos], msgs.join("\n\n"), is_human)) // two newlines since it is markdown
-        } else if is_human && has_inline_comments(&event) && event.comment.is_some() {
-            // We did not get any approvals, but we got inline comments from a human.
-            Some((
-                &self.users[user_pos],
-                event.comment.clone().unwrap(),
-                is_human,
-            ))
-        } else {
-            None
-        }
-    }
-
-    fn get_reviewer_added_msg(&mut self, event: &gerrit::Event) -> Option<(&User, String)> {
-        let reviewer = event.reviewer.as_ref()?.clone();
-        let reviewer_email = reviewer.email.as_ref()?;
-        let user_pos = *self.email_index.get(reviewer_email)?;
-        if !self.users[user_pos].enabled {
-            return None;
-        }
-        let change = &event.change;
-
-        // filter all messages that were already sent to the user recently
-        if self.touch_cache(MsgCacheLine::new_reviewer_added(
-            user_pos,
-            if change.topic.is_some() {
-                change.topic.as_ref().unwrap().clone()
-            } else {
-                change.subject.clone()
-            },
-        )) {
-            debug!("Filtered reviewer-added due to cache hit.");
-            return None;
-        }
-
-        Some((
-            &self.users[user_pos],
-            format!(
-                "[{}]({}) ({}) 👓 Added as reviewer",
-                event.change.subject, event.change.url, event.change.owner.username
-            ),
-        ))
-    }
-
-    pub fn save<P>(self, filename: P) -> Result<(), BotError>
-    where
-        P: AsRef<Path>,
-    {
-        let f = File::create(filename)?;
-        serde_json::to_writer(f, &self)?;
-        Ok(())
-    }
-
-    pub fn load<P>(filename: P) -> Result<Self, BotError>
-    where
-        P: AsRef<Path>,
-    {
-        let f = File::open(filename)?;
-        let mut bot: Bot = serde_json::from_reader(f)?;
-        bot.index_users();
-        bot.format_script = get_default_format_script().to_string();
-        Ok(bot)
-    }
-
-    pub fn num_users(&self) -> usize {
-        self.users.len()
-    }
-
-    pub fn status_for(&self, person_id: &str) -> String {
-        let user = self.find_user(person_id);
-        let enabled = user.map_or(false, |u| u.enabled);
-        format!(
-            "Notifications for you are **{}**. I am notifying another {} user(s).",
-            if enabled { "enabled" } else { "disabled" },
-            if self.num_users() == 0 {
-                0
-            } else {
-                self.num_users() - if enabled { 1 } else { 0 }
-            }
-        )
     }
 
     pub fn add_filter<A>(&mut self, person_id: &str, filter: A) -> Result<(), AddFilterResult>
@@ -581,6 +359,346 @@ impl Bot {
     }
 }
 
+impl Builder {
+    pub fn new(state: State) -> Self {
+        Self {
+            state,
+            format_script: get_default_format_script().to_string(),
+            ..Default::default()
+        }
+    }
+
+    pub fn with_msg_cache(self, capacity: usize, expiration: Duration) -> Self {
+        Self {
+            msg_cache_parameters: Some(MsgCacheParameters {
+                capacity,
+                expiration,
+            }),
+            ..self
+        }
+    }
+
+    pub fn with_format_script(self, script_source: String) -> Result<Self, String> {
+        check_format_script_syntax(&script_source)?;
+        Ok(Self {
+            format_script: script_source,
+            ..self
+        })
+    }
+
+    pub fn build(
+        self,
+        gerrit_command_runner: gerrit::CommandRunner,
+        spark_client: spark::Client,
+    ) -> Bot {
+        let Self {
+            format_script,
+            msg_cache_parameters,
+            state,
+        } = self;
+
+        Bot {
+            gerrit_command_runner,
+            spark_client,
+            msg_cache: msg_cache_parameters.map(
+                |MsgCacheParameters {
+                     capacity,
+                     expiration,
+                 }| {
+                    LruCache::<MsgCacheLine, ()>::with_expiry_duration_and_capacity(
+                        expiration, capacity,
+                    )
+                },
+            ),
+            format_script,
+            state,
+        }
+    }
+}
+
+fn spark_message_to_action(message: spark::Message) -> Option<Action> {
+    unimplemented!()
+}
+
+/// Transform a gerrit event into a bot action.
+pub fn gerrit_event_to_action(event: gerrit::Event) -> Option<Action> {
+    if event.event_type == gerrit::EventType::CommentAdded && event.approvals.is_some() {
+        Some(Action::UpdateApprovals(Box::new(event)))
+    } else if event.event_type == gerrit::EventType::ReviewerAdded {
+        Some(Action::ReviewerAdded(Box::new(event)))
+    } else {
+        None
+    }
+}
+
+impl Bot {
+    pub fn run(
+        &mut self,
+        // TODO: gerrit event stream probably shouldn't produce errors
+        gerrit_events: impl Stream<Item = gerrit::Event, Error = String>,
+        spark_messages: impl Stream<Item = spark::Message, Error = ()>,
+    ) -> impl Future<Item = (), Error = ()> {
+        let gerrit_actions = gerrit_events.filter_map(gerrit_event_to_action);
+        let spark_actions = spark_messages.filter_map(spark_message_to_action);
+
+        if true {
+            unimplemented!()
+        } else {
+            futures::future::ok(())
+        }
+    }
+
+    pub fn set_format_script(&mut self, script_source: String) -> Result<(), String> {
+        check_format_script_syntax(&script_source)?;
+        self.format_script = script_source;
+        Ok(())
+    }
+
+    pub fn request_extended_gerrit_info(
+        event: &gerrit::Event,
+    ) -> std::borrow::Cow<'static, [gerrit::ExtendedInfo]> {
+        unimplemented!()
+    }
+
+    /*
+    /// Transform a spark command message into a bot action.
+    pub fn handle_commnd(command_message: spark::CommandMessage) -> Option<Action> {
+        let spark::CommandMessage {
+            sender_id,
+            sender_email,
+            command,
+        } = command_message;
+
+        use spark::Command;
+
+        match command {
+            Command::Enable => Some(Action::Enable(sender_id.0, sender_email.0)),
+            Command::Disable => Some(Action::Disable(sender_id.0, sender_email.0)),
+            Command::ShowStatus => Some(Action::Status(sender_id)),
+            Command::ShowHelp => Some(Action::Help(sender_id)),
+            Command::ShowFilter => Some(Action::FilterStatus(sender_id)),
+            Command::EnableFilter => Some(Action::FilterEnable(sender_id)),
+            Command::DisableFilter => Some(Action::FilterDisable(sender_id)),
+            Command::SetFilter(f) => Some(Action::FilterAdd(sender_id, f)),
+            Command::Unknown => Some(Action::Unknown(sender_id)),
+        }
+    }
+    */
+
+    pub fn init_msg_cache(&mut self, capacity: usize, expiration: Duration) {
+        self.msg_cache = Some(
+            LruCache::<MsgCacheLine, ()>::with_expiry_duration_and_capacity(expiration, capacity),
+        );
+    }
+
+    fn touch_cache(&mut self, key: MsgCacheLine) -> bool {
+        if let Some(cache) = self.msg_cache.as_mut() {
+            let hit = cache.get(&key).is_some();
+            if hit {
+                return true;
+            } else {
+                cache.insert(key, ());
+                return false;
+            }
+        };
+        false
+    }
+
+    fn format_msg(
+        script_source: &str,
+        event: &gerrit::Event,
+        approval: &gerrit::Approval,
+        is_human: bool,
+    ) -> Result<String, String> {
+        fn create_lua_event<'lua>(
+            context: rlua::Context<'lua>,
+            event: &gerrit::Event,
+            approval: &gerrit::Approval,
+            is_human: bool,
+        ) -> Result<rlua::Table<'lua>, rlua::Error> {
+            let lua_event = context.create_table()?;
+            lua_event.set(
+                "approver",
+                event
+                    .author
+                    .as_ref()
+                    .map(|user| user.username.as_ref())
+                    .unwrap_or("<unknown user>")
+                    .to_string(),
+            )?;
+            lua_event.set("comment", event.comment.clone())?;
+            lua_event.set("value", approval.value.parse().unwrap_or(0))?;
+            lua_event.set("type", approval.approval_type.clone())?;
+            lua_event.set("url", event.change.url.clone())?;
+            lua_event.set("subject", event.change.subject.clone())?;
+            lua_event.set("project", event.change.project.clone())?;
+            lua_event.set("is_human", is_human)?;
+            Ok(lua_event)
+        }
+
+        let lua = Lua::new();
+        lua.context(|context| -> Result<String, String> {
+            let globals = context.globals();
+            context
+                .load(script_source)
+                .exec()
+                .map_err(|err| format!("syntax error: {}", err))?;
+            let f: LuaFunction = globals
+                .get("main")
+                .map_err(|_| "main function missing".to_string())?;
+            let lua_event = create_lua_event(context, event, approval, is_human)
+                .map_err(|err| format!("failed to create lua event table: {}", err))?;
+
+            f.call::<_, String>(lua_event)
+                .map_err(|err| format!("lua formatting function failed: {}", err))
+        })
+    }
+
+    fn get_approvals_msg(&mut self, event: &gerrit::Event) -> Option<(&User, String, bool)> {
+        debug!("Incoming approvals: {:#?}", event);
+
+        if event.approvals.is_none() {
+            return None;
+        }
+
+        let approvals = event.approvals.as_ref()?;
+        let change = &event.change;
+        let approver = &event.author.as_ref()?.username;
+        if approver == &change.owner.username {
+            // No need to notify about user's own approvals.
+            return None;
+        }
+        let owner_email = change.owner.email.as_ref().cloned().map(spark::Email)?;
+
+        // try to find the use and check it is enabled
+        let user_pos = *self.state.email_index.get(&owner_email)?;
+        if !self.state.users[user_pos].enabled {
+            return None;
+        }
+
+        let is_human = !approver.to_lowercase().contains("bot");
+
+        let msgs: Vec<String> = approvals
+            .iter()
+            .filter_map(|approval| {
+                // filter if there was no previous value, or value did not change, or it is 0
+                let filtered = !approval
+                    .old_value
+                    .as_ref()
+                    .map(|old_value| old_value != &approval.value && approval.value != "0")
+                    .unwrap_or(false);
+                debug!("Filtered approval: {:?}", filtered);
+                if filtered {
+                    return None;
+                }
+
+                // filter all messages that were already sent to the user recently
+                if self.touch_cache(MsgCacheLine::new_approval(
+                    user_pos,
+                    if change.topic.is_some() {
+                        change.topic.as_ref().unwrap().clone()
+                    } else {
+                        change.subject.clone()
+                    },
+                    approver.clone(),
+                    approval.approval_type.clone(),
+                    approval.value.clone(),
+                )) {
+                    debug!("Filtered approval due to cache hit.");
+                    return None;
+                }
+
+                let msg = match Self::format_msg(&self.format_script, event, approval, is_human) {
+                    Ok(msg) => msg,
+                    Err(err) => {
+                        error!("message formatting failed: {}", err);
+                        return None;
+                    }
+                };
+
+                // if user has configured and enabled a filter try to apply it
+                if self.state.is_filtered(user_pos, &msg) {
+                    return None;
+                }
+
+                if !msg.is_empty() {
+                    Some(msg)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if !msgs.is_empty() {
+            // We got some approvals
+            Some((&self.state.users[user_pos], msgs.join("\n\n"), is_human)) // two newlines since it is markdown
+        } else if is_human && has_inline_comments(&event) && event.comment.is_some() {
+            // We did not get any approvals, but we got inline comments from a human.
+            Some((
+                &self.state.users[user_pos],
+                event.comment.clone().unwrap(),
+                is_human,
+            ))
+        } else {
+            None
+        }
+    }
+
+    fn get_reviewer_added_msg(&mut self, event: &gerrit::Event) -> Option<(&User, String)> {
+        let reviewer = event.reviewer.as_ref().cloned()?;
+        let reviewer_email = reviewer.email.as_ref().cloned().map(spark::Email)?;
+        let user_pos = *self.state.email_index.get(&reviewer_email)?;
+        if !self.state.users[user_pos].enabled {
+            return None;
+        }
+        let change = &event.change;
+
+        // filter all messages that were already sent to the user recently
+        if self.touch_cache(MsgCacheLine::new_reviewer_added(
+            user_pos,
+            if change.topic.is_some() {
+                change.topic.as_ref().unwrap().clone()
+            } else {
+                change.subject.clone()
+            },
+        )) {
+            debug!("Filtered reviewer-added due to cache hit.");
+            return None;
+        }
+
+        Some((
+            &self.state.users[user_pos],
+            format!(
+                "[{}]({}) ({}) 👓 Added as reviewer",
+                event.change.subject, event.change.url, event.change.owner.username
+            ),
+        ))
+    }
+
+    pub fn save<P>(self, filename: P) -> Result<(), BotError>
+    where
+        P: AsRef<Path>,
+    {
+        let f = File::create(filename)?;
+        serde_json::to_writer(f, &self.state)?;
+        Ok(())
+    }
+
+    pub fn status_for(&self, person_id: &str) -> String {
+        let user = self.state.find_user(person_id);
+        let enabled = user.map_or(false, |u| u.enabled);
+        format!(
+            "Notifications for you are **{}**. I am notifying another {} user(s).",
+            if enabled { "enabled" } else { "disabled" },
+            if self.state.num_users() == 0 {
+                0
+            } else {
+                self.state.num_users() - if enabled { 1 } else { 0 }
+            }
+        )
+    }
+}
+
 #[derive(Debug)]
 pub enum Action {
     Enable(spark::PersonId, spark::Email),
@@ -649,6 +767,7 @@ const HELP_MSG: &str = r#"Commands:
 This project is open source, feel free to help us at: https://github.com/boxdot/gerritbot-rs
 "#;
 
+/*
 /// Action controller
 /// Return new bot state and an optional message to send to the user
 pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
@@ -667,7 +786,7 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
         Action::UpdateApprovals(event) => {
             bot.get_approvals_msg(&event).map(|(user, message, is_human)| {
                 if is_human && has_inline_comments(&event) {
-                    Task::FetchComments(user.spark_person_id.clone(), event.change, message)
+                    Task::FetchComments(user.spark_person_id.0.clone(), event.change, message)
                 } else {
                     Task::Reply(Response::new(user.spark_person_id.clone(), message))
                 }
@@ -676,11 +795,11 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
         Action::Help(person_id) => Some(Task::Reply(Response::new(person_id, HELP_MSG))),
         Action::Unknown(person_id) => Some(Task::Reply(Response::new(person_id, GREETINGS_MSG))),
         Action::Status(person_id) => {
-            let status = bot.status_for(&person_id);
+            let status = bot.status_for(&person_id.0);
             Some(Task::Reply(Response::new(person_id, status)))
         }
         Action::FilterStatus(person_id) => {
-            let resp: String = match bot.get_filter(&person_id) {
+            let resp: String = match bot.get_filter(&person_id.0) {
                 Ok(Some(filter)) => {
                     format!(
                         "The following filter is configured for you: `{}`. It is **{}**.",
@@ -712,7 +831,7 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
             }
         }
         Action::FilterAdd(person_id, filter) => {
-            Some(match bot.add_filter(&person_id, filter) {
+            Some(match bot.add_filter(&person_id.0, filter) {
                 Ok(()) => Task::ReplyAndSave(Response::new(
                     person_id,
                     "Filter successfully added and enabled.")),
@@ -737,7 +856,7 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
             })
         }
         Action::FilterEnable(person_id) => {
-            Some(match bot.enable_filter(&person_id, true) {
+            Some(match bot.enable_filter(&person_id.0, true) {
                 Ok(filter) => {
                     Task::ReplyAndSave(Response::new(
                         person_id,
@@ -767,7 +886,7 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
             })
         }
         Action::FilterDisable(person_id) => {
-            Some(match bot.enable_filter(&person_id, false) {
+            Some(match bot.enable_filter(&person_id.0, false) {
                 Ok(_) => Task::ReplyAndSave(
                     Response::new(person_id, "Filter successfully disabled."),
                 ),
@@ -802,6 +921,7 @@ pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
     };
     (bot, task)
 }
+*/
 
 fn has_inline_comments(event: &gerrit::Event) -> bool {
     lazy_static! {
