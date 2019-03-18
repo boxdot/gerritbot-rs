@@ -143,7 +143,7 @@ fn main() {
                 let (spark_webhook_server, spark_messages) =
                     create_spark_message_stream(spark_config.clone(), spark_client.clone());
 
-                let mut bot = bot_builder.build(gerrit_command_runner, spark_client);
+                let bot = bot_builder.build(gerrit_command_runner, spark_client);
 
                 fn ignore<T>(_: T) {}
 

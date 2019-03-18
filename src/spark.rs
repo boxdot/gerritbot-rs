@@ -108,16 +108,16 @@ struct Post {
 #[derive(Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
-    created: Option<String>,
-    id: String,
+    pub created: Option<String>,
+    pub id: String,
     pub person_email: String,
     pub person_id: String,
-    room_id: String,
-    room_type: String,
+    pub room_id: String,
+    pub room_type: String,
 
     // a message contained in a post does not have text loaded
     #[serde(default)]
-    text: String,
+    pub text: String,
 }
 
 #[derive(Deserialize, Debug)]

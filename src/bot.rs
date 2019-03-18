@@ -5,7 +5,10 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use futures::{future::Future, stream::Stream};
+use futures::{
+    future::{self, Future},
+    stream::Stream,
+};
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use log::{debug, error, warn};
@@ -416,8 +419,27 @@ impl Builder {
     }
 }
 
-fn spark_message_to_action(message: spark::Message) -> Option<Action> {
-    unimplemented!()
+fn spark_message_to_action(message: spark::Message) -> Action {
+    lazy_static! {
+        static ref FILTER_REGEX: Regex = Regex::new(r"(?i)^filter (.*)$").unwrap();
+    };
+
+    let sender_email = message.person_email;
+    let sender_id = message.person_id;
+    match &message.text.trim().to_lowercase()[..] {
+        "enable" => Action::Enable(sender_id, sender_email),
+        "disable" => Action::Disable(sender_id, sender_email),
+        "status" => Action::Status(sender_id),
+        "help" => Action::Help(sender_id),
+        "filter" => Action::FilterStatus(sender_id),
+        "filter enable" => Action::FilterEnable(sender_id),
+        "filter disable" => Action::FilterDisable(sender_id),
+        _ => FILTER_REGEX
+            .captures(&message.text.trim()[..])
+            .and_then(|cap| cap.get(1))
+            .map(|m| Action::FilterAdd(sender_id.clone(), m.as_str().to_string()))
+            .unwrap_or_else(|| Action::Unknown(sender_id.clone())),
+    }
 }
 
 /// Transform a gerrit event into a bot action.
@@ -433,62 +455,184 @@ pub fn gerrit_event_to_action(event: gerrit::Event) -> Option<Action> {
 
 impl Bot {
     pub fn run(
-        &mut self,
+        self,
         // TODO: gerrit event stream probably shouldn't produce errors
-        gerrit_events: impl Stream<Item = gerrit::Event, Error = String>,
-        spark_messages: impl Stream<Item = spark::Message, Error = ()>,
+        gerrit_events: impl Stream<Item = gerrit::Event, Error = String> + Send,
+        spark_messages: impl Stream<Item = spark::Message, Error = ()> + Send,
     ) -> impl Future<Item = (), Error = ()> {
-        let gerrit_actions = gerrit_events.filter_map(gerrit_event_to_action);
-        let spark_actions = spark_messages.filter_map(spark_message_to_action);
+        let gerrit_actions = gerrit_events
+            .filter_map(gerrit_event_to_action)
+            .map_err(|e| error!("failed to receive gerrit event: {}", e));
+        let spark_actions = spark_messages.map(spark_message_to_action);
+        let bot_for_action = std::sync::Arc::new(std::sync::Mutex::new(self));
+        let bot_for_task = bot_for_action.clone();
 
-        if true {
-            unimplemented!()
-        } else {
-            futures::future::ok(())
-        }
+        gerrit_actions
+            .select(spark_actions)
+            .filter_map(move |action| bot_for_action.lock().unwrap().update(action))
+            .for_each(move |task| future::ok(bot_for_task.lock().unwrap().handle_task(task)))
     }
 
-    pub fn set_format_script(&mut self, script_source: String) -> Result<(), String> {
-        check_format_script_syntax(&script_source)?;
-        self.format_script = script_source;
-        Ok(())
+    /// Action controller
+    /// Return an optional message to send to the user
+    fn update(&mut self, action: Action) -> Option<Task> {
+        match action {
+        Action::Enable(person_id, email) => {
+            self.state.enable(&person_id, &email, true);
+            let task = Task::ReplyAndSave(Response::new(person_id, "Got it! Happy reviewing!"));
+            Some(task)
+        }
+        Action::Disable(person_id, email) => {
+            self.state.enable(&person_id, &email, false);
+            let task = Task::ReplyAndSave(Response::new(person_id, "Got it! I will stay silent."));
+            Some(task)
+        }
+        Action::UpdateApprovals(event) => {
+            self.get_approvals_msg(&event).map(|(user, message, is_human)| {
+                if is_human && has_inline_comments(&event) {
+                    Task::FetchComments(user.spark_person_id.0.clone(), event.change, message)
+                } else {
+                    Task::Reply(Response::new(user.spark_person_id.clone(), message))
+                }
+            })
+        }
+        Action::Help(person_id) => Some(Task::Reply(Response::new(person_id, HELP_MSG))),
+        Action::Unknown(person_id) => Some(Task::Reply(Response::new(person_id, GREETINGS_MSG))),
+        Action::Status(person_id) => {
+            let status = self.status_for(&person_id.0);
+            Some(Task::Reply(Response::new(person_id, status)))
+        }
+        Action::FilterStatus(person_id) => {
+            let resp: String = match self.state.get_filter(&person_id.0) {
+                Ok(Some(filter)) => {
+                    format!(
+                        "The following filter is configured for you: `{}`. It is **{}**.",
+                        filter.regex,
+                        if filter.enabled {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    )
+                }
+                Ok(None) => "No filter is configured for you.".into(),
+                Err(err) => {
+                    match err {
+                        AddFilterResult::UserNotFound => {
+                            "Notification for you are disabled. Please enable notifications first, and then add a filter.".into()
+                        }
+                        _ => {
+                            error!("Invalid action arm with Error: {:?}", err);
+                            "".into()
+                        }
+                    }
+                }
+            };
+            if !resp.is_empty() {
+                Some(Task::Reply(Response::new(person_id, resp)))
+            } else {
+                None
+            }
+        }
+        Action::FilterAdd(person_id, filter) => {
+            Some(match self.state.add_filter(&person_id.0, filter) {
+                Ok(()) => Task::ReplyAndSave(Response::new(
+                    person_id,
+                    "Filter successfully added and enabled.")),
+                Err(err) => {
+                    Task::Reply(Response::new(
+                        person_id,
+                        match err {
+                            AddFilterResult::UserDisabled |
+                            AddFilterResult::UserNotFound => {
+                                "Notification for you are disabled. Please enable notifications first, and then add a filter."
+                            }
+                            AddFilterResult::InvalidFilter => {
+                                "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
+                            }
+                            AddFilterResult::FilterNotConfigured => {
+                                assert!(false, "this should not be possible");
+                                ""
+                            }
+                        },
+                    ))
+                }
+            })
+        }
+        Action::FilterEnable(person_id) => {
+            Some(match self.state.enable_filter(&person_id.0, true) {
+                Ok(filter) => {
+                    Task::ReplyAndSave(Response::new(
+                        person_id,
+                        format!(
+                            "Filter successfully enabled. The following filter is configured: {}",
+                            filter
+                        ),
+                    ))
+                }
+                Err(err) => {
+                    Task::Reply(Response::new(
+                        person_id,
+                        match err {
+                            AddFilterResult::UserDisabled |
+                            AddFilterResult::UserNotFound => {
+                                "Notification for you are disabled. Please enable notifications first, and then add a filter."
+                            }
+                            AddFilterResult::InvalidFilter => {
+                                "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
+                            }
+                            AddFilterResult::FilterNotConfigured => {
+                                "Cannot enable filter since there is none configured. User `filter <regex>` to add a new filter."
+                            }
+                        },
+                    ))
+                }
+            })
+        }
+        Action::FilterDisable(person_id) => {
+            Some(match self.state.enable_filter(&person_id.0, false) {
+                Ok(_) => Task::ReplyAndSave(
+                    Response::new(person_id, "Filter successfully disabled."),
+                ),
+                Err(err) => {
+                    Task::Reply(Response::new(
+                        person_id,
+                        match err {
+                            AddFilterResult::UserDisabled |
+                            AddFilterResult::UserNotFound => {
+                                "Notification for you are disabled. No need to disable the filter."
+                            }
+                            AddFilterResult::InvalidFilter => {
+                                "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
+                            }
+                            AddFilterResult::FilterNotConfigured => {
+                                "No need to disable the filter since there is none configured."
+                            }
+                        },
+                    ))
+                }
+            })
+        }
+        Action::ReviewerAdded(event) => {
+            self.get_reviewer_added_msg(&event).map(|(user, message)| {
+                Task::Reply(Response::new(user.spark_person_id.clone(), message))
+            })
+        }
+        Action::ChangeFetched(person_id, message, change) => {
+            Some(Task::Reply(Response::new(
+                person_id, format_msg_with_comments(message, change))))
+        }
+    }
+    }
+
+    fn handle_task(&mut self, task: Task) {
+        unimplemented!()
     }
 
     pub fn request_extended_gerrit_info(
         event: &gerrit::Event,
     ) -> std::borrow::Cow<'static, [gerrit::ExtendedInfo]> {
         unimplemented!()
-    }
-
-    /*
-    /// Transform a spark command message into a bot action.
-    pub fn handle_commnd(command_message: spark::CommandMessage) -> Option<Action> {
-        let spark::CommandMessage {
-            sender_id,
-            sender_email,
-            command,
-        } = command_message;
-
-        use spark::Command;
-
-        match command {
-            Command::Enable => Some(Action::Enable(sender_id.0, sender_email.0)),
-            Command::Disable => Some(Action::Disable(sender_id.0, sender_email.0)),
-            Command::ShowStatus => Some(Action::Status(sender_id)),
-            Command::ShowHelp => Some(Action::Help(sender_id)),
-            Command::ShowFilter => Some(Action::FilterStatus(sender_id)),
-            Command::EnableFilter => Some(Action::FilterEnable(sender_id)),
-            Command::DisableFilter => Some(Action::FilterDisable(sender_id)),
-            Command::SetFilter(f) => Some(Action::FilterAdd(sender_id, f)),
-            Command::Unknown => Some(Action::Unknown(sender_id)),
-        }
-    }
-    */
-
-    pub fn init_msg_cache(&mut self, capacity: usize, expiration: Duration) {
-        self.msg_cache = Some(
-            LruCache::<MsgCacheLine, ()>::with_expiry_duration_and_capacity(expiration, capacity),
-        );
     }
 
     fn touch_cache(&mut self, key: MsgCacheLine) -> bool {
@@ -766,162 +910,6 @@ const HELP_MSG: &str = r#"Commands:
 
 This project is open source, feel free to help us at: https://github.com/boxdot/gerritbot-rs
 "#;
-
-/*
-/// Action controller
-/// Return new bot state and an optional message to send to the user
-pub fn update(action: Action, bot: Bot) -> (Bot, Option<Task>) {
-    let mut bot = bot;
-    let task = match action {
-        Action::Enable(person_id, email) => {
-            bot.enable(&person_id, &email, true);
-            let task = Task::ReplyAndSave(Response::new(person_id, "Got it! Happy reviewing!"));
-            Some(task)
-        }
-        Action::Disable(person_id, email) => {
-            bot.enable(&person_id, &email, false);
-            let task = Task::ReplyAndSave(Response::new(person_id, "Got it! I will stay silent."));
-            Some(task)
-        }
-        Action::UpdateApprovals(event) => {
-            bot.get_approvals_msg(&event).map(|(user, message, is_human)| {
-                if is_human && has_inline_comments(&event) {
-                    Task::FetchComments(user.spark_person_id.0.clone(), event.change, message)
-                } else {
-                    Task::Reply(Response::new(user.spark_person_id.clone(), message))
-                }
-            })
-        }
-        Action::Help(person_id) => Some(Task::Reply(Response::new(person_id, HELP_MSG))),
-        Action::Unknown(person_id) => Some(Task::Reply(Response::new(person_id, GREETINGS_MSG))),
-        Action::Status(person_id) => {
-            let status = bot.status_for(&person_id.0);
-            Some(Task::Reply(Response::new(person_id, status)))
-        }
-        Action::FilterStatus(person_id) => {
-            let resp: String = match bot.get_filter(&person_id.0) {
-                Ok(Some(filter)) => {
-                    format!(
-                        "The following filter is configured for you: `{}`. It is **{}**.",
-                        filter.regex,
-                        if filter.enabled {
-                            "enabled"
-                        } else {
-                            "disabled"
-                        }
-                    )
-                }
-                Ok(None) => "No filter is configured for you.".into(),
-                Err(err) => {
-                    match err {
-                        AddFilterResult::UserNotFound => {
-                            "Notification for you are disabled. Please enable notifications first, and then add a filter.".into()
-                        }
-                        _ => {
-                            error!("Invalid action arm with Error: {:?}", err);
-                            "".into()
-                        }
-                    }
-                }
-            };
-            if !resp.is_empty() {
-                Some(Task::Reply(Response::new(person_id, resp)))
-            } else {
-                None
-            }
-        }
-        Action::FilterAdd(person_id, filter) => {
-            Some(match bot.add_filter(&person_id.0, filter) {
-                Ok(()) => Task::ReplyAndSave(Response::new(
-                    person_id,
-                    "Filter successfully added and enabled.")),
-                Err(err) => {
-                    Task::Reply(Response::new(
-                        person_id,
-                        match err {
-                            AddFilterResult::UserDisabled |
-                            AddFilterResult::UserNotFound => {
-                                "Notification for you are disabled. Please enable notifications first, and then add a filter."
-                            }
-                            AddFilterResult::InvalidFilter => {
-                                "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
-                            }
-                            AddFilterResult::FilterNotConfigured => {
-                                assert!(false, "this should not be possible");
-                                ""
-                            }
-                        },
-                    ))
-                }
-            })
-        }
-        Action::FilterEnable(person_id) => {
-            Some(match bot.enable_filter(&person_id.0, true) {
-                Ok(filter) => {
-                    Task::ReplyAndSave(Response::new(
-                        person_id,
-                        format!(
-                            "Filter successfully enabled. The following filter is configured: {}",
-                            filter
-                        ),
-                    ))
-                }
-                Err(err) => {
-                    Task::Reply(Response::new(
-                        person_id,
-                        match err {
-                            AddFilterResult::UserDisabled |
-                            AddFilterResult::UserNotFound => {
-                                "Notification for you are disabled. Please enable notifications first, and then add a filter."
-                            }
-                            AddFilterResult::InvalidFilter => {
-                                "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
-                            }
-                            AddFilterResult::FilterNotConfigured => {
-                                "Cannot enable filter since there is none configured. User `filter <regex>` to add a new filter."
-                            }
-                        },
-                    ))
-                }
-            })
-        }
-        Action::FilterDisable(person_id) => {
-            Some(match bot.enable_filter(&person_id.0, false) {
-                Ok(_) => Task::ReplyAndSave(
-                    Response::new(person_id, "Filter successfully disabled."),
-                ),
-                Err(err) => {
-                    Task::Reply(Response::new(
-                        person_id,
-                        match err {
-                            AddFilterResult::UserDisabled |
-                            AddFilterResult::UserNotFound => {
-                                "Notification for you are disabled. No need to disable the filter."
-                            }
-                            AddFilterResult::InvalidFilter => {
-                                "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
-                            }
-                            AddFilterResult::FilterNotConfigured => {
-                                "No need to disable the filter since there is none configured."
-                            }
-                        },
-                    ))
-                }
-            })
-        }
-        Action::ReviewerAdded(event) => {
-            bot.get_reviewer_added_msg(&event).map(|(user, message)| {
-                Task::Reply(Response::new(user.spark_person_id.clone(), message))
-            })
-        }
-        Action::ChangeFetched(person_id, message, change) => {
-            Some(Task::Reply(Response::new(
-                person_id, format_msg_with_comments(message, change))))
-        }
-    };
-    (bot, task)
-}
-*/
 
 fn has_inline_comments(event: &gerrit::Event) -> bool {
     lazy_static! {
