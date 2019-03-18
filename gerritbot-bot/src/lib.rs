@@ -15,8 +15,10 @@ use regex::Regex;
 use rlua::{Function as LuaFunction, Lua};
 use serde::{Deserialize, Serialize};
 
-use crate::gerrit;
-use crate::spark;
+use gerritbot_gerrit as gerrit;
+use gerritbot_spark as spark;
+
+pub mod args;
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Filter {
@@ -149,7 +151,7 @@ pub enum AddFilterResult {
 }
 
 fn get_default_format_script() -> &'static str {
-    const DEFAULT_FORMAT_SCRIPT: &str = include_str!("../scripts/format.lua");
+    const DEFAULT_FORMAT_SCRIPT: &str = include_str!("../../scripts/format.lua");
     check_format_script_syntax(DEFAULT_FORMAT_SCRIPT)
         .unwrap_or_else(|err| panic!("invalid format script: {}", err));
     DEFAULT_FORMAT_SCRIPT
