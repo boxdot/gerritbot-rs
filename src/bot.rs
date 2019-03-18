@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert;
 use std::fs::File;
@@ -53,26 +54,6 @@ impl User {
             enabled: true,
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct CommandMessage {
-    pub sender_email: String,
-    pub sender_id: String,
-    pub command: Command,
-}
-
-#[derive(Debug, Clone)]
-pub enum Command {
-    Enable,
-    Disable,
-    ShowStatus,
-    ShowHelp,
-    ShowFilter,
-    EnableFilter,
-    DisableFilter,
-    SetFilter(String),
-    Unknown,
 }
 
 /// Cache line in LRU Cache containing last approval messages
@@ -460,6 +441,8 @@ impl Bot {
         gerrit_events: impl Stream<Item = gerrit::Event, Error = String> + Send,
         spark_messages: impl Stream<Item = spark::Message, Error = ()> + Send,
     ) -> impl Future<Item = (), Error = ()> {
+        let _ = &self.gerrit_command_runner;
+        let spark_client = self.spark_client.clone();
         let gerrit_actions = gerrit_events
             .filter_map(gerrit_event_to_action)
             .map_err(|e| error!("failed to receive gerrit event: {}", e));
@@ -470,7 +453,13 @@ impl Bot {
         gerrit_actions
             .select(spark_actions)
             .filter_map(move |action| bot_for_action.lock().unwrap().update(action))
-            .for_each(move |task| future::ok(bot_for_task.lock().unwrap().handle_task(task)))
+            .filter_map(move |task| bot_for_task.lock().unwrap().handle_task(task))
+            .for_each(move |response| {
+                debug!("Replying with: {}", response.message);
+                spark_client
+                    .reply(&response.person_id, &response.message)
+                    .map_err(|e| error!("failed to send spark message: {}", e))
+            })
     }
 
     /// Action controller
@@ -488,13 +477,14 @@ impl Bot {
             Some(task)
         }
         Action::UpdateApprovals(event) => {
-            self.get_approvals_msg(&event).map(|(user, message, is_human)| {
-                if is_human && has_inline_comments(&event) {
-                    Task::FetchComments(user.spark_person_id.0.clone(), event.change, message)
+            self.get_approvals_msg(&event).map(|(user, message, _is_human)|
+                if has_inline_comments(&event) {
+                    Task::Reply(Response::new(
+                        user.spark_person_id.clone()
+                        , format_msg_with_comments(message, event.change)))
                 } else {
                     Task::Reply(Response::new(user.spark_person_id.clone(), message))
-                }
-            })
+                })
         }
         Action::Help(person_id) => Some(Task::Reply(Response::new(person_id, HELP_MSG))),
         Action::Unknown(person_id) => Some(Task::Reply(Response::new(person_id, GREETINGS_MSG))),
@@ -618,21 +608,39 @@ impl Bot {
                 Task::Reply(Response::new(user.spark_person_id.clone(), message))
             })
         }
-        Action::ChangeFetched(person_id, message, change) => {
-            Some(Task::Reply(Response::new(
-                person_id, format_msg_with_comments(message, change))))
-        }
     }
     }
 
-    fn handle_task(&mut self, task: Task) {
-        unimplemented!()
+    fn handle_task(&mut self, task: Task) -> Option<Response> {
+        debug!("New task {:#?}", task);
+        let response = match task {
+            Task::Reply(response) => Some(response),
+            Task::ReplyAndSave(response) => {
+                self.save("state.json")
+                    .map_err(|err| {
+                        error!("Could not save state: {:?}", err);
+                    })
+                    .ok();
+                Some(response)
+            }
+        };
+        return response;
     }
 
     pub fn request_extended_gerrit_info(
         event: &gerrit::Event,
-    ) -> std::borrow::Cow<'static, [gerrit::ExtendedInfo]> {
-        unimplemented!()
+    ) -> Cow<'static, [gerrit::ExtendedInfo]> {
+        let owner = &event.change.owner.username;
+        let approver = event.author.as_ref().map(|user| &user.username);
+        let is_human = approver
+            .map(|name| name.to_lowercase().contains("bot"))
+            .unwrap_or(false);
+
+        if Some(owner) != approver && is_human && has_inline_comments(event) {
+            Cow::Borrowed(&[gerrit::ExtendedInfo::InlineComments])
+        } else {
+            Cow::Borrowed(&[])
+        }
     }
 
     fn touch_cache(&mut self, key: MsgCacheLine) -> bool {
@@ -819,7 +827,7 @@ impl Bot {
         ))
     }
 
-    pub fn save<P>(self, filename: P) -> Result<(), BotError>
+    pub fn save<P>(&self, filename: P) -> Result<(), BotError>
     where
         P: AsRef<Path>,
     {
@@ -856,7 +864,6 @@ pub enum Action {
     FilterEnable(spark::PersonId),
     FilterDisable(spark::PersonId),
     ReviewerAdded(Box<gerrit::Event>),
-    ChangeFetched(spark::PersonId, String /* message */, gerrit::Change),
 }
 
 #[derive(Debug)]
@@ -881,7 +888,6 @@ impl Response {
 pub enum Task {
     Reply(Response),
     ReplyAndSave(Response),
-    FetchComments(String, gerrit::Change, String),
 }
 
 const GREETINGS_MSG: &str =
