@@ -1,7 +1,7 @@
 [workspace]
 members = [
-  "gerritbot-bot",
+  "gerritbot",
   "gerritbot-gerrit",
   "gerritbot-spark",
 ]
-default-members = ["gerritbot-bot"]
+default-members = ["gerritbot"]
