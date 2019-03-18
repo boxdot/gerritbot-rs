@@ -6,10 +6,7 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use futures::{
-    future::{self, Future},
-    stream::Stream,
-};
+use futures::{future::Future, stream::Stream};
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use log::{debug, error, warn};

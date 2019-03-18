@@ -1,13 +1,10 @@
 // need to raise recursion limit because many combinators
 #![recursion_limit = "128"]
 #![deny(bare_trait_objects)]
-#![allow(unused_imports)]
 
-use std::convert::identity;
-use std::rc::Rc;
 use std::time::Duration;
 
-use futures::{future, future::lazy, Future, Sink, Stream};
+use futures::{future, future::lazy, Future, Stream};
 use log::{debug, error, info, warn};
 
 use gerritbot_gerrit as gerrit;
