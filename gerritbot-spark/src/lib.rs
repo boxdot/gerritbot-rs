@@ -128,7 +128,7 @@ pub struct Message {
 
     // a message contained in a post does not have text loaded
     #[serde(default)]
-    text: String,
+    pub text: String,
     markdown: Option<String>,
     html: Option<String>,
     files: Option<Vec<String>>,
