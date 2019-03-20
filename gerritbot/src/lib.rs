@@ -1412,51 +1412,56 @@ mod test {
         assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
     }
 
-    #[cfg(broken)]
     #[test]
     fn add_valid_filter_for_existing_user() {
-        let mut bot = Bot::new();
-        bot.add_user("some_person_id", "some@example.com");
+        let mut bot = new_bot();
+        bot.state.add_user(
+            &spark::PersonId("some_person_id".to_string()),
+            &spark::Email("some@example.com".to_string()),
+        );
 
-        let res = bot.add_filter("some_person_id", ".*some_word.*");
+        let res = bot.state.add_filter("some_person_id", ".*some_word.*");
         assert!(res.is_ok());
         assert!(bot
+            .state
             .users
             .iter()
-            .position(|u| u.spark_person_id == "some_person_id"
-                && u.email == "some@example.com"
+            .position(|u| u.spark_person_id.0 == "some_person_id"
+                && u.email.0 == "some@example.com"
                 && u.filter == Some(Filter::new(".*some_word.*")))
             .is_some());
 
         {
-            let filter = bot.get_filter("some_person_id");
+            let filter = bot.state.get_filter("some_person_id");
             assert_eq!(filter, Ok(Some(&Filter::new(".*some_word.*"))));
         }
-        let res = bot.enable_filter("some_person_id", false);
+        let res = bot.state.enable_filter("some_person_id", false);
         assert_eq!(res, Ok(String::from(".*some_word.*")));
         assert!(bot
+            .state
             .users
             .iter()
-            .position(|u| u.spark_person_id == "some_person_id"
-                && u.email == "some@example.com"
+            .position(|u| u.spark_person_id.0 == "some_person_id"
+                && u.email.0 == "some@example.com"
                 && u.filter.as_ref().map(|f| f.enabled) == Some(false))
             .is_some());
         {
-            let filter = bot.get_filter("some_person_id").unwrap().unwrap();
+            let filter = bot.state.get_filter("some_person_id").unwrap().unwrap();
             assert_eq!(filter.regex, ".*some_word.*");
             assert_eq!(filter.enabled, false);
         }
-        let res = bot.enable_filter("some_person_id", true);
+        let res = bot.state.enable_filter("some_person_id", true);
         assert_eq!(res, Ok(String::from(".*some_word.*")));
         assert!(bot
+            .state
             .users
             .iter()
-            .position(|u| u.spark_person_id == "some_person_id"
-                && u.email == "some@example.com"
+            .position(|u| u.spark_person_id.0 == "some_person_id"
+                && u.email.0 == "some@example.com"
                 && u.filter.as_ref().map(|f| f.enabled) == Some(true))
             .is_some());
         {
-            let filter = bot.get_filter("some_person_id");
+            let filter = bot.state.get_filter("some_person_id");
             assert_eq!(filter, Ok(Some(&Filter::new(".*some_word.*"))));
         }
     }
