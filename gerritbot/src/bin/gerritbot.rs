@@ -115,7 +115,7 @@ fn main() {
     let gerrit_event_stream = gerrit::extended_event_stream(
         connect_to_gerrit(),
         connect_to_gerrit(),
-        bot::Bot::request_extended_gerrit_info,
+        bot::request_extended_gerrit_info,
     );
     let gerrit_command_runner = gerrit::CommandRunner::new(connect_to_gerrit());
 

@@ -94,12 +94,28 @@ impl MsgCacheLine {
     }
 }
 
-pub struct Bot {
+pub trait GerritCommandRunner {}
+
+impl GerritCommandRunner for gerrit::CommandRunner {}
+
+pub trait SparkClient: Clone {
+    type ReplyFuture: Future<Item = (), Error = spark::Error> + Send;
+    fn reply(&self, person_id: &spark::PersonId, msg: &str) -> Self::ReplyFuture;
+}
+
+impl SparkClient for spark::Client {
+    type ReplyFuture = Box<dyn Future<Item = (), Error = spark::Error> + Send>;
+    fn reply(&self, person_id: &spark::PersonId, msg: &str) -> Self::ReplyFuture {
+        Box::new(self.reply(person_id, msg))
+    }
+}
+
+pub struct Bot<G = gerrit::CommandRunner, S = spark::Client> {
     state: State,
     msg_cache: Option<LruCache<MsgCacheLine, ()>>,
     format_script: String,
-    gerrit_command_runner: gerrit::CommandRunner,
-    spark_client: spark::Client,
+    gerrit_command_runner: G,
+    spark_client: S,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -369,11 +385,7 @@ impl Builder {
         })
     }
 
-    pub fn build(
-        self,
-        gerrit_command_runner: gerrit::CommandRunner,
-        spark_client: spark::Client,
-    ) -> Bot {
+    pub fn build<G, S>(self, gerrit_command_runner: G, spark_client: S) -> Bot<G, S> {
         let Self {
             format_script,
             msg_cache_parameters,
@@ -433,7 +445,25 @@ pub fn gerrit_event_to_action(event: gerrit::Event) -> Option<Action> {
     }
 }
 
-impl Bot {
+pub fn request_extended_gerrit_info(event: &gerrit::Event) -> Cow<'static, [gerrit::ExtendedInfo]> {
+    let owner = &event.change.owner.username;
+    let approver = event.author.as_ref().map(|user| &user.username);
+    let is_human = approver
+        .map(|name| name.to_lowercase().contains("bot"))
+        .unwrap_or(false);
+
+    if Some(owner) != approver && is_human && has_inline_comments(event) {
+        Cow::Borrowed(&[gerrit::ExtendedInfo::InlineComments])
+    } else {
+        Cow::Borrowed(&[])
+    }
+}
+
+impl<G, S> Bot<G, S>
+where
+    G: GerritCommandRunner,
+    S: SparkClient,
+{
     pub fn run(
         self,
         // TODO: gerrit event stream probably shouldn't produce errors
@@ -624,22 +654,6 @@ impl Bot {
             }
         };
         return response;
-    }
-
-    pub fn request_extended_gerrit_info(
-        event: &gerrit::Event,
-    ) -> Cow<'static, [gerrit::ExtendedInfo]> {
-        let owner = &event.change.owner.username;
-        let approver = event.author.as_ref().map(|user| &user.username);
-        let is_human = approver
-            .map(|name| name.to_lowercase().contains("bot"))
-            .unwrap_or(false);
-
-        if Some(owner) != approver && is_human && has_inline_comments(event) {
-            Cow::Borrowed(&[gerrit::ExtendedInfo::InlineComments])
-        } else {
-            Cow::Borrowed(&[])
-        }
     }
 
     fn touch_cache(&mut self, key: MsgCacheLine) -> bool {
@@ -982,10 +996,28 @@ fn format_msg_with_comments(message: String, change: gerrit::Change) -> String {
 #[cfg(test)]
 mod test {
     #![allow(unused_imports, dead_code)]
+    use futures::future;
     use std::thread;
     use std::time::Duration;
 
     use super::*;
+
+    struct TestGerritCommandRunner;
+    impl GerritCommandRunner for TestGerritCommandRunner {}
+
+    #[derive(Clone)]
+    struct TestSparkClient;
+
+    impl SparkClient for TestSparkClient {
+        type ReplyFuture = future::FutureResult<(), spark::Error>;
+        fn reply(&self, _person_id: &spark::PersonId, _msg: &str) -> Self::ReplyFuture {
+            future::ok(())
+        }
+    }
+
+    fn new_bot() -> Bot<TestGerritCommandRunner, TestSparkClient> {
+        Builder::new(State::new()).build(TestGerritCommandRunner, TestSparkClient)
+    }
 
     #[test]
     fn add_user() {
@@ -1000,16 +1032,18 @@ mod test {
         assert!(state.users[0].enabled);
     }
 
-    #[cfg(broken)]
     #[test]
     fn status_for() {
-        let mut bot = Bot::new();
-        bot.add_user("some_person_id", "some@example.com");
+        let mut bot = new_bot();
+        bot.state.add_user(
+            &spark::PersonId("some_person_id".to_string()),
+            &spark::Email("some@example.com".to_string()),
+        );
 
         let resp = bot.status_for("some_person_id");
         assert!(resp.contains("enabled"));
 
-        bot.users[0].enabled = false;
+        bot.state.users[0].enabled = false;
         let resp = bot.status_for("some_person_id");
         assert!(resp.contains("disabled"));
 
