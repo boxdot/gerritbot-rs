@@ -1019,6 +1019,15 @@ mod test {
         Builder::new(State::new()).build(TestGerritCommandRunner, TestSparkClient)
     }
 
+    fn new_bot_with_msg_cache(
+        capacity: usize,
+        expiration: Duration,
+    ) -> Bot<TestGerritCommandRunner, TestSparkClient> {
+        Builder::new(State::new())
+            .with_msg_cache(capacity, expiration)
+            .build(TestGerritCommandRunner, TestSparkClient)
+    }
+
     #[test]
     fn add_user() {
         let mut state = State::new();
@@ -1160,106 +1169,117 @@ mod test {
         assert_eq!(user.unwrap().email.0, "some_2@example.com");
     }
 
-    #[cfg(broken)]
     #[test]
     fn get_approvals_msg_for_empty_bot() {
         // bot does not have the user => no message
-        let mut bot = Bot::new();
+        let mut bot = new_bot();
         let res = bot.get_approvals_msg(&get_event());
         assert!(res.is_none());
     }
 
-    #[cfg(broken)]
     #[test]
     fn get_approvals_msg_for_same_author_and_approver() {
         // the approval is from the author => no message
-        let mut bot = Bot::new();
-        bot.add_user("approver_spark_id", "approver@example.com");
+        let mut bot = new_bot();
+        bot.state.add_user(
+            &spark::PersonId("approver_spark_id".to_string()),
+            &spark::Email("approver@example.com".to_string()),
+        );
         let res = bot.get_approvals_msg(&get_event());
         assert!(res.is_none());
     }
 
-    #[cfg(broken)]
     #[test]
     fn get_approvals_msg_for_user_with_disabled_notifications() {
         // the approval is for the user with disabled notifications
         // => no message
-        let mut bot = Bot::new();
-        bot.add_user("author_spark_id", "author@example.com");
-        bot.users[0].enabled = false;
+        let mut bot = new_bot();
+        bot.state.add_user(
+            &spark::PersonId("author_spark_id".to_string()),
+            &spark::Email("author@example.com".to_string()),
+        );
+        bot.state.users[0].enabled = false;
         let res = bot.get_approvals_msg(&get_event());
         assert!(res.is_none());
     }
 
-    #[cfg(broken)]
     #[test]
     fn get_approvals_msg_for_user_with_enabled_notifications() {
         // the approval is for the user with enabled notifications
         // => message
-        let mut bot = Bot::new();
-        bot.add_user("author_spark_id", "author@example.com");
+        let mut bot = new_bot();
+        bot.state.add_user(
+            &spark::PersonId("author_spark_id".to_string()),
+            &spark::Email("author@example.com".to_string()),
+        );
         let res = bot.get_approvals_msg(&get_event());
         assert!(res.is_some());
         let (user, msg, is_human) = res.unwrap();
-        assert_eq!(user.spark_person_id, "author_spark_id");
-        assert_eq!(user.email, "author@example.com");
+        assert_eq!(user.spark_person_id.0, "author_spark_id");
+        assert_eq!(user.email.0, "author@example.com");
         assert!(msg.contains("Some review."));
         assert!(is_human);
     }
 
-    #[cfg(broken)]
     #[test]
     fn get_approvals_msg_for_user_with_enabled_notifications_and_filter() {
         // the approval is for the user with enabled notifications
         // => message
-        let mut bot = Bot::new();
-        bot.add_user("author_spark_id", "author@example.com");
+        let mut bot = new_bot();
+        bot.state.add_user(
+            &spark::PersonId("author_spark_id".to_string()),
+            &spark::Email("author@example.com".to_string()),
+        );
 
         {
-            let res = bot.add_filter("author_spark_id", ".*Code-Review.*");
+            let res = bot.state.add_filter("author_spark_id", ".*Code-Review.*");
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_none());
         }
         {
-            let res = bot.enable_filter("author_spark_id", false);
+            let res = bot.state.enable_filter("author_spark_id", false);
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.spark_person_id, "author_spark_id");
-            assert_eq!(user.email, "author@example.com");
+            assert_eq!(user.spark_person_id.0, "author_spark_id");
+            assert_eq!(user.email.0, "author@example.com");
             assert!(msg.contains("Some review."));
             assert!(is_human);
         }
         {
-            let res = bot.enable_filter("author_spark_id", true);
+            let res = bot.state.enable_filter("author_spark_id", true);
             assert!(res.is_ok());
-            let res = bot.add_filter("author_spark_id", "some_non_matching_filter");
+            let res = bot
+                .state
+                .add_filter("author_spark_id", "some_non_matching_filter");
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.spark_person_id, "author_spark_id");
-            assert_eq!(user.email, "author@example.com");
+            assert_eq!(user.spark_person_id.0, "author_spark_id");
+            assert_eq!(user.email.0, "author@example.com");
             assert!(msg.contains("Some review."));
             assert!(is_human);
         }
     }
 
-    #[cfg(broken)]
     #[test]
     fn get_approvals_msg_for_quickly_repeated_event() {
         // same approval for the user with enabled notifications 2 times in less than 1 sec
         // => first time get message, second time nothing
-        let mut bot = Bot::with_msg_cache(10, Duration::from_secs(1));
-        bot.add_user("author_spark_id", "author@example.com");
+        let mut bot = new_bot_with_msg_cache(10, Duration::from_secs(1));
+        bot.state.add_user(
+            &spark::PersonId("author_spark_id".to_string()),
+            &spark::Email("author@example.com".to_string()),
+        );
         {
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.spark_person_id, "author_spark_id");
-            assert_eq!(user.email, "author@example.com");
+            assert_eq!(user.spark_person_id.0, "author_spark_id");
+            assert_eq!(user.email.0, "author@example.com");
             assert!(msg.contains("Some review."));
             assert!(is_human);
         }
@@ -1269,19 +1289,21 @@ mod test {
         }
     }
 
-    #[cfg(broken)]
     #[test]
     fn get_approvals_msg_for_slowly_repeated_event() {
         // same approval for the user with enabled notifications 2 times in more than 100 msec
         // => get message 2 times
-        let mut bot = Bot::with_msg_cache(10, Duration::from_millis(50));
-        bot.add_user("author_spark_id", "author@example.com");
+        let mut bot = new_bot_with_msg_cache(10, Duration::from_millis(50));
+        bot.state.add_user(
+            &spark::PersonId("author_spark_id".to_string()),
+            &spark::Email("author@example.com".to_string()),
+        );
         {
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.spark_person_id, "author_spark_id");
-            assert_eq!(user.email, "author@example.com");
+            assert_eq!(user.spark_person_id.0, "author_spark_id");
+            assert_eq!(user.email.0, "author@example.com");
             assert!(msg.contains("Some review."));
             assert!(is_human);
         }
@@ -1290,21 +1312,23 @@ mod test {
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.spark_person_id, "author_spark_id");
-            assert_eq!(user.email, "author@example.com");
+            assert_eq!(user.spark_person_id.0, "author_spark_id");
+            assert_eq!(user.email.0, "author@example.com");
             assert!(msg.contains("Some review."));
             assert!(is_human);
         }
     }
 
-    #[cfg(broken)]
     #[test]
     fn get_approvals_msg_for_bot_with_low_msgs_capacity() {
         // same approval for the user with enabled notifications 2 times in more less 100 msec
         // but there is also another approval and bot's msg capacity is 1
         // => get message 3 times
-        let mut bot = Bot::with_msg_cache(1, Duration::from_secs(1));
-        bot.add_user("author_spark_id", "author@example.com");
+        let mut bot = new_bot_with_msg_cache(1, Duration::from_secs(1));
+        bot.state.add_user(
+            &spark::PersonId("author_spark_id".to_string()),
+            &spark::Email("author@example.com".to_string()),
+        );
         {
             let mut event = get_event();
             event.change.subject = String::from("A");
