@@ -1122,37 +1122,42 @@ mod test {
         event.unwrap()
     }
 
-    #[cfg(broken)]
     #[test]
     fn test_add_user() {
-        let mut bot = Bot::new();
-        bot.add_user("some_person_id", "some@example.com");
-        assert_eq!(bot.users.len(), 1);
-        assert_eq!(bot.person_id_index.len(), 1);
-        assert_eq!(bot.email_index.len(), 1);
-        assert_eq!(bot.users[0].spark_person_id, "some_person_id");
-        assert_eq!(bot.users[0].email, "some@example.com");
-        assert_eq!(bot.person_id_index.get("some_person_id"), Some(&0));
-        assert_eq!(bot.email_index.get("some@example.com"), Some(&0));
+        let mut state = State::new();
+        state.add_user(
+            &spark::PersonId("some_person_id".to_string()),
+            &spark::Email("some@example.com".to_string()),
+        );
+        assert_eq!(state.users.len(), 1);
+        assert_eq!(state.person_id_index.len(), 1);
+        assert_eq!(state.email_index.len(), 1);
+        assert_eq!(state.users[0].spark_person_id.0, "some_person_id");
+        assert_eq!(state.users[0].email.0, "some@example.com");
+        assert_eq!(state.person_id_index.get("some_person_id"), Some(&0));
+        assert_eq!(state.email_index.get("some@example.com"), Some(&0));
 
-        bot.add_user("some_person_id_2", "some_2@example.com");
-        assert_eq!(bot.users.len(), 2);
-        assert_eq!(bot.person_id_index.len(), 2);
-        assert_eq!(bot.email_index.len(), 2);
-        assert_eq!(bot.users[1].spark_person_id, "some_person_id_2");
-        assert_eq!(bot.users[1].email, "some_2@example.com");
-        assert_eq!(bot.person_id_index.get("some_person_id_2"), Some(&1));
-        assert_eq!(bot.email_index.get("some_2@example.com"), Some(&1));
+        state.add_user(
+            &spark::PersonId("some_person_id_2".to_string()),
+            &spark::Email("some_2@example.com".to_string()),
+        );
+        assert_eq!(state.users.len(), 2);
+        assert_eq!(state.person_id_index.len(), 2);
+        assert_eq!(state.email_index.len(), 2);
+        assert_eq!(state.users[1].spark_person_id.0, "some_person_id_2");
+        assert_eq!(state.users[1].email.0, "some_2@example.com");
+        assert_eq!(state.person_id_index.get("some_person_id_2"), Some(&1));
+        assert_eq!(state.email_index.get("some_2@example.com"), Some(&1));
 
-        let user = bot.find_user("some_person_id");
+        let user = state.find_user("some_person_id");
         assert!(user.is_some());
-        assert_eq!(user.unwrap().spark_person_id, "some_person_id");
-        assert_eq!(user.unwrap().email, "some@example.com");
+        assert_eq!(user.unwrap().spark_person_id.0, "some_person_id");
+        assert_eq!(user.unwrap().email.0, "some@example.com");
 
-        let user = bot.find_user("some_person_id_2");
+        let user = state.find_user("some_person_id_2");
         assert!(user.is_some());
-        assert_eq!(user.unwrap().spark_person_id, "some_person_id_2");
-        assert_eq!(user.unwrap().email, "some_2@example.com");
+        assert_eq!(user.unwrap().spark_person_id.0, "some_person_id_2");
+        assert_eq!(user.unwrap().email.0, "some_2@example.com");
     }
 
     #[cfg(broken)]
