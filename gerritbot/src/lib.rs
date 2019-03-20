@@ -1008,6 +1008,8 @@ mod test {
     #[derive(Clone)]
     struct TestSparkClient;
 
+    type TestBot = Bot<TestGerritCommandRunner, TestSparkClient>;
+
     impl SparkClient for TestSparkClient {
         type ReplyFuture = future::FutureResult<(), spark::Error>;
         fn reply(&self, _person_id: &spark::PersonId, _msg: &str) -> Self::ReplyFuture {
@@ -1015,14 +1017,11 @@ mod test {
         }
     }
 
-    fn new_bot() -> Bot<TestGerritCommandRunner, TestSparkClient> {
+    fn new_bot() -> TestBot {
         Builder::new(State::new()).build(TestGerritCommandRunner, TestSparkClient)
     }
 
-    fn new_bot_with_msg_cache(
-        capacity: usize,
-        expiration: Duration,
-    ) -> Bot<TestGerritCommandRunner, TestSparkClient> {
+    fn new_bot_with_msg_cache(capacity: usize, expiration: Duration) -> TestBot {
         Builder::new(State::new())
             .with_msg_cache(capacity, expiration)
             .build(TestGerritCommandRunner, TestSparkClient)
@@ -1349,13 +1348,15 @@ mod test {
         }
     }
 
-    #[cfg(broken)]
     #[test]
     fn test_format_msg() {
-        let mut bot = Bot::new();
-        bot.add_user("author_spark_id", "author@example.com");
+        let mut bot = new_bot();
+        bot.state.add_user(
+            &spark::PersonId("author_spark_id".to_string()),
+            &spark::Email("author@example.com".to_string()),
+        );
         let event = get_event();
-        let res = Bot::format_msg(
+        let res = TestBot::format_msg(
             get_default_format_script(),
             &event,
             &event.approvals.as_ref().unwrap()[0],
@@ -1367,14 +1368,16 @@ mod test {
         );
     }
 
-    #[cfg(broken)]
     #[test]
     fn format_msg_filters_specific_messages() {
-        let mut bot = Bot::new();
-        bot.add_user("author_spark_id", "author@example.com");
+        let mut bot = new_bot();
+        bot.state.add_user(
+            &spark::PersonId("author_spark_id".to_string()),
+            &spark::Email("author@example.com".to_string()),
+        );
         let mut event = get_event();
         event.approvals.as_mut().unwrap()[0].approval_type = String::from("Some new type");
-        let res = Bot::format_msg(
+        let res = TestBot::format_msg(
             get_default_format_script(),
             &event,
             &event.approvals.as_ref().unwrap()[0],
@@ -1383,25 +1386,29 @@ mod test {
         assert_eq!(res.map(|s| s.is_empty()), Ok(true));
     }
 
-    #[cfg(broken)]
     #[test]
     fn add_invalid_filter_for_existing_user() {
-        let mut bot = Bot::new();
-        bot.add_user("some_person_id", "some@example.com");
-
-        let res = bot.add_filter("some_person_id", ".some_weard_regex/[");
+        let mut bot = new_bot();
+        bot.state.add_user(
+            &spark::PersonId("author_spark_id".to_string()),
+            &spark::Email("author@example.com".to_string()),
+        );
+        let res = bot
+            .state
+            .add_filter("some_person_id", ".some_weard_regex/[");
         assert_eq!(res, Err(AddFilterResult::InvalidFilter));
         assert!(bot
+            .state
             .users
             .iter()
-            .position(|u| u.spark_person_id == "some_person_id"
-                && u.email == "some@example.com"
+            .position(|u| u.spark_person_id.0 == "some_person_id"
+                && u.email.0 == "some@example.com"
                 && u.filter == None)
             .is_some());
 
-        let res = bot.enable_filter("some_person_id", true);
+        let res = bot.state.enable_filter("some_person_id", true);
         assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
-        let res = bot.enable_filter("some_person_id", false);
+        let res = bot.state.enable_filter("some_person_id", false);
         assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
     }
 
