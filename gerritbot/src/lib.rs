@@ -221,25 +221,26 @@ impl State {
     // it will completely mess up the indexes.
     fn add_user<'a>(
         &'a mut self,
-        person_id: &spark::PersonId,
-        email: &spark::Email,
+        person_id: &spark::PersonIdRef,
+        email: &spark::EmailRef,
     ) -> &'a mut User {
         let user_pos = self.users.len();
-        self.users.push(User::new(person_id.clone(), email.clone()));
-        self.person_id_index.insert(person_id.clone(), user_pos);
-        self.email_index.insert(email.clone(), user_pos);
+        self.users
+            .push(User::new(person_id.to_owned(), email.to_owned()));
+        self.person_id_index.insert(person_id.to_owned(), user_pos);
+        self.email_index.insert(email.to_owned(), user_pos);
         self.users.last_mut().unwrap()
     }
 
     fn find_or_add_user_by_person_id<'a>(
         &'a mut self,
-        person_id: &spark::PersonId,
-        email: &spark::Email,
+        person_id: &spark::PersonIdRef,
+        email: &spark::EmailRef,
     ) -> &'a mut User {
         let pos = self
             .users
             .iter()
-            .position(|u| &u.spark_person_id == person_id);
+            .position(|u| u.spark_person_id == person_id);
         let user: &'a mut User = match pos {
             Some(pos) => &mut self.users[pos],
             None => self.add_user(person_id, email),
@@ -271,8 +272,8 @@ impl State {
 
     fn enable<'a>(
         &'a mut self,
-        person_id: &spark::PersonId,
-        email: &spark::Email,
+        person_id: &spark::PersonIdRef,
+        email: &spark::EmailRef,
         enabled: bool,
     ) -> &'a User {
         let user: &'a mut User = self.find_or_add_user_by_person_id(person_id, email);
@@ -280,7 +281,11 @@ impl State {
         user
     }
 
-    pub fn add_filter<A>(&mut self, person_id: &str, filter: A) -> Result<(), AddFilterResult>
+    pub fn add_filter<A>(
+        &mut self,
+        person_id: &spark::PersonIdRef,
+        filter: A,
+    ) -> Result<(), AddFilterResult>
     where
         A: Into<String>,
     {
@@ -304,7 +309,7 @@ impl State {
 
     pub fn get_filter<'a>(
         &'a self,
-        person_id: &str,
+        person_id: &spark::PersonIdRef,
     ) -> Result<Option<&'a Filter>, AddFilterResult> {
         let user = self.find_user(person_id);
         match user {
@@ -315,7 +320,7 @@ impl State {
 
     pub fn enable_filter(
         &mut self,
-        person_id: &str,
+        person_id: &spark::PersonIdRef,
         enabled: bool,
     ) -> Result<String /* filter */, AddFilterResult> {
         let user = self.find_user_mut(person_id);
@@ -518,11 +523,11 @@ where
         Action::Help(person_id) => Some(Task::Reply(Response::new(person_id, HELP_MSG))),
         Action::Unknown(person_id) => Some(Task::Reply(Response::new(person_id, GREETINGS_MSG))),
         Action::Status(person_id) => {
-            let status = self.status_for(&person_id.0);
+            let status = self.status_for(&person_id);
             Some(Task::Reply(Response::new(person_id, status)))
         }
         Action::FilterStatus(person_id) => {
-            let resp: String = match self.state.get_filter(&person_id.0) {
+            let resp: String = match self.state.get_filter(&person_id) {
                 Ok(Some(filter)) => {
                     format!(
                         "The following filter is configured for you: `{}`. It is **{}**.",
@@ -554,7 +559,7 @@ where
             }
         }
         Action::FilterAdd(person_id, filter) => {
-            Some(match self.state.add_filter(&person_id.0, filter) {
+            Some(match self.state.add_filter(&person_id, filter) {
                 Ok(()) => Task::ReplyAndSave(Response::new(
                     person_id,
                     "Filter successfully added and enabled.")),
@@ -579,7 +584,7 @@ where
             })
         }
         Action::FilterEnable(person_id) => {
-            Some(match self.state.enable_filter(&person_id.0, true) {
+            Some(match self.state.enable_filter(&person_id, true) {
                 Ok(filter) => {
                     Task::ReplyAndSave(Response::new(
                         person_id,
@@ -609,7 +614,7 @@ where
             })
         }
         Action::FilterDisable(person_id) => {
-            Some(match self.state.enable_filter(&person_id.0, false) {
+            Some(match self.state.enable_filter(&person_id, false) {
                 Ok(_) => Task::ReplyAndSave(
                     Response::new(person_id, "Filter successfully disabled."),
                 ),
@@ -733,7 +738,12 @@ where
             // No need to notify about user's own approvals.
             return None;
         }
-        let owner_email = change.owner.email.as_ref().cloned().map(spark::Email)?;
+        let owner_email = change
+            .owner
+            .email
+            .as_ref()
+            .cloned()
+            .map(spark::Email::new)?;
 
         // try to find the use and check it is enabled
         let user_pos = *self.state.email_index.get(&owner_email)?;
@@ -811,7 +821,7 @@ where
 
     fn get_reviewer_added_msg(&mut self, event: &gerrit::Event) -> Option<(&User, String)> {
         let reviewer = event.reviewer.as_ref().cloned()?;
-        let reviewer_email = reviewer.email.as_ref().cloned().map(spark::Email)?;
+        let reviewer_email = reviewer.email.as_ref().cloned().map(spark::Email::new)?;
         let user_pos = *self.state.email_index.get(&reviewer_email)?;
         if !self.state.users[user_pos].enabled {
             return None;
@@ -849,7 +859,7 @@ where
         Ok(())
     }
 
-    pub fn status_for(&self, person_id: &str) -> String {
+    pub fn status_for(&self, person_id: &spark::PersonIdRef) -> String {
         let user = self.state.find_user(person_id);
         let enabled = user.map_or(false, |u| u.enabled);
         format!(
@@ -1030,12 +1040,18 @@ mod test {
     fn add_user() {
         let mut state = State::new();
         state.add_user(
-            &spark::PersonId("some_person_id".to_string()),
-            &spark::Email("some@example.com".to_string()),
+            spark::PersonIdRef::new("some_person_id"),
+            spark::EmailRef::new("some@example.com"),
         );
         assert_eq!(state.users.len(), 1);
-        assert_eq!(state.users[0].spark_person_id.0, "some_person_id");
-        assert_eq!(state.users[0].email.0, "some@example.com");
+        assert_eq!(
+            state.users[0].spark_person_id,
+            spark::PersonIdRef::new("some_person_id")
+        );
+        assert_eq!(
+            state.users[0].email,
+            spark::EmailRef::new("some@example.com")
+        );
         assert!(state.users[0].enabled);
     }
 
@@ -1043,18 +1059,18 @@ mod test {
     fn status_for() {
         let mut bot = new_bot();
         bot.state.add_user(
-            &spark::PersonId("some_person_id".to_string()),
-            &spark::Email("some@example.com".to_string()),
+            spark::PersonIdRef::new("some_person_id"),
+            spark::EmailRef::new("some@example.com"),
         );
 
-        let resp = bot.status_for("some_person_id");
+        let resp = bot.status_for(spark::PersonIdRef::new("some_person_id"));
         assert!(resp.contains("enabled"));
 
         bot.state.users[0].enabled = false;
-        let resp = bot.status_for("some_person_id");
+        let resp = bot.status_for(spark::PersonIdRef::new("some_person_id"));
         assert!(resp.contains("disabled"));
 
-        let resp = bot.status_for("some_non_existent_id");
+        let resp = bot.status_for(spark::PersonIdRef::new("some_non_existent_id"));
         assert!(resp.contains("disabled"));
     }
 
@@ -1064,17 +1080,19 @@ mod test {
             let mut bot = new_bot();
             let num_users = bot.state.num_users();
             bot.state.enable(
-                &spark::PersonId("some_person_id".to_string()),
-                &spark::Email("some@example.com".to_string()),
+                spark::PersonIdRef::new("some_person_id"),
+                spark::EmailRef::new("some@example.com"),
                 enable,
             );
             assert!(bot
                 .state
                 .users
                 .iter()
-                .position(|u| u.spark_person_id.0 == "some_person_id"
-                    && u.email.0 == "some@example.com"
-                    && u.enabled == enable)
+                .position(
+                    |u| u.spark_person_id == spark::PersonIdRef::new("some_person_id")
+                        && u.email == spark::EmailRef::new("some@example.com")
+                        && u.enabled == enable
+                )
                 .is_some());
             assert!(bot.state.num_users() == num_users + 1);
         };
@@ -1087,23 +1105,25 @@ mod test {
         let test = |enable| {
             let mut bot = new_bot();
             bot.state.add_user(
-                &spark::PersonId("some_person_id".to_string()),
-                &spark::Email("some@example.com".to_string()),
+                spark::PersonIdRef::new("some_person_id"),
+                spark::EmailRef::new("some@example.com"),
             );
             let num_users = bot.state.num_users();
 
             bot.state.enable(
-                &spark::PersonId("some_person_id".to_string()),
-                &spark::Email("some@example.com".to_string()),
+                spark::PersonIdRef::new("some_person_id"),
+                spark::EmailRef::new("some@example.com"),
                 enable,
             );
             assert!(bot
                 .state
                 .users
                 .iter()
-                .position(|u| u.spark_person_id.0 == "some_person_id"
-                    && u.email.0 == "some@example.com"
-                    && u.enabled == enable)
+                .position(
+                    |u| u.spark_person_id == spark::PersonIdRef::new("some_person_id")
+                        && u.email == spark::EmailRef::new("some@example.com")
+                        && u.enabled == enable
+                )
                 .is_some());
             assert!(bot.state.num_users() == num_users);
         };
@@ -1133,38 +1153,82 @@ mod test {
     fn test_add_user() {
         let mut state = State::new();
         state.add_user(
-            &spark::PersonId("some_person_id".to_string()),
-            &spark::Email("some@example.com".to_string()),
+            spark::PersonIdRef::new("some_person_id"),
+            spark::EmailRef::new("some@example.com"),
         );
         assert_eq!(state.users.len(), 1);
         assert_eq!(state.person_id_index.len(), 1);
         assert_eq!(state.email_index.len(), 1);
-        assert_eq!(state.users[0].spark_person_id.0, "some_person_id");
-        assert_eq!(state.users[0].email.0, "some@example.com");
-        assert_eq!(state.person_id_index.get("some_person_id"), Some(&0));
-        assert_eq!(state.email_index.get("some@example.com"), Some(&0));
+        assert_eq!(
+            state.users[0].spark_person_id,
+            spark::PersonIdRef::new("some_person_id")
+        );
+        assert_eq!(
+            state.users[0].email,
+            spark::EmailRef::new("some@example.com")
+        );
+        assert_eq!(
+            state
+                .person_id_index
+                .get(spark::PersonIdRef::new("some_person_id")),
+            Some(&0)
+        );
+        assert_eq!(
+            state
+                .email_index
+                .get(spark::EmailRef::new("some@example.com")),
+            Some(&0)
+        );
 
         state.add_user(
-            &spark::PersonId("some_person_id_2".to_string()),
-            &spark::Email("some_2@example.com".to_string()),
+            spark::PersonIdRef::new("some_person_id_2"),
+            spark::EmailRef::new("some_2@example.com"),
         );
         assert_eq!(state.users.len(), 2);
         assert_eq!(state.person_id_index.len(), 2);
         assert_eq!(state.email_index.len(), 2);
-        assert_eq!(state.users[1].spark_person_id.0, "some_person_id_2");
-        assert_eq!(state.users[1].email.0, "some_2@example.com");
-        assert_eq!(state.person_id_index.get("some_person_id_2"), Some(&1));
-        assert_eq!(state.email_index.get("some_2@example.com"), Some(&1));
+        assert_eq!(
+            state.users[1].spark_person_id,
+            spark::PersonIdRef::new("some_person_id_2")
+        );
+        assert_eq!(
+            state.users[1].email,
+            spark::EmailRef::new("some_2@example.com")
+        );
+        assert_eq!(
+            state
+                .person_id_index
+                .get(spark::PersonIdRef::new("some_person_id_2")),
+            Some(&1)
+        );
+        assert_eq!(
+            state
+                .email_index
+                .get(spark::EmailRef::new("some_2@example.com")),
+            Some(&1)
+        );
 
-        let user = state.find_user("some_person_id");
+        let user = state.find_user(spark::PersonIdRef::new("some_person_id"));
         assert!(user.is_some());
-        assert_eq!(user.unwrap().spark_person_id.0, "some_person_id");
-        assert_eq!(user.unwrap().email.0, "some@example.com");
+        assert_eq!(
+            user.unwrap().spark_person_id,
+            spark::PersonIdRef::new("some_person_id")
+        );
+        assert_eq!(
+            user.unwrap().email,
+            spark::EmailRef::new("some@example.com")
+        );
 
-        let user = state.find_user("some_person_id_2");
+        let user = state.find_user(spark::PersonIdRef::new("some_person_id_2"));
         assert!(user.is_some());
-        assert_eq!(user.unwrap().spark_person_id.0, "some_person_id_2");
-        assert_eq!(user.unwrap().email.0, "some_2@example.com");
+        assert_eq!(
+            user.unwrap().spark_person_id,
+            spark::PersonIdRef::new("some_person_id_2")
+        );
+        assert_eq!(
+            user.unwrap().email,
+            spark::EmailRef::new("some_2@example.com")
+        );
     }
 
     #[test]
@@ -1180,8 +1244,8 @@ mod test {
         // the approval is from the author => no message
         let mut bot = new_bot();
         bot.state.add_user(
-            &spark::PersonId("approver_spark_id".to_string()),
-            &spark::Email("approver@example.com".to_string()),
+            spark::PersonIdRef::new("approver_spark_id"),
+            spark::EmailRef::new("approver@example.com"),
         );
         let res = bot.get_approvals_msg(&get_event());
         assert!(res.is_none());
@@ -1193,8 +1257,8 @@ mod test {
         // => no message
         let mut bot = new_bot();
         bot.state.add_user(
-            &spark::PersonId("author_spark_id".to_string()),
-            &spark::Email("author@example.com".to_string()),
+            spark::PersonIdRef::new("author_spark_id"),
+            spark::EmailRef::new("author@example.com"),
         );
         bot.state.users[0].enabled = false;
         let res = bot.get_approvals_msg(&get_event());
@@ -1207,14 +1271,17 @@ mod test {
         // => message
         let mut bot = new_bot();
         bot.state.add_user(
-            &spark::PersonId("author_spark_id".to_string()),
-            &spark::Email("author@example.com".to_string()),
+            spark::PersonIdRef::new("author_spark_id"),
+            spark::EmailRef::new("author@example.com"),
         );
         let res = bot.get_approvals_msg(&get_event());
         assert!(res.is_some());
         let (user, msg, is_human) = res.unwrap();
-        assert_eq!(user.spark_person_id.0, "author_spark_id");
-        assert_eq!(user.email.0, "author@example.com");
+        assert_eq!(
+            user.spark_person_id,
+            spark::PersonIdRef::new("author_spark_id")
+        );
+        assert_eq!(user.email, spark::EmailRef::new("author@example.com"));
         assert!(msg.contains("Some review."));
         assert!(is_human);
     }
@@ -1225,39 +1292,53 @@ mod test {
         // => message
         let mut bot = new_bot();
         bot.state.add_user(
-            &spark::PersonId("author_spark_id".to_string()),
-            &spark::Email("author@example.com".to_string()),
+            spark::PersonIdRef::new("author_spark_id"),
+            spark::EmailRef::new("author@example.com"),
         );
 
         {
-            let res = bot.state.add_filter("author_spark_id", ".*Code-Review.*");
+            let res = bot.state.add_filter(
+                spark::PersonIdRef::new("author_spark_id"),
+                ".*Code-Review.*",
+            );
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_none());
         }
         {
-            let res = bot.state.enable_filter("author_spark_id", false);
+            let res = bot
+                .state
+                .enable_filter(spark::PersonIdRef::new("author_spark_id"), false);
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.spark_person_id.0, "author_spark_id");
-            assert_eq!(user.email.0, "author@example.com");
+            assert_eq!(
+                user.spark_person_id,
+                spark::PersonIdRef::new("author_spark_id")
+            );
+            assert_eq!(user.email, spark::EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
             assert!(is_human);
         }
         {
-            let res = bot.state.enable_filter("author_spark_id", true);
-            assert!(res.is_ok());
             let res = bot
                 .state
-                .add_filter("author_spark_id", "some_non_matching_filter");
+                .enable_filter(spark::PersonIdRef::new("author_spark_id"), true);
+            assert!(res.is_ok());
+            let res = bot.state.add_filter(
+                spark::PersonIdRef::new("author_spark_id"),
+                "some_non_matching_filter",
+            );
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.spark_person_id.0, "author_spark_id");
-            assert_eq!(user.email.0, "author@example.com");
+            assert_eq!(
+                user.spark_person_id,
+                spark::PersonIdRef::new("author_spark_id")
+            );
+            assert_eq!(user.email, spark::EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
             assert!(is_human);
         }
@@ -1269,15 +1350,18 @@ mod test {
         // => first time get message, second time nothing
         let mut bot = new_bot_with_msg_cache(10, Duration::from_secs(1));
         bot.state.add_user(
-            &spark::PersonId("author_spark_id".to_string()),
-            &spark::Email("author@example.com".to_string()),
+            spark::PersonIdRef::new("author_spark_id"),
+            spark::EmailRef::new("author@example.com"),
         );
         {
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.spark_person_id.0, "author_spark_id");
-            assert_eq!(user.email.0, "author@example.com");
+            assert_eq!(
+                user.spark_person_id,
+                spark::PersonIdRef::new("author_spark_id")
+            );
+            assert_eq!(user.email, spark::EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
             assert!(is_human);
         }
@@ -1293,15 +1377,18 @@ mod test {
         // => get message 2 times
         let mut bot = new_bot_with_msg_cache(10, Duration::from_millis(50));
         bot.state.add_user(
-            &spark::PersonId("author_spark_id".to_string()),
-            &spark::Email("author@example.com".to_string()),
+            spark::PersonIdRef::new("author_spark_id"),
+            spark::EmailRef::new("author@example.com"),
         );
         {
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.spark_person_id.0, "author_spark_id");
-            assert_eq!(user.email.0, "author@example.com");
+            assert_eq!(
+                user.spark_person_id,
+                spark::PersonIdRef::new("author_spark_id")
+            );
+            assert_eq!(user.email, spark::EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
             assert!(is_human);
         }
@@ -1310,8 +1397,11 @@ mod test {
             let res = bot.get_approvals_msg(&get_event());
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.spark_person_id.0, "author_spark_id");
-            assert_eq!(user.email.0, "author@example.com");
+            assert_eq!(
+                user.spark_person_id,
+                spark::PersonIdRef::new("author_spark_id")
+            );
+            assert_eq!(user.email, spark::EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
             assert!(is_human);
         }
@@ -1324,8 +1414,8 @@ mod test {
         // => get message 3 times
         let mut bot = new_bot_with_msg_cache(1, Duration::from_secs(1));
         bot.state.add_user(
-            &spark::PersonId("author_spark_id".to_string()),
-            &spark::Email("author@example.com".to_string()),
+            spark::PersonIdRef::new("author_spark_id"),
+            spark::EmailRef::new("author@example.com"),
         );
         {
             let mut event = get_event();
@@ -1351,8 +1441,8 @@ mod test {
     fn test_format_msg() {
         let mut bot = new_bot();
         bot.state.add_user(
-            &spark::PersonId("author_spark_id".to_string()),
-            &spark::Email("author@example.com".to_string()),
+            spark::PersonIdRef::new("author_spark_id"),
+            spark::EmailRef::new("author@example.com"),
         );
         let event = get_event();
         let res = TestBot::format_msg(
@@ -1371,8 +1461,8 @@ mod test {
     fn format_msg_filters_specific_messages() {
         let mut bot = new_bot();
         bot.state.add_user(
-            &spark::PersonId("author_spark_id".to_string()),
-            &spark::Email("author@example.com".to_string()),
+            spark::PersonIdRef::new("author_spark_id"),
+            spark::EmailRef::new("author@example.com"),
         );
         let mut event = get_event();
         event.approvals.as_mut().unwrap()[0].approval_type = String::from("Some new type");
@@ -1389,25 +1479,32 @@ mod test {
     fn add_invalid_filter_for_existing_user() {
         let mut bot = new_bot();
         bot.state.add_user(
-            &spark::PersonId("some_person_id".to_string()),
-            &spark::Email("some@example.com".to_string()),
+            spark::PersonIdRef::new("some_person_id"),
+            spark::EmailRef::new("some@example.com"),
         );
-        let res = bot
-            .state
-            .add_filter("some_person_id", ".some_weard_regex/[");
+        let res = bot.state.add_filter(
+            spark::PersonIdRef::new("some_person_id"),
+            ".some_weard_regex/[",
+        );
         assert_eq!(res, Err(AddFilterResult::InvalidFilter));
         assert!(bot
             .state
             .users
             .iter()
-            .position(|u| u.spark_person_id.0 == "some_person_id"
-                && u.email.0 == "some@example.com"
-                && u.filter == None)
+            .position(
+                |u| u.spark_person_id == spark::PersonIdRef::new("some_person_id")
+                    && u.email == spark::EmailRef::new("some@example.com")
+                    && u.filter == None
+            )
             .is_some());
 
-        let res = bot.state.enable_filter("some_person_id", true);
+        let res = bot
+            .state
+            .enable_filter(spark::PersonIdRef::new("some_person_id"), true);
         assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
-        let res = bot.state.enable_filter("some_person_id", false);
+        let res = bot
+            .state
+            .enable_filter(spark::PersonIdRef::new("some_person_id"), false);
         assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
     }
 
@@ -1415,52 +1512,72 @@ mod test {
     fn add_valid_filter_for_existing_user() {
         let mut bot = new_bot();
         bot.state.add_user(
-            &spark::PersonId("some_person_id".to_string()),
-            &spark::Email("some@example.com".to_string()),
+            spark::PersonIdRef::new("some_person_id"),
+            spark::EmailRef::new("some@example.com"),
         );
 
-        let res = bot.state.add_filter("some_person_id", ".*some_word.*");
+        let res = bot
+            .state
+            .add_filter(spark::PersonIdRef::new("some_person_id"), ".*some_word.*");
         assert!(res.is_ok());
         assert!(bot
             .state
             .users
             .iter()
-            .position(|u| u.spark_person_id.0 == "some_person_id"
-                && u.email.0 == "some@example.com"
-                && u.filter == Some(Filter::new(".*some_word.*")))
+            .position(
+                |u| u.spark_person_id == spark::PersonIdRef::new("some_person_id")
+                    && u.email == spark::EmailRef::new("some@example.com")
+                    && u.filter == Some(Filter::new(".*some_word.*"))
+            )
             .is_some());
 
         {
-            let filter = bot.state.get_filter("some_person_id");
+            let filter = bot
+                .state
+                .get_filter(spark::PersonIdRef::new("some_person_id"));
             assert_eq!(filter, Ok(Some(&Filter::new(".*some_word.*"))));
         }
-        let res = bot.state.enable_filter("some_person_id", false);
+        let res = bot
+            .state
+            .enable_filter(spark::PersonIdRef::new("some_person_id"), false);
         assert_eq!(res, Ok(String::from(".*some_word.*")));
         assert!(bot
             .state
             .users
             .iter()
-            .position(|u| u.spark_person_id.0 == "some_person_id"
-                && u.email.0 == "some@example.com"
-                && u.filter.as_ref().map(|f| f.enabled) == Some(false))
+            .position(
+                |u| u.spark_person_id == spark::PersonIdRef::new("some_person_id")
+                    && u.email == spark::EmailRef::new("some@example.com")
+                    && u.filter.as_ref().map(|f| f.enabled) == Some(false)
+            )
             .is_some());
         {
-            let filter = bot.state.get_filter("some_person_id").unwrap().unwrap();
+            let filter = bot
+                .state
+                .get_filter(spark::PersonIdRef::new("some_person_id"))
+                .unwrap()
+                .unwrap();
             assert_eq!(filter.regex, ".*some_word.*");
             assert_eq!(filter.enabled, false);
         }
-        let res = bot.state.enable_filter("some_person_id", true);
+        let res = bot
+            .state
+            .enable_filter(spark::PersonIdRef::new("some_person_id"), true);
         assert_eq!(res, Ok(String::from(".*some_word.*")));
         assert!(bot
             .state
             .users
             .iter()
-            .position(|u| u.spark_person_id.0 == "some_person_id"
-                && u.email.0 == "some@example.com"
-                && u.filter.as_ref().map(|f| f.enabled) == Some(true))
+            .position(
+                |u| u.spark_person_id == spark::PersonIdRef::new("some_person_id")
+                    && u.email == spark::EmailRef::new("some@example.com")
+                    && u.filter.as_ref().map(|f| f.enabled) == Some(true)
+            )
             .is_some());
         {
-            let filter = bot.state.get_filter("some_person_id");
+            let filter = bot
+                .state
+                .get_filter(spark::PersonIdRef::new("some_person_id"));
             assert_eq!(filter, Ok(Some(&Filter::new(".*some_word.*"))));
         }
     }
@@ -1468,11 +1585,17 @@ mod test {
     #[test]
     fn add_valid_filter_for_non_existing_user() {
         let mut bot = new_bot();
-        let res = bot.state.add_filter("some_person_id", ".*some_word.*");
+        let res = bot
+            .state
+            .add_filter(spark::PersonIdRef::new("some_person_id"), ".*some_word.*");
         assert_eq!(res, Err(AddFilterResult::UserNotFound));
-        let res = bot.state.enable_filter("some_person_id", true);
+        let res = bot
+            .state
+            .enable_filter(spark::PersonIdRef::new("some_person_id"), true);
         assert_eq!(res, Err(AddFilterResult::UserNotFound));
-        let res = bot.state.enable_filter("some_person_id", false);
+        let res = bot
+            .state
+            .enable_filter(spark::PersonIdRef::new("some_person_id"), false);
         assert_eq!(res, Err(AddFilterResult::UserNotFound));
     }
 
@@ -1480,16 +1603,22 @@ mod test {
     fn add_valid_filter_for_disabled_user() {
         let mut bot = new_bot();
         bot.state.add_user(
-            &spark::PersonId("some_person_id".to_string()),
-            &spark::Email("some@example.com".to_string()),
+            spark::PersonIdRef::new("some_person_id"),
+            spark::EmailRef::new("some@example.com"),
         );
         bot.state.users[0].enabled = false;
 
-        let res = bot.state.add_filter("some_person_id", ".*some_word.*");
+        let res = bot
+            .state
+            .add_filter(spark::PersonIdRef::new("some_person_id"), ".*some_word.*");
         assert_eq!(res, Err(AddFilterResult::UserDisabled));
-        let res = bot.state.enable_filter("some_person_id", true);
+        let res = bot
+            .state
+            .enable_filter(spark::PersonIdRef::new("some_person_id"), true);
         assert_eq!(res, Err(AddFilterResult::UserDisabled));
-        let res = bot.state.enable_filter("some_person_id", false);
+        let res = bot
+            .state
+            .enable_filter(spark::PersonIdRef::new("some_person_id"), false);
         assert_eq!(res, Err(AddFilterResult::UserDisabled));
     }
 
@@ -1497,13 +1626,17 @@ mod test {
     fn enable_non_configured_filter_for_existing_user() {
         let mut bot = new_bot();
         bot.state.add_user(
-            &spark::PersonId("some_person_id".to_string()),
-            &spark::Email("some@example.com".to_string()),
+            spark::PersonIdRef::new("some_person_id"),
+            spark::EmailRef::new("some@example.com"),
         );
 
-        let res = bot.state.enable_filter("some_person_id", true);
+        let res = bot
+            .state
+            .enable_filter(spark::PersonIdRef::new("some_person_id"), true);
         assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
-        let res = bot.state.enable_filter("some_person_id", false);
+        let res = bot
+            .state
+            .enable_filter(spark::PersonIdRef::new("some_person_id"), false);
         assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
     }
 
@@ -1511,14 +1644,18 @@ mod test {
     fn enable_invalid_filter_for_existing_user() {
         let mut bot = new_bot();
         bot.state.add_user(
-            &spark::PersonId("some_person_id".to_string()),
-            &spark::Email("some@example.com".to_string()),
+            spark::PersonIdRef::new("some_person_id"),
+            spark::EmailRef::new("some@example.com"),
         );
         bot.state.users[0].filter = Some(Filter::new("invlide_filter_set_from_outside["));
 
-        let res = bot.state.enable_filter("some_person_id", true);
+        let res = bot
+            .state
+            .enable_filter(spark::PersonIdRef::new("some_person_id"), true);
         assert_eq!(res, Err(AddFilterResult::InvalidFilter));
-        let res = bot.state.enable_filter("some_person_id", false);
+        let res = bot
+            .state
+            .enable_filter(spark::PersonIdRef::new("some_person_id"), false);
         assert_eq!(res, Err(AddFilterResult::InvalidFilter));
     }
 
