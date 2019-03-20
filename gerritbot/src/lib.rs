@@ -1466,59 +1466,63 @@ mod test {
         }
     }
 
-    #[cfg(broken)]
     #[test]
     fn add_valid_filter_for_non_existing_user() {
-        let mut bot = Bot::new();
-        let res = bot.add_filter("some_person_id", ".*some_word.*");
+        let mut bot = new_bot();
+        let res = bot.state.add_filter("some_person_id", ".*some_word.*");
         assert_eq!(res, Err(AddFilterResult::UserNotFound));
-        let res = bot.enable_filter("some_person_id", true);
+        let res = bot.state.enable_filter("some_person_id", true);
         assert_eq!(res, Err(AddFilterResult::UserNotFound));
-        let res = bot.enable_filter("some_person_id", false);
+        let res = bot.state.enable_filter("some_person_id", false);
         assert_eq!(res, Err(AddFilterResult::UserNotFound));
     }
 
-    #[cfg(broken)]
     #[test]
     fn add_valid_filter_for_disabled_user() {
-        let mut bot = Bot::new();
-        bot.add_user("some_person_id", "some@example.com");
-        bot.users[0].enabled = false;
+        let mut bot = new_bot();
+        bot.state.add_user(
+            &spark::PersonId("some_person_id".to_string()),
+            &spark::Email("some@example.com".to_string()),
+        );
+        bot.state.users[0].enabled = false;
 
-        let res = bot.add_filter("some_person_id", ".*some_word.*");
+        let res = bot.state.add_filter("some_person_id", ".*some_word.*");
         assert_eq!(res, Err(AddFilterResult::UserDisabled));
-        let res = bot.enable_filter("some_person_id", true);
+        let res = bot.state.enable_filter("some_person_id", true);
         assert_eq!(res, Err(AddFilterResult::UserDisabled));
-        let res = bot.enable_filter("some_person_id", false);
+        let res = bot.state.enable_filter("some_person_id", false);
         assert_eq!(res, Err(AddFilterResult::UserDisabled));
     }
 
-    #[cfg(broken)]
     #[test]
     fn enable_non_configured_filter_for_existing_user() {
-        let mut bot = Bot::new();
-        bot.add_user("some_person_id", "some@example.com");
+        let mut bot = new_bot();
+        bot.state.add_user(
+            &spark::PersonId("some_person_id".to_string()),
+            &spark::Email("some@example.com".to_string()),
+        );
 
-        let res = bot.enable_filter("some_person_id", true);
+        let res = bot.state.enable_filter("some_person_id", true);
         assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
-        let res = bot.enable_filter("some_person_id", false);
+        let res = bot.state.enable_filter("some_person_id", false);
         assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
     }
 
-    #[cfg(broken)]
     #[test]
     fn enable_invalid_filter_for_existing_user() {
-        let mut bot = Bot::new();
-        bot.add_user("some_person_id", "some@example.com");
-        bot.users[0].filter = Some(Filter::new("invlide_filter_set_from_outside["));
+        let mut bot = new_bot();
+        bot.state.add_user(
+            &spark::PersonId("some_person_id".to_string()),
+            &spark::Email("some@example.com".to_string()),
+        );
+        bot.state.users[0].filter = Some(Filter::new("invlide_filter_set_from_outside["));
 
-        let res = bot.enable_filter("some_person_id", true);
+        let res = bot.state.enable_filter("some_person_id", true);
         assert_eq!(res, Err(AddFilterResult::InvalidFilter));
-        let res = bot.enable_filter("some_person_id", false);
+        let res = bot.state.enable_filter("some_person_id", false);
         assert_eq!(res, Err(AddFilterResult::InvalidFilter));
     }
 
-    #[cfg(broken)]
     #[test]
     fn test_has_inline_comments() {
         let mut event = get_event();
@@ -1529,7 +1533,6 @@ mod test {
         assert!(!has_inline_comments(&event));
     }
 
-    #[cfg(broken)]
     #[test]
     fn test_format_comments() {
         let mut event = get_change_with_comments();
