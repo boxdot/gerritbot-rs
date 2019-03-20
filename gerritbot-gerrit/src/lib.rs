@@ -11,7 +11,6 @@ use futures::sync::oneshot;
 use futures::{future, Future, Sink as _, Stream};
 use log::{debug, error, info};
 use serde::Deserialize;
-use ssh2::Channel;
 
 /// Gerrit username
 pub type Username = String;
@@ -524,104 +523,6 @@ pub struct ChangeDetails {
     pub user: String,
     pub message: String,
     pub change: Change,
-}
-
-/// Create a channel accepting change ids and a stream of reponses with `Change` corresponding to
-/// incoming change ids.
-///
-/// Note: If connection to Gerrit is lost, the stream will try to establish a new one for every
-/// incoming change id.
-pub fn change_sink(
-    connection: Connection,
-) -> (
-    Sender<(String, Change, String)>,
-    impl Stream<Item = ChangeDetails, Error = String>,
-) {
-    let mut conn = connection;
-    let (tx, rx) = channel::<(String, Change, String)>(1);
-    let response_stream = rx.then(move |data| {
-        let (user, mut change, message) = data.expect("receiver should never fail");
-
-        let change_id = change.id.clone();
-        let res = conn.session.channel_session().map(|ssh_channel| {
-            let comments = match fetch_patch_set(ssh_channel, change_id.clone()) {
-                Ok(c) => c,
-                Err(e) => {
-                    error!("Could not fetch additional comments: {:?}", e);
-                    None
-                }
-            };
-            debug!("Got comments: {:#?}", comments);
-            change.current_patch_set = comments;
-        });
-
-        if res.is_ok() {
-            Ok(ChangeDetails {
-                user: user.clone(),
-                message: message.clone(),
-                change: change.clone(),
-            })
-        } else {
-            info!(
-                "Reconnecting to Gerrit over SSH for sending commands: {}",
-                &conn.host
-            );
-            if let Err(e) = conn.reconnect() {
-                return Err(format!("Failed to reconnect to Gerrit over SSH: {}", e));
-            };
-
-            conn.session
-                .channel_session()
-                .map_err(|e| {
-                    format!(
-                        "Failed to reconnect to Gerrit over SSH for sending commands: {}",
-                        e
-                    )
-                })
-                .and_then(|ssh_channel| {
-                    let comments = match fetch_patch_set(ssh_channel, change_id) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            error!("Could not fetch additional comments: {:?}", e);
-                            None
-                        }
-                    };
-                    debug!("Got comments: {:#?}", comments);
-                    change.current_patch_set = comments;
-                    Ok(ChangeDetails {
-                        user,
-                        message,
-                        change,
-                    })
-                })
-        }
-    });
-
-    (tx, response_stream)
-}
-
-pub fn fetch_patch_set(
-    mut ssh_channel: Channel,
-    change_id: String,
-) -> Result<Option<PatchSet>, serde_json::Error> {
-    let query = format!(
-        "gerrit query --format JSON --current-patch-set --comments {}",
-        change_id
-    );
-    ssh_channel.exec(&query).unwrap();
-
-    let buf_channel = BufReader::new(ssh_channel);
-    let line = buf_channel.lines().next();
-
-    // event from our channel cannot fail
-    let json: String = line.unwrap().ok().unwrap();
-    debug!("{}", json);
-    let complete_change: Change = serde_json::from_str::<Change>(&json)?;
-    debug!("{:#?}", complete_change);
-    //debug!("{:#?}", complete_change);
-    //let mut new_change = change.clone();
-    //change.comments = complete_change.comments;
-    Ok(complete_change.current_patch_set)
 }
 
 #[cfg(test)]
