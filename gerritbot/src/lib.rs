@@ -1062,7 +1062,8 @@ mod test {
                 enable,
             );
             assert!(bot
-                .state.users
+                .state
+                .users
                 .iter()
                 .position(|u| u.spark_person_id.0 == "some_person_id"
                     && u.email.0 == "some@example.com"
@@ -1074,23 +1075,30 @@ mod test {
         test(false);
     }
 
-    #[cfg(broken)]
     #[test]
     fn enable_existent_user() {
         let test = |enable| {
-            let mut bot = Bot::new();
-            bot.add_user("some_person_id", "some@example.com");
-            let num_users = bot.num_users();
+            let mut bot = new_bot();
+            bot.state.add_user(
+                &spark::PersonId("some_person_id".to_string()),
+                &spark::Email("some@example.com".to_string()),
+            );
+            let num_users = bot.state.num_users();
 
-            bot.enable("some_person_id", "some@example.com", enable);
+            bot.state.enable(
+                &spark::PersonId("some_person_id".to_string()),
+                &spark::Email("some@example.com".to_string()),
+                enable,
+            );
             assert!(bot
+                .state
                 .users
                 .iter()
-                .position(|u| u.spark_person_id == "some_person_id"
-                    && u.email == "some@example.com"
+                .position(|u| u.spark_person_id.0 == "some_person_id"
+                    && u.email.0 == "some@example.com"
                     && u.enabled == enable)
                 .is_some());
-            assert!(bot.num_users() == num_users);
+            assert!(bot.state.num_users() == num_users);
         };
         test(true);
         test(false);
