@@ -1390,8 +1390,8 @@ mod test {
     fn add_invalid_filter_for_existing_user() {
         let mut bot = new_bot();
         bot.state.add_user(
-            &spark::PersonId("author_spark_id".to_string()),
-            &spark::Email("author@example.com".to_string()),
+            &spark::PersonId("some_person_id".to_string()),
+            &spark::Email("some@example.com".to_string()),
         );
         let res = bot
             .state
