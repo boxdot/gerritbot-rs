@@ -1051,21 +1051,24 @@ mod test {
         assert!(resp.contains("disabled"));
     }
 
-    #[cfg(broken)]
     #[test]
     fn enable_non_existent_user() {
         let test = |enable| {
-            let mut bot = Bot::new();
-            let num_users = bot.num_users();
-            bot.enable("some_person_id", "some@example.com", enable);
+            let mut bot = new_bot();
+            let num_users = bot.state.num_users();
+            bot.state.enable(
+                &spark::PersonId("some_person_id".to_string()),
+                &spark::Email("some@example.com".to_string()),
+                enable,
+            );
             assert!(bot
-                .users
+                .state.users
                 .iter()
-                .position(|u| u.spark_person_id == "some_person_id"
-                    && u.email == "some@example.com"
+                .position(|u| u.spark_person_id.0 == "some_person_id"
+                    && u.email.0 == "some@example.com"
                     && u.enabled == enable)
                 .is_some());
-            assert!(bot.num_users() == num_users + 1);
+            assert!(bot.state.num_users() == num_users + 1);
         };
         test(true);
         test(false);
