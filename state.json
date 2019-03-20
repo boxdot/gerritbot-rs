@@ -1,1 +1,10 @@
-{"users":[{"spark_person_id":"Y2lzY29zcGFyazovL3VzL1BFT1BMRS8yMzcwZTg0MC0xNWMxLTQ4MWItODY1ZS0xNWMwYmI1NmYwYTU","email":"admin@example.com","enabled":true,"filter":null},{"spark_person_id":"Y2lzY29zcGFyazovL3VzL1BFT1BMRS8yMzcwZTg0MC0xNWMxLTQ4MWItODY1ZS0xNWMwYmI1NmYwYTU","email":"frank.benkstein@here.com","enabled":true,"filter":null}]}
+{
+  "users": [
+    {
+      "spark_person_id": "xxxx",
+      "email": "admin@example.com",
+      "enabled": true,
+      "filter": null
+    }
+  ]
+}
