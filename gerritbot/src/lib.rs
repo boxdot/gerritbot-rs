@@ -995,7 +995,6 @@ fn format_msg_with_comments(message: String, change: gerrit::Change) -> String {
 
 #[cfg(test)]
 mod test {
-    #![allow(unused_imports, dead_code)]
     use futures::future;
     use std::thread;
     use std::time::Duration;
