@@ -11,7 +11,7 @@ spark:
   output_mode: Notifications
   mode:
     Direct:
-      endpoint: "localhost:8888"
+      endpoint: "127.0.0.1:8888"
       output: Spark 
 
 bot:

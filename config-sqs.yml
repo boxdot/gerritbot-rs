@@ -12,7 +12,7 @@ spark:
   mode: 
     Sqs:
       uri: "https://sqs.us-east-1.amazonaws.com/xxxxxxxxxxx/gerribot-rs"
-      region: "us-east-1"
+      region: ["us-east-1", null]
   
 bot:
   msg_expiration: 4
