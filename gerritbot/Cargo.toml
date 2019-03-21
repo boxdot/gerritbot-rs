@@ -23,3 +23,8 @@ serde_yaml = "0.8"
 shellexpand = "0.1"
 stderrlog = "0.4"
 tokio = "0.1"
+
+[dev-dependencies]
+speculate = "0.1"
+spectral = { version = "0.6", default-features = false }
+
