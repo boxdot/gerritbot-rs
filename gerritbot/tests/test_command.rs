@@ -113,5 +113,15 @@ speculate! {
             assert_that!(replies[0].person_id).is_equal_to(TEST_PERSON_ID.to_owned());
             assert_that!(replies[0].message).contains("I am GerritBot");
         }
+
+        test "version" {
+            bot.send_message("version");
+            let replies = Rc::try_unwrap(replies).unwrap().into_inner();
+            assert_that!(replies).has_length(1);
+            assert_that!(replies[0].person_id).is_equal_to(TEST_PERSON_ID.to_owned());
+            assert_that!(replies[0].message).contains(env!("CARGO_PKG_NAME"));
+            assert_that!(replies[0].message).contains(env!("CARGO_PKG_VERSION"));
+            assert_that!(replies[0].message).contains(env!("VERGEN_SHA"));
+        }
     }
 }
