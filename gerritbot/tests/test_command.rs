@@ -105,5 +105,13 @@ speculate! {
             assert_that!(replies[1].person_id).is_equal_to(TEST_PERSON_ID.to_owned());
             assert_that!(replies[1].message).contains("enabled");
         }
+
+        test "unknown command" {
+            bot.send_message("this is not a known command");
+            let replies = Rc::try_unwrap(replies).unwrap().into_inner();
+            assert_that!(replies).has_length(1);
+            assert_that!(replies[0].person_id).is_equal_to(TEST_PERSON_ID.to_owned());
+            assert_that!(replies[0].message).contains("I am GerritBot");
+        }
     }
 }
