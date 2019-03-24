@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::fmt;
-use std::io::{self, BufRead, BufReader, Read as _};
+use std::io::{BufRead, BufReader, Read as _};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -8,7 +8,7 @@ use std::thread;
 use backoff::Operation as _; // for retry_notify
 use futures::sync::mpsc::{channel, Receiver, Sender};
 use futures::sync::oneshot;
-use futures::{future, Future, Sink as _, Stream};
+use futures::{future, Future, Sink, Stream};
 use log::{debug, error, info};
 use serde::Deserialize;
 
@@ -150,37 +150,10 @@ pub struct Event {
     pub created_on: u32,
 }
 
-#[derive(Debug)]
-pub enum StreamError {
-    Io(io::Error),
-    Parse(serde_json::Error),
-    Terminated(String /* reason */),
-}
-
-impl From<io::Error> for StreamError {
-    fn from(err: io::Error) -> StreamError {
-        StreamError::Io(err)
-    }
-}
-
-impl From<serde_json::Error> for StreamError {
-    fn from(err: serde_json::Error) -> StreamError {
-        StreamError::Parse(err)
-    }
-}
-
 fn get_pub_key_path(priv_key_path: &PathBuf) -> PathBuf {
     let mut pub_key_path = PathBuf::from(priv_key_path.to_str().unwrap());
     pub_key_path.set_extension("pub");
     pub_key_path
-}
-
-fn send_terminate_msg<T>(
-    tx: &Sender<Result<String, StreamError>>,
-    reason: String,
-) -> Result<T, ()> {
-    let _ = tx.clone().send(Err(StreamError::Terminated(reason))).wait();
-    Err(())
 }
 
 pub struct Connection {
@@ -374,71 +347,54 @@ impl CommandRunner {
     }
 }
 
-fn receiver_into_event_stream(
-    rx: Receiver<Result<String, StreamError>>,
-) -> impl Stream<Item = Event, Error = String> {
-    rx
-        // Receiver itself never fails, lower result value.
-        .then(|event_data_result: Result<_, ()>| event_data_result.unwrap())
-        .map_err(|err| format!("Stream error from Gerrit: {:?}", err))
-        .filter_map(|event_data| {
-            let event_result = serde_json::from_str(&event_data);
-            debug!("Incoming Gerrit event: {:#?}", event_result);
-            // Ignore JSON decoding errors.
-            event_result.ok()
-        })
+fn receiver_into_event_stream(rx: Receiver<String>) -> impl Stream<Item = Event, Error = ()> {
+    rx.filter_map(|event_data| {
+        let event_result = serde_json::from_str(&event_data);
+        debug!("Incoming Gerrit event: {:#?}", event_result);
+        // Ignore JSON decoding errors.
+        event_result.ok()
+    })
 }
 
-pub fn event_stream(connection: Connection) -> impl Stream<Item = Event, Error = String> {
+pub fn event_stream(connection: Connection) -> impl Stream<Item = Event, Error = ()> {
     let (main_tx, rx) = channel(1);
-    thread::spawn(move || -> Result<(), ()> {
-        let mut conn = connection;
-        let mut first = true;
-        loop {
-            if first {
-                first = false;
-            } else {
-                conn.reconnect().or_else(|err| {
-                    send_terminate_msg(
-                        &main_tx.clone(),
-                        format!("Could not connect to Gerrit: {}", err),
-                    )
-                })?;
-            }
 
-            let mut ssh_channel = conn.session.channel_session().or_else(|err| {
-                send_terminate_msg(
-                    &main_tx.clone(),
-                    format!("Could not open SSH channel: {:?}", err),
+    fn process_events(connection: &mut Connection, tx: &Sender<String>) -> Result<(), ()> {
+        let mut ssh_channel = connection
+            .session
+            .channel_session()
+            .map_err(|err| error!("Could not open SSH channel: {:?}", err))?;
+        ssh_channel
+            .exec("gerrit stream-events -s comment-added -s reviewer-added")
+            .map_err(|err| {
+                error!(
+                    "Could not execute gerrit stream-event command over ssh: {:?}",
+                    err
                 )
             })?;
-            ssh_channel
-                .exec("gerrit stream-events -s comment-added -s reviewer-added")
-                .or_else(|err| {
-                    send_terminate_msg(
-                        &main_tx.clone(),
-                        format!(
-                            "Could not execute gerrit stream-event command over ssh: {:?}",
-                            err
-                        ),
-                    )
-                })?;
-            info!("Connected to Gerrit.");
+        info!("Connected to Gerrit.");
 
-            let buf_channel = BufReader::new(ssh_channel);
-            let mut tx = main_tx.clone();
-            for line in buf_channel.lines() {
-                if let Ok(line) = line {
-                    match tx.clone().send(Ok(line)).wait() {
-                        Ok(s) => tx = s,
-                        Err(err) => {
-                            error!("Cannot send message through channel {:?}", err);
-                            break;
-                        }
-                    }
-                } else {
-                    error!("Could not read line from buffer. Will drop connection.");
-                    break;
+        let buf_channel = BufReader::new(ssh_channel);
+        for line in buf_channel.lines() {
+            let line =
+                line.map_err(|_| error!("Could not read line from buffer. Will drop connection."))?;
+            tx.clone()
+                .send(line)
+                .wait()
+                .map_err(|err| error!("Cannot send message through channel {:?}", err))?;
+        }
+        Ok(())
+    }
+
+    thread::spawn(move || {
+        let mut connection = connection;
+        while !main_tx.is_closed() {
+            if process_events(&mut connection, &main_tx).is_err() {
+                info!("reconnecting");
+
+                if let Err(e) = connection.reconnect_repeatedly() {
+                    error!("reconnect failed permanently: {}", e);
+                    return;
                 }
             }
         }
@@ -453,11 +409,13 @@ pub enum ExtendedInfo {
     InlineComments,
 }
 
+/// Fetch extended event info. On error the original event and an error message
+/// is returned.
 fn fetch_extended_info(
     command_runner: &mut CommandRunner,
     event: Event,
     extended_info: &[ExtendedInfo],
-) -> impl Future<Item = Event, Error = String> {
+) -> impl Future<Item = Event, Error = (Event, String)> {
     if extended_info.is_empty() {
         return future::Either::A(future::ok(event));
     }
@@ -474,13 +432,19 @@ fn fetch_extended_info(
 
     query += &format!(" change:{}", event.change.id);
 
-    future::Either::B(command_runner.run_command(query).and_then(
-        move |result| -> Result<Event, String> {
+    future::Either::B(command_runner.run_command(query).then(
+        move |result| -> Result<Event, (Event, String)> {
             let mut event = event;
+            let result = match result {
+                Ok(result) => result,
+                Err(e) => return Err((event, e)),
+            };
             let line = result.lines().next().unwrap_or("");
 
-            let mut change: Change = serde_json::from_str(line)
-                .map_err(|e| format!("failed to decode result: {}", e))?;
+            let mut change: Change = match serde_json::from_str(line) {
+                Ok(change) => change,
+                Err(e) => return Err((event, format!("failed to decode result: {}", e))),
+            };
 
             // copy patchset from change for the comments
             if let Some(patchsets) = change.patch_sets.take() {
@@ -503,18 +467,22 @@ fn fetch_extended_info(
 pub fn extended_event_stream<F>(
     stream_connection: Connection,
     command_connection: Connection,
-    f: F,
-) -> impl Stream<Item = Event, Error = String>
+    select_extended_info: F,
+) -> impl Stream<Item = Event, Error = ()>
 where
     F: FnMut(&Event) -> Cow<'static, [ExtendedInfo]>,
 {
-    let mut command_runner =
-        CommandRunner::new(command_connection);
-    let mut f = f;
+    let mut command_runner = CommandRunner::new(command_connection);
+    let mut select_extended_info = select_extended_info;
 
     event_stream(stream_connection).and_then(move |event| {
-        let extended_info = f(&event);
-        fetch_extended_info(&mut command_runner, event, extended_info.as_ref())
+        let extended_info = select_extended_info(&event);
+        fetch_extended_info(&mut command_runner, event, extended_info.as_ref()).or_else(
+            |(event, err)| {
+                error!("failed to fetch extended event info: {}", err);
+                Ok(event)
+            },
+        )
     })
 }
 
