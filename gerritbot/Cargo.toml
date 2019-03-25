@@ -30,4 +30,4 @@ vergen = "3.0"
 [dev-dependencies]
 speculate = "0.1"
 spectral = { version = "0.6", default-features = false }
-
+structopt = "0.2"
