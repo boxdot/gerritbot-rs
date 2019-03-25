@@ -457,12 +457,24 @@ pub fn request_extended_gerrit_info(event: &gerrit::Event) -> Cow<'static, [gerr
     let is_human = approver
         .map(|name| !name.to_lowercase().contains("bot"))
         .unwrap_or(false);
+    let mut extended_info = Vec::new();
 
-    if Some(owner) != approver && is_human && maybe_has_inline_comments(event) {
-        Cow::Borrowed(&[gerrit::ExtendedInfo::InlineComments])
-    } else {
-        Cow::Borrowed(&[])
+    match event.event_type {
+        gerrit::EventType::CommentAdded => {
+            if Some(owner) != approver && is_human && maybe_has_inline_comments(event) {
+                extended_info.push(gerrit::ExtendedInfo::InlineComments);
+            }
+
+            // Could be smarter here by checking for old_value and if the value
+            // is positive.
+            if event.approvals.is_some() {
+                extended_info.push(gerrit::ExtendedInfo::SubmitRecords);
+            }
+        }
+        _ => (),
     }
+
+    Cow::Owned(extended_info)
 }
 
 impl<G, S> Bot<G, S>
