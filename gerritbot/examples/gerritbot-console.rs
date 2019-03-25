@@ -2,12 +2,12 @@
 #![recursion_limit = "128"]
 #![deny(bare_trait_objects)]
 
-use std::io::{BufReader, Write as _};
+use std::io::{BufRead as _, BufReader, Write as _};
 use std::path::PathBuf;
 
 use structopt::StructOpt;
 
-use futures::{future, stream, Stream};
+use futures::{future, stream, Future as _, Sink as _, Stream as _};
 use log::{error, info};
 
 use gerritbot as bot;
@@ -95,8 +95,16 @@ fn main() {
         }
     };
     let email = args.email.clone();
-    let stdin_lines = tokio::io::lines(BufReader::new(tokio::io::stdin()))
-        .map_err(|e| error!("failed to read line from stdin: {}", e));
+    let (stdin_lines_sender, stdin_lines) = futures::sync::mpsc::channel::<String>(1);
+    std::thread::spawn(move || {
+        stream::iter_ok::<_, ()>(
+            BufReader::new(std::io::stdin())
+                .lines()
+                .filter_map(Result::ok),
+        )
+        .forward(stdin_lines_sender.sink_map_err(|e| error!("sink error: {}", e)))
+        .wait()
+    });
     let console_spark_messages = stream::once(Ok("enable\n".to_string()))
         .chain(stdin_lines)
         .filter_map(|line| Some(line).filter(|line| !line.is_empty()))
