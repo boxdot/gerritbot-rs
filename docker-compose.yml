@@ -10,11 +10,13 @@ services:
       - ./.git:/root/src.git:ro
       - ./testing/data:/root/data
       - ./testing/prepopulate.nohup:/docker-entrypoint-init.d/prepopulate.nohup
+      - gerrit-site:/tmp/gerrit-site
     environment:
       - USER_NAME=gerrit
       - USER_EMAIL=gerrit@localhost
       - WEBURL=http://localhost:8080
       - AUTH_TYPE=DEVELOPMENT_BECOME_ANY_ACCOUNT
+      - GERRIT_SITE=/tmp/gerrit-site
 
   bot:
     build:
@@ -25,3 +27,10 @@ services:
       - ./testing/data/target:/src/target
     depends_on:
       - gerrit
+
+volumes:
+  gerrit-site:
+    driver_opts:
+      type: tmpfs
+      o: exec
+      device: tmpfs

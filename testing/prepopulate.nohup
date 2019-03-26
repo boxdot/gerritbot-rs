@@ -16,6 +16,8 @@ generate_ssh_key() {
     ssh-keygen -t rsa -f $ssh_key -q -N ""
   fi
 
+  rm -rf $HOME/.ssh/known_hosts
+
   echo -n "Uploading SSH public-key to Gerrit user ${1}: "
   curl -s --user admin:secret -X POST --url "http://localhost:8080/a/accounts/${1}/sshkeys" --data-binary "@${ssh_key}.pub"
 
