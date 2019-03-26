@@ -20,6 +20,8 @@ use gerritbot_spark as spark;
 
 pub mod args;
 
+const UNKNOWN_USER: &str = "<unknown user>";
+
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Filter {
     pub regex: String,
@@ -442,34 +444,30 @@ fn spark_message_to_action(message: spark::Message) -> Action {
 
 /// Transform a gerrit event into a bot action.
 pub fn gerrit_event_to_action(event: gerrit::Event) -> Option<Action> {
-    if event.event_type == gerrit::EventType::CommentAdded && event.approvals.is_some() {
-        Some(Action::UpdateApprovals(Box::new(event)))
-    } else if event.event_type == gerrit::EventType::ReviewerAdded {
-        Some(Action::ReviewerAdded(Box::new(event)))
-    } else {
-        None
+    match event {
+        gerrit::Event::CommentAdded(event) => Some(Action::UpdateApprovals(Box::new(event))),
+        gerrit::Event::ReviewerAdded(event) => Some(Action::ReviewerAdded(Box::new(event))),
     }
 }
 
 pub fn request_extended_gerrit_info(event: &gerrit::Event) -> Cow<'static, [gerrit::ExtendedInfo]> {
-    let owner = &event.change.owner.username;
-    let approver = event.author.as_ref().map(|user| &user.username);
-    let is_human = approver
-        .map(|name| !name.to_lowercase().contains("bot"))
-        .unwrap_or(false);
     let mut extended_info = Vec::new();
 
-    match event.event_type {
-        gerrit::EventType::CommentAdded => {
-            if Some(owner) != approver && is_human && maybe_has_inline_comments(event) {
+    match event {
+        gerrit::Event::CommentAdded(event) => {
+            let owner_name = event.change.owner.username.as_ref();
+            let approver_name = event.author.username.as_ref();
+            let is_human = approver_name
+                .map(|name| !name.to_lowercase().contains("bot"))
+                .unwrap_or(false);
+
+            if owner_name != approver_name && is_human && maybe_has_inline_comments(event) {
                 extended_info.push(gerrit::ExtendedInfo::InlineComments);
             }
 
             // Could be smarter here by checking for old_value and if the value
             // is positive.
-            if event.approvals.is_some() {
-                extended_info.push(gerrit::ExtendedInfo::SubmitRecords);
-            }
+            extended_info.push(gerrit::ExtendedInfo::SubmitRecords);
         }
         _ => (),
     }
@@ -688,13 +686,13 @@ where
 
     fn format_msg(
         script_source: &str,
-        event: &gerrit::Event,
+        event: &gerrit::CommentAddedEvent,
         approval: &gerrit::Approval,
         is_human: bool,
     ) -> Result<String, String> {
         fn create_lua_event<'lua>(
             context: rlua::Context<'lua>,
-            event: &gerrit::Event,
+            event: &gerrit::CommentAddedEvent,
             approval: &gerrit::Approval,
             is_human: bool,
         ) -> Result<rlua::Table<'lua>, rlua::Error> {
@@ -703,10 +701,10 @@ where
                 "approver",
                 event
                     .author
+                    .username
                     .as_ref()
-                    .map(|user| user.username.as_ref())
-                    .unwrap_or("<unknown user>")
-                    .to_string(),
+                    .cloned()
+                    .unwrap_or_else(|| UNKNOWN_USER.to_string()),
             )?;
             lua_event.set("comment", event.comment.clone())?;
             lua_event.set("value", approval.value.parse().unwrap_or(0))?;
@@ -736,26 +734,20 @@ where
         })
     }
 
-    fn get_approvals_msg(&mut self, event: &gerrit::Event) -> Option<(&User, String, bool)> {
+    fn get_approvals_msg(
+        &mut self,
+        event: &gerrit::CommentAddedEvent,
+    ) -> Option<(&User, String, bool)> {
         debug!("Incoming approvals: {:#?}", event);
 
-        if event.approvals.is_none() {
-            return None;
-        }
-
-        let approvals = event.approvals.as_ref()?;
+        let approvals = &event.approvals;
         let change = &event.change;
-        let approver = &event.author.as_ref()?.username;
-        if approver == &change.owner.username {
+        let approver = event.author.username.as_ref()?;
+        if Some(approver) == change.owner.username.as_ref() {
             // No need to notify about user's own approvals.
             return None;
         }
-        let owner_email = change
-            .owner
-            .email
-            .as_ref()
-            .cloned()
-            .map(spark::Email::new)?;
+        let owner_email = spark::Email::new(change.owner.email.clone());
 
         // try to find the use and check it is enabled
         let user_pos = *self.state.email_index.get(&owner_email)?;
@@ -819,21 +811,20 @@ where
         if !msgs.is_empty() {
             // We got some approvals
             Some((&self.state.users[user_pos], msgs.join("\n\n"), is_human)) // two newlines since it is markdown
-        } else if is_human && definitely_has_inline_comments(&event) && event.comment.is_some() {
+        } else if is_human && definitely_has_inline_comments(&event) {
             // We did not get any approvals, but we got inline comments from a human.
-            Some((
-                &self.state.users[user_pos],
-                event.comment.clone().unwrap(),
-                is_human,
-            ))
+            Some((&self.state.users[user_pos], event.comment.clone(), is_human))
         } else {
             None
         }
     }
 
-    fn get_reviewer_added_msg(&mut self, event: &gerrit::Event) -> Option<(&User, String)> {
-        let reviewer = event.reviewer.as_ref().cloned()?;
-        let reviewer_email = reviewer.email.as_ref().cloned().map(spark::Email::new)?;
+    fn get_reviewer_added_msg(
+        &mut self,
+        event: &gerrit::ReviewerAddedEvent,
+    ) -> Option<(&User, String)> {
+        let reviewer = event.reviewer.clone();
+        let reviewer_email = spark::Email::new(reviewer.email.clone());
         let user_pos = *self.state.email_index.get(&reviewer_email)?;
         if !self.state.users[user_pos].enabled {
             return None;
@@ -857,7 +848,15 @@ where
             &self.state.users[user_pos],
             format!(
                 "[{}]({}) ({}) 👓 Added as reviewer",
-                event.change.subject, event.change.url, event.change.owner.username
+                event.change.subject,
+                event.change.url,
+                event
+                    .change
+                    .owner
+                    .username
+                    .as_ref()
+                    .map(String::as_str)
+                    .unwrap_or(UNKNOWN_USER)
             ),
         ))
     }
@@ -890,7 +889,7 @@ where
 pub enum Action {
     Enable(spark::PersonId, spark::Email),
     Disable(spark::PersonId, spark::Email),
-    UpdateApprovals(Box<gerrit::Event>),
+    UpdateApprovals(Box<gerrit::CommentAddedEvent>),
     Help(spark::PersonId),
     Unknown(spark::PersonId),
     Status(spark::PersonId),
@@ -899,7 +898,7 @@ pub enum Action {
     FilterAdd(spark::PersonId, String /* filter */),
     FilterEnable(spark::PersonId),
     FilterDisable(spark::PersonId),
-    ReviewerAdded(Box<gerrit::Event>),
+    ReviewerAdded(Box<gerrit::ReviewerAddedEvent>),
 }
 
 #[derive(Debug)]
@@ -964,18 +963,14 @@ const VERSION_MSG: &str = concat!(
 
 /// Guess if the change might have comments by looking for a specially formatted
 /// comment.
-fn maybe_has_inline_comments(event: &gerrit::Event) -> bool {
+fn maybe_has_inline_comments(event: &gerrit::CommentAddedEvent) -> bool {
     lazy_static! {
         static ref RE: Regex = Regex::new(r"\(\d+\scomments?\)").unwrap();
     }
-    event
-        .comment
-        .as_ref()
-        .map(|s| RE.is_match(s))
-        .unwrap_or(false)
+    RE.is_match(&event.comment)
 }
 
-fn definitely_has_inline_comments(event: &gerrit::Event) -> bool {
+fn definitely_has_inline_comments(event: &gerrit::CommentAddedEvent) -> bool {
     event
         .patchset
         .comments
@@ -984,7 +979,7 @@ fn definitely_has_inline_comments(event: &gerrit::Event) -> bool {
         .unwrap_or(false)
 }
 
-fn format_comments(change: gerrit::Change, patchset: gerrit::PatchSet) -> Option<String> {
+fn format_comments(change: gerrit::Change, patchset: gerrit::Patchset) -> Option<String> {
     let change_number = change.number;
     let host = change.url.split('/').nth(2).unwrap();
     let patch_set_number = patchset.number;
@@ -1006,7 +1001,15 @@ fn format_comments(change: gerrit::Change, patchset: gerrit::PatchSet) -> Option
                         let first_line = lines.next().unwrap_or("");
                         let first_line = format!(
                             "> [Line {}]({}) by {}: {}",
-                            comment.line, url, comment.reviewer, first_line
+                            comment.line,
+                            url,
+                            comment
+                                .reviewer
+                                .username
+                                .as_ref()
+                                .map(String::as_str)
+                                .unwrap_or(UNKNOWN_USER),
+                            first_line
                         );
                         let tail = lines
                             .map(|l| format!("> {}", l))
@@ -1029,7 +1032,7 @@ fn format_comments(change: gerrit::Change, patchset: gerrit::PatchSet) -> Option
 fn format_msg_with_comments(
     message: String,
     change: gerrit::Change,
-    patchset: gerrit::PatchSet,
+    patchset: gerrit::Patchset,
 ) -> String {
     if let Some(additional_message) = format_comments(change, patchset) {
         format!("{}\n\n{}", message, additional_message)
@@ -1250,22 +1253,24 @@ mod test {
     }
 
     const EVENT_JSON : &'static str = r#"
-{"author":{"name":"Approver","username":"approver"},"approvals":[{"type":"Code-Review","description":"Code-Review","value":"2","oldValue":"-1"}],"comment":"Patch Set 1: Code-Review+2\n\nJust a buggy script. FAILURE\n\nAnd more problems. FAILURE","patchSet":{"number":1,"revision":"49a65998c02eda928559f2d0b586c20bc8e37b10","parents":["fb1909b4eda306985d2bbce769310e5a50a98cf5"],"ref":"refs/changes/42/42/1","uploader":{"name":"Author","email":"author@example.com","username":"Author"},"createdOn":1494165142,"author":{"name":"Author","email":"author@example.com","username":"Author"},"isDraft":false,"kind":"REWORK","sizeInsertions":0,"sizeDeletions":0},"change":{"project":"demo-project","branch":"master","id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14","number":49,"subject":"Some review.","owner":{"name":"Author","email":"author@example.com","username":"author"},"url":"http://localhost/42","commitMessage":"Some review.\n\nChange-Id: Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14\n","status":"NEW"},"project":"demo-project","refName":"refs/heads/master","changeKey":{"id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14"},"type":"comment-added","eventCreatedOn":1499190282}"#;
+{"author":{"name":"Approver","username":"approver","email":"approver@approvers.com"},"approvals":[{"type":"Code-Review","description":"Code-Review","value":"2","oldValue":"-1"}],"comment":"Patch Set 1: Code-Review+2\n\nJust a buggy script. FAILURE\n\nAnd more problems. FAILURE","patchSet":{"number":1,"revision":"49a65998c02eda928559f2d0b586c20bc8e37b10","parents":["fb1909b4eda306985d2bbce769310e5a50a98cf5"],"ref":"refs/changes/42/42/1","uploader":{"name":"Author","email":"author@example.com","username":"Author"},"createdOn":1494165142,"author":{"name":"Author","email":"author@example.com","username":"Author"},"isDraft":false,"kind":"REWORK","sizeInsertions":0,"sizeDeletions":0},"change":{"project":"demo-project","branch":"master","id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14","number":49,"subject":"Some review.","owner":{"name":"Author","email":"author@example.com","username":"author"},"url":"http://localhost/42","commitMessage":"Some review.\n\nChange-Id: Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14\n","status":"NEW"},"project":"demo-project","refName":"refs/heads/master","changeKey":{"id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14"},"type":"comment-added","eventCreatedOn":1499190282}"#;
 
     const CHANGE_JSON_WITH_COMMENTS : &'static str = r#"
 {"project":"gerritbot-rs","branch":"master","id":"If70442f674c595a59f3e44280570e760ba3584c4","number":1,"subject":"Bump version to 0.6.0","owner":{"name":"Administrator","email":"admin@example.com","username":"admin"},"url":"http://localhost:8080/1","commitMessage":"Bump version to 0.6.0\n\nChange-Id: If70442f674c595a59f3e44280570e760ba3584c4\n","createdOn":1524584729,"lastUpdated":1524584975,"open":true,"status":"NEW","comments":[{"timestamp":1524584729,"reviewer":{"name":"Administrator","email":"admin@example.com","username":"admin"},"message":"Uploaded patch set 1."},{"timestamp":1524584975,"reviewer":{"name":"jdoe","email":"john.doe@localhost","username":"jdoe"},"message":"Patch Set 1:\n\n(1 comment)"}]}"#;
     const PATCHSET_JSON_WITH_COMMENTS : &'static str = r#"{"number":1,"revision":"3f58af760fc1e39fcc4a85b8ab6a6be032cf2ae2","parents":["578bc1e684098d2ac597e030442c3472f15ac3ad"],"ref":"refs/changes/01/1/1","uploader":{"name":"Administrator","email":"admin@example.com","username":"admin"},"createdOn":1524584729,"author":{"name":"jdoe","email":"jdoe@example.com","username":""},"isDraft":false,"kind":"REWORK","comments":[{"file":"/COMMIT_MSG","line":1,"reviewer":{"name":"jdoe","email":"john.doe@localhost","username":"jdoe"},"message":"This is a multiline\ncomment\non some change."}],"sizeInsertions":2,"sizeDeletions":-2}"#;
 
-    fn get_event() -> gerrit::Event {
+    fn get_event() -> gerrit::CommentAddedEvent {
         let event: Result<gerrit::Event, _> = serde_json::from_str(EVENT_JSON);
-        assert!(event.is_ok());
-        event.unwrap()
+        match event.expect("failed to decode event") {
+            gerrit::Event::CommentAdded(event) => event,
+            event => panic!("wrong type of event: {:?}", event),
+        }
     }
 
-    fn get_change_with_comments() -> (gerrit::Change, gerrit::PatchSet) {
+    fn get_change_with_comments() -> (gerrit::Change, gerrit::Patchset) {
         let change: Result<gerrit::Change, _> = serde_json::from_str(CHANGE_JSON_WITH_COMMENTS);
         assert!(change.is_ok());
-        let patchset: Result<gerrit::PatchSet, _> =
+        let patchset: Result<gerrit::Patchset, _> =
             serde_json::from_str(PATCHSET_JSON_WITH_COMMENTS);
         assert!(patchset.is_ok());
         (change.unwrap(), patchset.unwrap())
@@ -1535,7 +1540,7 @@ mod test {
         let res = TestBot::format_msg(
             get_default_format_script(),
             &event,
-            &event.approvals.as_ref().unwrap()[0],
+            &event.approvals[0],
             true,
         );
         assert_eq!(
@@ -1552,11 +1557,11 @@ mod test {
             EmailRef::new("author@example.com"),
         );
         let mut event = get_event();
-        event.approvals.as_mut().unwrap()[0].approval_type = String::from("Some new type");
+        event.approvals[0].approval_type = String::from("Some new type");
         let res = TestBot::format_msg(
             get_default_format_script(),
             &event,
-            &event.approvals.as_ref().unwrap()[0],
+            &event.approvals[0],
             true,
         );
         assert_eq!(res.map(|s| s.is_empty()), Ok(true));
@@ -1736,10 +1741,10 @@ mod test {
     #[test]
     fn test_maybe_has_inline_comments() {
         let mut event = get_event();
-        event.comment = Some("PatchSet 666: (2 comments)".into());
+        event.comment = "PatchSet 666: (2 comments)".to_string();
         assert!(maybe_has_inline_comments(&event));
 
-        event.comment = Some("Nope, colleague comment!".into());
+        event.comment = "Nope, colleague comment!".to_string();
         assert!(!maybe_has_inline_comments(&event));
     }
 
