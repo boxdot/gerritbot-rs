@@ -4,4 +4,3 @@ members = [
   "gerritbot-gerrit",
   "gerritbot-spark",
 ]
-default-members = ["gerritbot"]
