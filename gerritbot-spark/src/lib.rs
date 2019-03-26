@@ -19,10 +19,24 @@ mod sqs;
 
 /// Define a newtype String.
 macro_rules! newtype_string {
-    ($type_name:ident) => {
+    ($type_name:ident, $type_ref_name:ident) => {
         #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
         #[serde(transparent)]
-        pub struct $type_name(pub String);
+        pub struct $type_name(String);
+
+        impl $type_name {
+            pub fn new(s: String) -> Self {
+                Self(s)
+            }
+
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+
+            pub fn into_string(self) -> String {
+                self.0
+            }
+        }
 
         impl std::fmt::Display for $type_name {
             fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -30,21 +44,70 @@ macro_rules! newtype_string {
             }
         }
 
-        impl std::borrow::Borrow<str> for $type_name {
-            fn borrow(&self) -> &str {
-                &self.0
+        #[derive(Serialize, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[serde(transparent)]
+        pub struct $type_ref_name(str);
+
+        impl $type_ref_name {
+            pub fn new(s: &str) -> &Self {
+                unsafe { &*(s as *const str as *const Self) }
+            }
+        }
+
+        impl std::fmt::Display for $type_ref_name {
+            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                self.0.fmt(f)
+            }
+        }
+
+        impl std::borrow::Borrow<$type_ref_name> for $type_name {
+            fn borrow(&self) -> &$type_ref_name {
+                &*self
+            }
+        }
+
+        impl std::borrow::ToOwned for $type_ref_name {
+            type Owned = $type_name;
+            fn to_owned(&self) -> Self::Owned {
+                Self::Owned::new(self.0.to_string())
+            }
+        }
+
+        impl std::ops::Deref for $type_name {
+            type Target = $type_ref_name;
+
+            fn deref(&self) -> &$type_ref_name {
+                Self::Target::new(&self.0)
+            }
+        }
+
+        impl<'a> std::cmp::PartialEq<&'a $type_ref_name> for $type_name {
+            fn eq(&self, other: &&$type_ref_name) -> bool {
+                self.0 == other.0
+            }
+        }
+
+        impl<'a, 'b> std::cmp::PartialEq<&'a $type_ref_name> for &'b $type_name {
+            fn eq(&self, other: &&$type_ref_name) -> bool {
+                self.0 == other.0
+            }
+        }
+
+        impl<'a> std::cmp::PartialEq<$type_name> for &'a $type_ref_name {
+            fn eq(&self, other: &$type_name) -> bool {
+                self.0 == other.0
             }
         }
     };
 }
 
 /// Spark id of the user
-newtype_string!(PersonId);
-newtype_string!(ResourceId);
-newtype_string!(Email);
-newtype_string!(WebhookId);
-newtype_string!(MessageId);
-newtype_string!(RoomId);
+newtype_string!(PersonId, PersonIdRef);
+newtype_string!(ResourceId, ResourceIdRef);
+newtype_string!(Email, EmailRef);
+newtype_string!(WebhookId, WebhookIdRef);
+newtype_string!(MessageId, MessageIdRef);
+newtype_string!(RoomId, RoomIdRef);
 
 #[derive(Deserialize, Serialize, Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(rename_all = "lowercase")]
@@ -600,4 +663,16 @@ pub fn sqs_event_stream(
 ) -> impl Stream<Item = Message, Error = ()> {
     let raw_messages = raw_sqs_event_stream(sqs_url, sqs_region);
     fetch_messages(client, raw_messages)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn person_id_ref() {
+        let p = PersonId("person-id".to_string());
+        let ref_p: &PersonIdRef = &p;
+        assert_eq!(p, ref_p);
+    }
 }
