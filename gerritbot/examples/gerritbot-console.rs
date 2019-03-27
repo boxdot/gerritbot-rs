@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use structopt::StructOpt;
 
-use futures::{future, stream, Future as _, Sink as _, Stream as _};
+use futures::{future, stream, sync::mpsc::channel, Future as _, Sink as _, Stream as _};
 use log::{error, info};
 
 use gerritbot as bot;
@@ -95,7 +95,7 @@ fn main() {
         }
     };
     let email = args.email.clone();
-    let (stdin_lines_sender, stdin_lines) = futures::sync::mpsc::channel::<String>(1);
+    let (stdin_lines_sender, stdin_lines) = channel(1);
     std::thread::spawn(move || {
         stream::iter_ok::<_, ()>(
             BufReader::new(std::io::stdin())
