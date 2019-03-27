@@ -48,7 +48,6 @@ fn main() {
 
     tokio::run(
         gerrit_stream
-            .map_err(|err| error!("there was an error: {}", err))
             .for_each(|event| {
                 println!("{:#?}", event);
                 Ok(())
