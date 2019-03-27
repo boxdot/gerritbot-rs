@@ -20,7 +20,9 @@ mod sqs;
 /// Define a newtype String.
 macro_rules! newtype_string {
     ($type_name:ident, $type_ref_name:ident) => {
-        #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[derive(
+            Deserialize, Serialize, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash,
+        )]
         #[serde(transparent)]
         pub struct $type_name(String);
 
@@ -195,6 +197,24 @@ pub struct Message {
     markdown: Option<String>,
     html: Option<String>,
     files: Option<Vec<String>>,
+}
+
+impl Message {
+    /// Create a simple message for use in tests.
+    pub fn test_message(person_email: Email, person_id: PersonId, text: String) -> Self {
+        Self {
+            person_email,
+            person_id,
+            text,
+            created: None,
+            room_id: Default::default(),
+            room_type: RoomType::Direct,
+            html: None,
+            files: None,
+            id: Default::default(),
+            markdown: None,
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
