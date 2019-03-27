@@ -428,6 +428,7 @@ fn spark_message_to_action(message: spark::Message) -> Action {
         "disable" => Action::Disable(sender_id, sender_email),
         "status" => Action::Status(sender_id),
         "help" => Action::Help(sender_id),
+        "version" => Action::Version(sender_id),
         "filter" => Action::FilterStatus(sender_id),
         "filter enable" => Action::FilterEnable(sender_id),
         "filter disable" => Action::FilterDisable(sender_id),
@@ -521,6 +522,7 @@ where
                 })
         }
         Action::Help(person_id) => Some(Task::Reply(Response::new(person_id, HELP_MSG))),
+            Action::Version(person_id) => Some(Task::Reply(Response::new(person_id, VERSION_MSG))),
         Action::Unknown(person_id) => Some(Task::Reply(Response::new(person_id, GREETINGS_MSG))),
         Action::Status(person_id) => {
             let status = self.status_for(&person_id);
@@ -882,6 +884,7 @@ pub enum Action {
     Help(spark::PersonId),
     Unknown(spark::PersonId),
     Status(spark::PersonId),
+    Version(spark::PersonId),
     FilterStatus(spark::PersonId),
     FilterAdd(spark::PersonId, String /* filter */),
     FilterEnable(spark::PersonId),
@@ -939,6 +942,15 @@ const HELP_MSG: &str = r#"Commands:
 
 This project is open source, feel free to help us at: https://github.com/boxdot/gerritbot-rs
 "#;
+
+const VERSION_MSG: &str = concat!(
+    env!("CARGO_PKG_NAME"),
+    " ",
+    env!("CARGO_PKG_VERSION"),
+    " (commit id ",
+    env!("VERGEN_SHA"),
+    ")"
+);
 
 fn has_inline_comments(event: &gerrit::Event) -> bool {
     lazy_static! {
