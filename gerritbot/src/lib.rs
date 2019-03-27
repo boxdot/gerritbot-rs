@@ -473,14 +473,12 @@ where
     pub fn run(
         self,
         // TODO: gerrit event stream probably shouldn't produce errors
-        gerrit_events: impl Stream<Item = gerrit::Event, Error = String> + Send,
+        gerrit_events: impl Stream<Item = gerrit::Event, Error = ()> + Send,
         spark_messages: impl Stream<Item = spark::Message, Error = ()> + Send,
     ) -> impl Future<Item = (), Error = ()> {
         let _ = &self.gerrit_command_runner;
         let spark_client = self.spark_client.clone();
-        let gerrit_actions = gerrit_events
-            .filter_map(gerrit_event_to_action)
-            .map_err(|e| error!("failed to receive gerrit event: {}", e));
+        let gerrit_actions = gerrit_events.filter_map(gerrit_event_to_action);
         let spark_actions = spark_messages.map(spark_message_to_action);
         let bot_for_action = std::sync::Arc::new(std::sync::Mutex::new(self));
         let bot_for_task = bot_for_action.clone();
