@@ -7,6 +7,8 @@ use std::path::PathBuf;
 
 use lazy_static::lazy_static;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
+use serde_json;
 use structopt::StructOpt;
 
 use futures::{future, stream, sync::mpsc::channel, Future as _, Sink as _, Stream as _};
@@ -48,8 +50,16 @@ struct Args {
     /// If given input messages will be treated as if coming from this user.
     /// Additionally, an "enable" message will be injected before the first
     /// input line.
-    #[structopt(short, long)]
+    ///
+    /// This option is mutually exclusive with the --json option.
+    #[structopt(short, long, conflicts_with = "json")]
     email: Option<String>,
+    /// JSON mode
+    ///
+    /// Switch input and output to JSON. This is option mutually exclusive with
+    /// the --email option.
+    #[structopt(long)]
+    json: bool,
     /// Lua formatting script
     ///
     /// Can be used to change or test the formatting of messages. If not present
@@ -58,15 +68,63 @@ struct Args {
     format_script: Option<String>,
 }
 
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SimpleInputMessage {
+    person_email: spark::Email,
+    person_id: Option<spark::PersonId>,
+    text: String,
+}
+
+fn email_to_person_id(email: &spark::Email) -> spark::PersonId {
+    spark::PersonId::new(email.to_string())
+}
+
+impl Into<spark::Message> for SimpleInputMessage {
+    fn into(self) -> spark::Message {
+        let SimpleInputMessage {
+            person_email,
+            person_id,
+            text,
+        } = self;
+        let person_id = person_id.unwrap_or_else(|| email_to_person_id(&person_email));
+        spark::Message::test_message(person_email, person_id, text)
+    }
+}
+
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SimpleOutputMessage {
+    person_id: spark::PersonId,
+    text: String,
+}
+
 #[derive(Clone)]
-struct ConsoleSparkClient;
+enum ConsoleSparkClient {
+    Plain,
+    Json,
+}
 
 impl bot::SparkClient for ConsoleSparkClient {
     type ReplyFuture = future::FutureResult<(), spark::Error>;
     fn reply(&self, person_id: &spark::PersonId, msg: &str) -> Self::ReplyFuture {
         // Write synchronously and crash if writing fails. There's no point in
         // error handling here.
-        write!(std::io::stdout(), "{}: {}\n", person_id, msg).expect("writing to stdout failed");
+        match self {
+            ConsoleSparkClient::Plain => write!(std::io::stdout(), "{}: {}\n", person_id, msg)
+                .expect("writing to stdout failed"),
+            ConsoleSparkClient::Json => {
+                let message = SimpleOutputMessage {
+                    person_id: person_id.clone(),
+                    text: msg.to_string(),
+                };
+                serde_json::to_writer(std::io::stdout(), &message)
+                    .expect("writing JSON to stdout failed");
+                std::io::stdout()
+                    .write(b"\n")
+                    .expect("writing to stdout failed");
+            }
+        }
         future::ok(())
     }
 }
@@ -132,9 +190,15 @@ fn main() {
     let stdin_lines = maybe_enable_message.chain(stdin_lines);
 
     let email = args.email.clone();
+    let use_json = args.json;
 
-    let message_from_line = move |line| {
-        if let Some(email) = &email {
+    let message_from_line = move |line: String| {
+        if use_json {
+            serde_json::from_str::<SimpleInputMessage>(&line)
+                .map_err(|e| error!("failed to parse message: {}", e))
+                .map(Into::into)
+                .ok()
+        } else if let Some(email) = &email {
             // If we have an email, send each line from this email.
             Some(spark::Message::test_message(
                 spark::Email::new(email.clone()),
@@ -169,7 +233,12 @@ fn main() {
     let spark_messages = stdin_lines
         .filter(|line| !line.is_empty())
         .filter_map(message_from_line);
+    let spark_client = if use_json {
+        ConsoleSparkClient::Json
+    } else {
+        ConsoleSparkClient::Plain
+    };
 
-    let bot = bot_builder.build(gerrit_command_runner, ConsoleSparkClient);
+    let bot = bot_builder.build(gerrit_command_runner, spark_client);
     tokio::run(bot.run(gerrit_event_stream, spark_messages));
 }
