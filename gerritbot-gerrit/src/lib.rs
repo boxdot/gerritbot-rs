@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::fmt;
 use std::io::{BufRead, BufReader, Read as _};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -18,14 +17,8 @@ pub type Username = String;
 #[derive(Deserialize, Debug, Clone)]
 pub struct User {
     pub name: Option<String>,
-    pub username: Username,
-    pub email: Option<String>,
-}
-
-impl fmt::Display for User {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(&self.username)
-    }
+    pub username: Option<Username>,
+    pub email: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -40,7 +33,7 @@ pub struct Approval {
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct PatchSet {
+pub struct Patchset {
     pub number: u32,
     pub revision: String,
     pub parents: Vec<String>,
@@ -100,8 +93,8 @@ pub struct Change {
     pub url: String,
     pub commit_message: String,
     pub status: ChangeStatus,
-    pub current_patch_set: Option<PatchSet>,
-    pub patch_sets: Option<Vec<PatchSet>>,
+    pub current_patch_set: Option<Patchset>,
+    pub patch_sets: Option<Vec<Patchset>>,
     pub comments: Option<Vec<Comment>>,
     pub submit_records: Option<Vec<SubmitRecord>>,
 }
@@ -119,35 +112,35 @@ pub struct ChangeKey {
     pub id: String,
 }
 
-#[derive(Deserialize, Debug, Clone, PartialEq)]
-pub enum EventType {
-    #[serde(rename = "reviewer-added")]
-    ReviewerAdded,
-    #[serde(rename = "comment-added")]
-    CommentAdded,
-}
-
-// Only specific events are accepted by this type by design!
 #[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct Event {
-    pub author: Option<User>,
-    pub uploader: Option<User>,
-    pub approvals: Option<Vec<Approval>>,
-    pub reviewer: Option<User>,
-    pub comment: Option<String>,
-    #[serde(rename = "patchSet")]
-    pub patchset: PatchSet,
+pub struct CommentAddedEvent {
     pub change: Change,
-    pub project: String,
-    #[serde(rename = "refName")]
-    pub ref_name: String,
-    #[serde(rename = "changeKey")]
-    pub changekey: ChangeKey,
-    #[serde(rename = "type")]
-    pub event_type: EventType,
+    #[serde(rename = "patchSet")]
+    pub patchset: Patchset,
+    pub author: User,
+    pub approvals: Vec<Approval>,
+    pub comment: String,
     #[serde(rename = "eventCreatedOn")]
     pub created_on: u32,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct ReviewerAddedEvent {
+    pub change: Change,
+    #[serde(rename = "patchSet")]
+    pub patchset: Patchset,
+    pub reviewer: User,
+    #[serde(rename = "eventCreatedOn")]
+    pub created_on: u32,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(tag = "type")]
+pub enum Event {
+    #[serde(rename = "comment-added")]
+    CommentAdded(CommentAddedEvent),
+    #[serde(rename = "reviewer-added")]
+    ReviewerAdded(ReviewerAddedEvent),
 }
 
 fn get_pub_key_path(priv_key_path: &PathBuf) -> PathBuf {
@@ -430,34 +423,44 @@ fn fetch_extended_info(
         query += " --patch-sets --comments";
     }
 
-    query += &format!(" change:{}", event.change.id);
+    let change_id = match &event {
+        Event::CommentAdded(event) => &event.change.id,
+        Event::ReviewerAdded(event) => &event.change.id,
+    };
+
+    query += &format!(" change:{}", change_id);
 
     future::Either::B(command_runner.run_command(query).then(
         move |result| -> Result<Event, (Event, String)> {
-            let mut event = event;
             let result = match result {
                 Ok(result) => result,
                 Err(e) => return Err((event, e)),
             };
             let line = result.lines().next().unwrap_or("");
 
-            let mut change: Change = match serde_json::from_str(line) {
+            let mut event = event;
+            let (change, patchset): (&mut Change, &mut Patchset) = match &mut event {
+                Event::CommentAdded(event) => (&mut event.change, &mut event.patchset),
+                Event::ReviewerAdded(event) => (&mut event.change, &mut event.patchset),
+            };
+
+            let mut new_change: Change = match serde_json::from_str(line) {
                 Ok(change) => change,
                 Err(e) => return Err((event, format!("failed to decode result: {}", e))),
             };
 
             // copy patchset from change for the comments
-            if let Some(patchsets) = change.patch_sets.take() {
-                if let Some(patchset) = patchsets
+            if let Some(patchsets) = new_change.patch_sets.take() {
+                if let Some(new_patchset) = patchsets
                     .iter()
-                    .find(|patchset| patchset.number == event.patchset.number)
+                    .find(|patchset| patchset.number == patchset.number)
                 {
-                    event.patchset = patchset.clone();
+                    *patchset = new_patchset.clone();
                 }
             }
 
             // copy over submit records
-            event.change.submit_records = change.submit_records.take();
+            change.submit_records = new_change.submit_records.take();
 
             Ok(event)
         },
@@ -486,20 +489,52 @@ where
     })
 }
 
-#[derive(Debug)]
-pub struct ChangeDetails {
-    pub user: String,
-    pub message: String,
-    pub change: Change,
-}
-
 #[cfg(test)]
 mod test {
-    use super::{get_pub_key_path, PathBuf};
+    use super::*;
+
+    use spectral::prelude::*;
 
     #[test]
     fn test_get_pub_key_path() {
         let result = get_pub_key_path(&PathBuf::from("some_priv_key"));
         assert!(result == PathBuf::from("some_priv_key.pub"));
+    }
+
+    const COMMENT_ADDED_JSON: &str = r#"
+{"author":{"name":"Administrator","email":"admin@example.com","username":"admin"},"approvals":[{"type":"Code-Review","description":"Code-Review","value":"2","oldValue":"0"}],"comment":"Patch Set 1: Code-Review+2","patchSet":{"number":1,"revision":"c4f7d43450e366f9c8e4dcb94fbd91573cd40766","parents":["20332c6ee056bdf3f814c8cff9905154d443d2f0"],"ref":"refs/changes/01/1/1","uploader":{"name":"Administrator","email":"admin@example.com","username":"admin"},"createdOn":1553631812,"author":{"name":"Frank Benkstein","email":"frank@benkstein.net","username":""},"isDraft":false,"kind":"REWORK","sizeInsertions":0,"sizeDeletions":-18},"change":{"project":"gerritbot-rs","branch":"master","id":"I5e53df227fd2739ddd65c3034b2f9f789200bd89","number":1,"subject":"get rid of non-macro extern crate","owner":{"name":"Administrator","email":"admin@example.com","username":"admin"},"assignee":{"name":"jdoe","email":"john.doe@localhost","username":"jdoe"},"url":"http://localhost:8080/1","commitMessage":"get rid of non-macro extern crate\n\nChange-Id: I5e53df227fd2739ddd65c3034b2f9f789200bd89\n","createdOn":1553631812,"status":"NEW"},"project":"gerritbot-rs","refName":"refs/heads/master","changeKey":{"id":"I5e53df227fd2739ddd65c3034b2f9f789200bd89"},"type":"comment-added","eventCreatedOn":1553632440}
+"#;
+
+    const REVIEWER_ADDED_JSON: &str = r#"
+{"reviewer":{"name":"jdoe","email":"john.doe@localhost","username":"jdoe"},"patchSet":{"number":1,"revision":"c4f7d43450e366f9c8e4dcb94fbd91573cd40766","parents":["20332c6ee056bdf3f814c8cff9905154d443d2f0"],"ref":"refs/changes/01/1/1","uploader":{"name":"Administrator","email":"admin@example.com","username":"admin"},"createdOn":1553631812,"author":{"name":"Frank Benkstein","email":"frank@benkstein.net","username":""},"isDraft":false,"kind":"REWORK","sizeInsertions":0,"sizeDeletions":-18},"change":{"project":"gerritbot-rs","branch":"master","id":"I5e53df227fd2739ddd65c3034b2f9f789200bd89","number":1,"subject":"get rid of non-macro extern crate","owner":{"name":"Administrator","email":"admin@example.com","username":"admin"},"assignee":{"name":"jdoe","email":"john.doe@localhost","username":"jdoe"},"url":"http://localhost:8080/1","commitMessage":"get rid of non-macro extern crate\n\nChange-Id: I5e53df227fd2739ddd65c3034b2f9f789200bd89\n","createdOn":1553631812,"status":"NEW"},"project":"gerritbot-rs","refName":"refs/heads/master","changeKey":{"id":"I5e53df227fd2739ddd65c3034b2f9f789200bd89"},"type":"reviewer-added","eventCreatedOn":1553632329}
+"#;
+
+    #[test]
+    fn test_deserialize_comment_added() {
+        let event: Event =
+            serde_json::from_str(COMMENT_ADDED_JSON).expect("failed to deserialize event");
+        match event {
+            Event::CommentAdded(event) => {
+                assert_that!(event.author.name)
+                    .is_some()
+                    .is_equal_to("Administrator".to_string());
+                assert_that!(event.comment).is_equal_to("Patch Set 1: Code-Review+2".to_string());
+            }
+            _ => panic!("unexpected_event: {:?}", event),
+        }
+    }
+
+    #[test]
+    fn test_reviewer_added() {
+        let event: Event =
+            serde_json::from_str(REVIEWER_ADDED_JSON).expect("failed to deserialize event");
+        match event {
+            Event::ReviewerAdded(event) => {
+                assert_that!(event.reviewer.name)
+                    .is_some()
+                    .is_equal_to("jdoe".to_string());
+            }
+            _ => panic!("unexpected_event: {:?}", event),
+        }
     }
 }
