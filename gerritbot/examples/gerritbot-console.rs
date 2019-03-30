@@ -45,6 +45,9 @@ struct Args {
     /// Enable verbose output
     #[structopt(short, long)]
     verbose: bool,
+    /// Log only errors
+    #[structopt(short, long, conflicts_with = "verbose")]
+    quiet: bool,
     /// User email address
     ///
     /// If given input messages will be treated as if coming from this user.
@@ -136,7 +139,11 @@ fn main() {
         .module("gerritbot")
         .module("gerritbot_gerrit")
         .timestamp(stderrlog::Timestamp::Second)
-        .verbosity(if args.verbose { 5 } else { 2 })
+        .verbosity(match (args.quiet, args.verbose) {
+            (true, _) => 0,      // ERROR
+            (false, false) => 2, // INFO
+            (_, true) => 4,      // TRACE
+        })
         .init()
         .unwrap();
 
