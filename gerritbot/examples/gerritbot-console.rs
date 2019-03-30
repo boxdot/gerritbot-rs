@@ -69,6 +69,8 @@ struct Args {
     /// the internal default format script will be used.
     #[structopt(long = "format-script")]
     format_script: Option<String>,
+    #[structopt(short = "C", hidden = true)]
+    working_directory: Option<PathBuf>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -146,6 +148,11 @@ fn main() {
         })
         .init()
         .unwrap();
+
+    if let Some(working_directory) = args.working_directory.as_ref() {
+        info!("Changing current directory to {:?}", working_directory);
+        std::env::set_current_dir(working_directory).expect("failed to set working directory");
+    }
 
     let connect_to_gerrit = || {
         info!(
