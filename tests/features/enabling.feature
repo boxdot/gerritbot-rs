@@ -16,11 +16,12 @@ Feature: enabling the bot
   Scenario: enable the bot
      Given Bob sends the enable command to the bot
       When we check for messages by the bot
-      Then there is a message for Bob which includes the text "Happy Reviewing!"
+      Then there is a message for Bob which includes the text "Happy reviewing!"
 
   Scenario: upload a change, enable the bot, get a review
      Given Bob uploads a new change to the tools project
        And Bob sends the enable command to the bot
        And Alice replies to Bob's change with Code-Review+2
       When we check for messages by the bot
-      Then there is a message for Bob which includes the text "Code-Review+2"
+      Then there is a message for Bob which includes the text "Code-Review"
+       And this message includes the text "+2"

@@ -1,9 +1,15 @@
-import os
-import warnings
 import collections
-import subprocess
-import random
+import hashlib
 import json
+import os
+import queue
+import random
+import subprocess
+import tempfile
+import threading
+import logging
+import warnings
+
 from urllib.parse import urljoin
 from binascii import hexlify
 
@@ -11,6 +17,7 @@ import paramiko
 import requests
 
 from behave import use_fixture, fixture
+
 
 # ssh-ed25519 signature verification is broken
 paramiko.Transport._preferred_keys = tuple(
@@ -60,10 +67,10 @@ class GerritHandler:
         *,
         ssh_hostname,
         ssh_port,
-        ssh_key_filename,
         http_url,
         admin_username,
         admin_password,
+        admin_ssh_key_filename,
     ):
         self.ssh_client = SSHClient()
         # ignore SSH host keys
@@ -74,7 +81,7 @@ class GerritHandler:
             ssh_hostname,
             ssh_port,
             admin_username,
-            key_filename=ssh_key_filename,
+            key_filename=admin_ssh_key_filename,
             look_for_keys=False,
             allow_agent=False,
         )
@@ -209,24 +216,21 @@ class GerritHandler:
 
 
 @fixture
-def setup_gerrit(context):
+def setup_gerrit(
+    context,
+    *,
+    ssh_hostname,
+    ssh_port,
+    admin_username,
+    admin_password,
+    admin_ssh_key_filename,
+    http_url,
+):
     # TODO: support running gerrit container from here
-    admin_username = context.config.userdata.get("gerrit_admin_username", "admin")
-    admin_password = context.config.userdata.get("gerrit_admin_password", "secret")
-    ssh_host_port = context.config.userdata.get(
-        "gerrit_ssh_host_port", "localhost:29418"
-    )
-    ssh_hostname, _, ssh_port_string = ssh_host_port.partition(":")
-    ssh_port = int(ssh_port_string)
-    ssh_key_filename = os.path.abspath(
-        context.config.userdata.get("gerrit_ssh_key", "testing/data/id_rsa")
-    )
-    http_url = context.config.userdata.get("gerrit_http_url", "http://localhost:8080")
-
     context.gerrit = GerritHandler(
         ssh_hostname=ssh_hostname,
         ssh_port=ssh_port,
-        ssh_key_filename=ssh_key_filename,
+        admin_ssh_key_filename=admin_ssh_key_filename,
         http_url=http_url,
         admin_username=admin_username,
         admin_password=admin_password,
@@ -236,23 +240,148 @@ def setup_gerrit(context):
 
 
 class BotHandler:
-    def __init__(self):
-        self.messages = []
+    def __init__(self, *, process, message_queue):
+        self.process = process
+        self.message_queue = message_queue
 
     def send_message(self, sender, message):
-        pass
+        log = logging.getLogger("bot-messages")
+        serialized_message = json.dumps(
+            {
+                "personEmail": sender.email,
+                "personId": sender.webex_teams_person_id,
+                "text": message,
+            }
+        ).encode("utf-8")
+        log.debug("sending message to bot: %r", serialized_message)
+        self.process.stdin.write(serialized_message)
+        self.process.stdin.write(b"\n")
+        self.process.stdin.flush()
+
+    def get_messages(self):
+        messages = []
+
+        while True:
+            # XXX: we should find a better way to check if there are no more
+            # messages coming
+            try:
+                message = self.message_queue.get(timeout=0.2)
+            except queue.Empty:
+                break
+            else:
+                messages.append(message)
+
+        self.current_messages = messages
+        return messages
+
+    def get_messages_for_person(self, person):
+        return [
+            m
+            for m in self.current_messages
+            if m["personId"] == person.webex_teams_person_id
+        ]
+
+    def _read_messages(self):
+        log = logging.getLogger("bot-messages")
+
+        log.debug("starting to read messages from bot")
+
+        for line in self.process.stdout:
+            try:
+                message = json.loads(line)
+            except:
+                log.exception("failed to parse JSON message: %s", line)
+            else:
+                log.debug("got bot message: %r", message)
+                self.message_queue.put(message)
+
+    def _read_logs(self):
+        log = logging.getLogger("bot-log")
+
+        # XXX: try to parse log level from bot output
+
+        for line in self.process.stderr:
+            log.info("%s", line.decode("utf-8").rstrip("\n"))
 
 
 @fixture
-def setup_bot(context):
-    context.bot = BotHandler()
+def setup_bot(context, *, username, key_filename, hostname, port):
+    with tempfile.TemporaryDirectory() as bot_directory:
+        bot_args = "cargo run --example gerritbot-console --".split() + [
+            "-C",
+            bot_directory,
+            "--identity-file",
+            key_filename,
+            "--username",
+            username,
+            "--port",
+            str(port),
+            # XXX: allow enabling --verbose with a userdefine
+            # "--verbose",
+            "--json",
+            hostname,
+        ]
+
+        bot_process = subprocess.Popen(
+            args=bot_args,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        message_queue = queue.Queue()
+
+        bot = context.bot = BotHandler(process=bot_process, message_queue=message_queue)
+        read_messages_thread = threading.Thread(target=bot._read_messages)
+        read_messages_thread.start()
+        read_logs_thread = threading.Thread(target=bot._read_logs)
+        read_logs_thread.start()
+
+        yield
+
+        bot_process.terminate()
+        read_messages_thread.join()
+        read_logs_thread.join()
 
 
 def before_all(context):
     context.config.setup_logging()
 
-    use_fixture(setup_gerrit, context)
-    use_fixture(setup_bot, context)
+    userdata = context.config.userdata
+
+    # read configuration from userdata
+    gerrit_ssh_host_port = userdata.get("gerrit_ssh_host_port", "localhost:29418")
+    context.gerrit_ssh_hostname, _, gerrit_ssh_port_string = gerrit_ssh_host_port.partition(
+        ":"
+    )
+    context.gerrit_ssh_port = int(gerrit_ssh_port_string)
+
+    context.gerrit_http_url = userdata.get("gerrit_http_url", "http://localhost:8080")
+
+    context.gerrit_admin_username = userdata.get("gerrit_admin_username", "admin")
+    context.gerrit_admin_password = userdata.get("gerrit_admin_password", "secret")
+    context.gerrit_admin_ssh_key_filename = os.path.abspath(
+        userdata.get("gerrit_admin_ssh_key", "testing/data/id_rsa")
+    )
+
+    context.gerrit_bot_username = userdata.get(
+        "gerrit_bot_username", context.gerrit_admin_username
+    )
+    context.gerrit_bot_ssh_key_filename = os.path.abspath(
+        userdata.get("gerrit_bot_ssh_key", context.gerrit_admin_ssh_key_filename)
+    )
+
+    # set up gerrit
+    use_fixture(
+        setup_gerrit,
+        context,
+        ssh_hostname=context.gerrit_ssh_hostname,
+        ssh_port=context.gerrit_ssh_port,
+        admin_username=context.gerrit_admin_username,
+        admin_password=context.gerrit_admin_password,
+        admin_ssh_key_filename=context.gerrit_admin_ssh_key_filename,
+        http_url=context.gerrit_http_url,
+    )
 
 
 class Person:
@@ -275,6 +404,9 @@ class Persons:
         person.fullname = name
         person.email = email
         person.username = name.split(None, 1)[0].lower()
+        person.webex_teams_person_id = hashlib.sha1(
+            person.email.encode("utf-8")
+        ).hexdigest()
 
         if person.username in self.persons:
             raise ValueError(f"person {username} already exists")
@@ -284,4 +416,13 @@ class Persons:
 
 
 def before_scenario(context, scenario):
+    use_fixture(
+        setup_bot,
+        context,
+        username=context.gerrit_bot_username,
+        key_filename=context.gerrit_bot_ssh_key_filename,
+        hostname=context.gerrit_ssh_hostname,
+        port=context.gerrit_ssh_port,
+    )
+
     context.persons = Persons()
