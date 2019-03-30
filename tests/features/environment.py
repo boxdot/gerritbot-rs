@@ -54,7 +54,7 @@ class SSHClient(paramiko.SSHClient):
             )
 
 
-class Gerrit:
+class GerritHandler:
     def __init__(
         self,
         *,
@@ -162,7 +162,7 @@ class Gerrit:
 
         for (project_name, project_group, created) in self.projects:
             self.ssh_client.ext_exec_command(
-                "set-members --add {person.username} {project_group}"
+                f"gerrit set-members --add {person.username} {project_group}"
             )
 
     def create_new_change(self, uploader, project_name):
@@ -220,7 +220,7 @@ def setup_gerrit(context):
     )
     http_url = context.config.userdata.get("gerrit_http_url", "http://localhost:8080")
 
-    context.gerrit = Gerrit(
+    context.gerrit = GerritHandler(
         ssh_hostname=ssh_hostname,
         ssh_port=ssh_port,
         ssh_key_filename=ssh_key_filename,
@@ -232,7 +232,7 @@ def setup_gerrit(context):
     context.gerrit.cleanup()
 
 
-class Bot:
+class BotHandler:
     def __init__(self):
         self.messages = []
 
@@ -242,11 +242,7 @@ class Bot:
 
 @fixture
 def setup_bot(context):
-    print("Starting bot ...")
-    import time
-
-    time.sleep(1)
-    context.bet = Bot()
+    context.bot = BotHandler()
 
 
 def before_all(context):
