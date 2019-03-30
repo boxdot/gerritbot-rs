@@ -1,3 +1,8 @@
+import re
+
+LABEL_RE = re.compile(r"(?P<label_name>.*)(?P<label_value>[+-]\d+)")
+
+
 @given("a Gerrit project named {project_name}")
 def step_impl(context, project_name):
     context.gerrit.create_project(project_name)
@@ -14,4 +19,9 @@ def step_impl(context, reviewer, uploader, label):
     reviewer = context.persons.get(reviewer)
     uploader = context.persons.get(uploader)
     change = context.gerrit.get_last_change_by(uploader)
-    context.gerrit.reply(change, reviewer, label=label)
+    m = LABEL_RE.fullmatch(label)
+    if m is None:
+        raise ValueError(f"invalid label {label}")
+    label_name, label_value_string = m.group("label_name", "label_value")
+    label_value = int(label_value_string)
+    context.gerrit.reply(change, reviewer, labels={label_name: label_value})

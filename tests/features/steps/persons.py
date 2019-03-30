@@ -6,4 +6,5 @@ class Person(object):
 
 @given("a person named {name} with email address {email}")
 def step_impl(context, name, email):
-    context.persons.create(name, email)
+    person = context.persons.create(name, email)
+    context.gerrit.create_user(person)
