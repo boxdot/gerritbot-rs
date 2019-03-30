@@ -101,6 +101,9 @@ class GerritHandler:
 
     def cleanup(self):
         try:
+            # TODO: delete created changes, users, projects
+            # TODO: also add an option not to delete anything
+            # XXX: probably users cannot be deleted, maybe a workaround is necessary
             pass
         finally:
             self.ssh_client.close()
