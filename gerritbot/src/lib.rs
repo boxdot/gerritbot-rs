@@ -873,13 +873,18 @@ where
     pub fn status_for(&self, person_id: &spark::PersonIdRef) -> String {
         let user = self.state.find_user(person_id);
         let enabled = user.map_or(false, |u| u.enabled);
+        let enabled_user_count =
+            self.state.users.iter().filter(|u| u.enabled).count() - if enabled { 1 } else { 0 };
         format!(
-            "Notifications for you are **{}**. I am notifying another {} user(s).",
+            "Notifications for you are **{}**. I am notifying {}.",
             if enabled { "enabled" } else { "disabled" },
-            if self.state.num_users() == 0 {
-                0
-            } else {
-                self.state.num_users() - if enabled { 1 } else { 0 }
+            match (enabled, enabled_user_count) {
+                (false, 0) => format!("no users"),
+                (true, 0) => format!("no other users"),
+                (false, 1) => format!("one user"),
+                (true, 1) => format!("another user"),
+                (false, _) => format!("{} users", enabled_user_count),
+                (true, _) => format!("another {} users", enabled_user_count),
             }
         )
     }

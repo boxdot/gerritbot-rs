@@ -33,7 +33,7 @@ Feature:  miscellaneous commands
      Given Alice sends the enable command to the bot
        And Alice sends the status command to the bot
       When we check for messages by the bot
-      Then there is a message for Alice which includes the text "0 user"
+      Then there is a message for Alice which includes the text "notifying no other users."
 
   Scenario: status with one other user
      Given a person named Bob Jones with email address bob@jones.com
@@ -41,7 +41,7 @@ Feature:  miscellaneous commands
        And Alice sends the enable command to the bot
        And Alice sends the status command to the bot
       When we check for messages by the bot
-      Then there is a message for Alice which includes the text "1 user"
+      Then there is a message for Alice which includes the text "notifying another user."
 
   Scenario: status with a few other users
      Given the following persons:
@@ -51,9 +51,10 @@ Feature:  miscellaneous commands
        | Gene Generic | info@generic-gene.com |
        | Shawn Pearce | sop@google.com        |
        And everybody sends the enable command to the bot
+       But Shawn sends the disable command to the bot
       When Alice sends the status command to the bot
        And we check for messages by the bot
-      Then there is a message for Alice which includes the text "4 user"
+      Then there is a message for Alice which includes the text "notifying another 3 users."
 
   Scenario: version command
      Given Alice sends the version command to the bot
