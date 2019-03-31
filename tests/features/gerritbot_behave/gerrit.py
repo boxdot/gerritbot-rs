@@ -1,5 +1,7 @@
-import os
+import itertools
 import json
+import os
+import time
 
 from urllib.parse import urljoin
 from binascii import hexlify
@@ -167,9 +169,41 @@ class GerritHandler:
 
 @fixture
 def setup_gerrit(
-    context, *, ssh_hostname, ssh_port, admin_username, admin_password, http_url
+    context,
+    *,
+    ssh_hostname,
+    ssh_port,
+    admin_username,
+    admin_password,
+    http_url,
+    gerrit_start_timeout,
 ):
     # TODO: support running gerrit container from here
+
+    if gerrit_start_timeout is not None:
+        t0 = time.monotonic()
+
+        for i in itertools.count():
+            try:
+                requests.get(http_url).raise_for_status()
+            except requests.ConnectionError:
+                current_wait_time = time.monotonic() - t0
+
+                if current_wait_time > gerrit_start_timeout:
+                    raise ValueError(f"Failed to reach Gerrit at {http_url}")
+                else:
+                    if i == 0:
+                        print("Waiting for Gerrit to start ...")
+                    elif i % 10 == 0:
+                        print(f"Still waiting after {current_wait_time:.2f}s ...")
+
+                    time.sleep(0.5)
+            else:
+                if i != 0:
+                    current_wait_time = time.monotonic() - t0
+                    print(f"Gerrit up after {current_wait_time:.2f}s seconds")
+                break
+
     context.gerrit = GerritHandler(
         ssh_hostname=ssh_hostname,
         ssh_port=ssh_port,
@@ -177,5 +211,6 @@ def setup_gerrit(
         admin_username=admin_username,
         admin_password=admin_password,
     )
+
     yield
     context.gerrit.cleanup()

@@ -32,6 +32,7 @@ def before_all(context):
         admin_username=context.gerrit_admin_username,
         admin_password=context.gerrit_admin_password,
         http_url=context.gerrit_http_url,
+        gerrit_start_timeout=userdata.getfloat("gerrit_start_timeout"),
     )
 
     context.bot_user = Person("gerritbot", "gerritbot@gerritbot.rs")
