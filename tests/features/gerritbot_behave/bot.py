@@ -103,15 +103,20 @@ def setup_bot(context, *, user, hostname, port):
             stderr=subprocess.PIPE,
         )
 
+        # Using cargo run above means we might actually be compiling still.
+        # Wait for the bot to be ready.
+        for line in bot_process.stderr:
+            if b"Connected to Gerrit" in line:
+                break
+
         message_queue = queue.Queue()
 
         bot = context.bot = BotHandler(process=bot_process, message_queue=message_queue)
         read_messages_thread = threading.Thread(target=bot._read_messages)
         read_messages_thread.start()
+
         read_logs_thread = threading.Thread(target=bot._read_logs)
         read_logs_thread.start()
-
-        # XXX: need to wait here for bot to be ready
 
         yield
 
