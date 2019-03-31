@@ -166,6 +166,13 @@ class GerritHandler:
             user=reviewer,
         )
 
+    def add_reviewer(self, change, reviewer, *, user):
+        self.http_post(
+            f"/changes/{change['id']}/reviewers",
+            json={"reviewer": reviewer.email},
+            user=user,
+        )
+
 
 @fixture
 def setup_gerrit(
