@@ -1,9 +1,19 @@
+import os
 import hashlib
+import paramiko
+from binascii import hexlify
 
 
 class Person:
-    name = None
-    email = None
+    def __init__(self, name, email):
+        self.fullname = name
+        self.email = email
+        self.username = name.split(None, 1)[0].lower()
+        self.webex_teams_person_id = hashlib.sha1(
+            self.email.encode("utf-8")
+        ).hexdigest()
+        self.http_password = hexlify(os.urandom(16)).decode("ascii")
+        self.ssh_key = paramiko.RSAKey.generate(1024)
 
 
 class Persons:
@@ -17,13 +27,7 @@ class Persons:
             raise ValueError(f"a person named {name} doesn't exist")
 
     def create(self, name, email):
-        person = Person()
-        person.fullname = name
-        person.email = email
-        person.username = name.split(None, 1)[0].lower()
-        person.webex_teams_person_id = hashlib.sha1(
-            person.email.encode("utf-8")
-        ).hexdigest()
+        person = Person(name, email)
 
         if person.username in self.persons:
             raise ValueError(f"person {username} already exists")

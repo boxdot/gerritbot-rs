@@ -4,7 +4,7 @@ from behave import use_fixture
 
 from gerritbot_behave.gerrit import setup_gerrit
 from gerritbot_behave.bot import setup_bot
-from gerritbot_behave.persons import Persons
+from gerritbot_behave.persons import Persons, Person
 
 
 def before_all(context):
@@ -20,19 +20,8 @@ def before_all(context):
     context.gerrit_ssh_port = int(gerrit_ssh_port_string)
 
     context.gerrit_http_url = userdata.get("gerrit_http_url", "http://localhost:8080")
-
     context.gerrit_admin_username = userdata.get("gerrit_admin_username", "admin")
     context.gerrit_admin_password = userdata.get("gerrit_admin_password", "secret")
-    context.gerrit_admin_ssh_key_filename = os.path.abspath(
-        userdata.get("gerrit_admin_ssh_key", "testing/data/id_rsa")
-    )
-
-    context.gerrit_bot_username = userdata.get(
-        "gerrit_bot_username", context.gerrit_admin_username
-    )
-    context.gerrit_bot_ssh_key_filename = os.path.abspath(
-        userdata.get("gerrit_bot_ssh_key", context.gerrit_admin_ssh_key_filename)
-    )
 
     # set up gerrit
     use_fixture(
@@ -42,17 +31,19 @@ def before_all(context):
         ssh_port=context.gerrit_ssh_port,
         admin_username=context.gerrit_admin_username,
         admin_password=context.gerrit_admin_password,
-        admin_ssh_key_filename=context.gerrit_admin_ssh_key_filename,
         http_url=context.gerrit_http_url,
     )
+
+    context.bot_user = Person("gerritbot", "gerritbot@gerritbot.rs")
+    context.gerrit.create_user(context.bot_user)
+    context.gerrit.add_user_to_group(context.bot_user, "Non-Interactive+Users")
 
 
 def before_scenario(context, scenario):
     use_fixture(
         setup_bot,
         context,
-        username=context.gerrit_bot_username,
-        key_filename=context.gerrit_bot_ssh_key_filename,
+        user=context.bot_user,
         hostname=context.gerrit_ssh_hostname,
         port=context.gerrit_ssh_port,
     )

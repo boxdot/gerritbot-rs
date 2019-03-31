@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import queue
 import subprocess
 import tempfile
@@ -74,15 +75,19 @@ class BotHandler:
 
 
 @fixture
-def setup_bot(context, *, username, key_filename, hostname, port):
+def setup_bot(context, *, user, hostname, port):
     with tempfile.TemporaryDirectory() as bot_directory:
+        user.ssh_key.write_private_key_file(os.path.join(bot_directory, "id_rsa"))
+        with open(os.path.join(bot_directory, "id_rsa.pub"), "w") as f:
+            f.write(f"{user.ssh_key.get_name()} {user.ssh_key.get_base64()}")
+
         bot_args = "cargo run --example gerritbot-console --".split() + [
             "-C",
             bot_directory,
             "--identity-file",
-            key_filename,
+            "id_rsa",
             "--username",
-            username,
+            user.username,
             "--port",
             str(port),
             # XXX: allow enabling --verbose with a userdefine
@@ -105,6 +110,8 @@ def setup_bot(context, *, username, key_filename, hostname, port):
         read_messages_thread.start()
         read_logs_thread = threading.Thread(target=bot._read_logs)
         read_logs_thread.start()
+
+        # XXX: need to wait here for bot to be ready
 
         yield
 

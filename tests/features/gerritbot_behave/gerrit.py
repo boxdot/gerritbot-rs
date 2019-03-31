@@ -8,32 +8,19 @@ from behave import fixture
 
 import requests
 
-from .ssh import SSHClient, SSHCommandError
+
+class AlreadyExistsError(requests.HTTPError):
+    pass
 
 
 class GerritHandler:
     def __init__(
-        self,
-        *,
-        ssh_hostname,
-        ssh_port,
-        http_url,
-        admin_username,
-        admin_password,
-        admin_ssh_key_filename,
+        self, *, ssh_hostname, ssh_port, http_url, admin_username, admin_password
     ):
-        self.ssh_client = SSHClient()
-        self.ssh_client.connect(
-            ssh_hostname,
-            ssh_port,
-            admin_username,
-            key_filename=admin_ssh_key_filename,
-            look_for_keys=False,
-            allow_agent=False,
-        )
         self.admin_username = admin_username
         self.admin_password = admin_password
         self.http_url = http_url
+        self.groups = []
         self.projects = []
         self.users = []
         self.changes = []
@@ -43,83 +30,100 @@ class GerritHandler:
         # Gerrit inserts non-json symbols into the first line
         return json.loads(text.partition("\n")[2])
 
-    def http_post(self, url, *, user, **kwds):
-        r = requests.post(
-            urljoin(urljoin(self.http_url, "a/"), url.lstrip("/")),
-            auth=(user.username, user.http_password),
-            **kwds,
+    def http_request(self, request_method, url, *, user, **kwds):
+        if user == "admin":
+            auth = (self.admin_username, self.admin_password)
+        else:
+            auth = (user.username, user.http_password)
+        r = request_method(
+            urljoin(urljoin(self.http_url, "a/"), url.lstrip("/")), auth=auth, **kwds
         )
         r.raise_for_status()
         return self.parse_json_response(r.text)
 
-    def cleanup(self):
+    def http_put(self, *args, **kwds):
         try:
-            # TODO: delete created changes, users, projects
-            # TODO: also add an option not to delete anything
-            # XXX: probably users cannot be deleted, maybe a workaround is necessary
-            pass
-        finally:
-            self.ssh_client.close()
+            return self.http_request(requests.put, *args, **kwds)
+        except requests.HTTPError as e:
+            if e.response.status_code == requests.codes.conflict:
+                e.__class__ = AlreadyExistsError
+
+            raise e
+
+    def http_post(self, *args, **kwds):
+        return self.http_request(requests.post, *args, **kwds)
+
+    def cleanup(self):
+        # TODO: delete created changes, users, projects
+        # TODO: also add an option not to delete anything
+        # XXX: probably users cannot be deleted, maybe a workaround is necessary
+        pass
+
+    def create_group(self, group_name):
+        try:
+            self.http_put(f"/groups/{group_name}", user="admin", json={})
+            created = True
+        except AlreadyExistsError:
+            created = False
+
+        self.groups.append((group_name, created))
+
+    def add_user_to_group(self, user, group_name):
+        self.http_put(f"/groups/{group_name}/members/{user.username}", user="admin")
 
     def create_project(self, project_name):
         project_group = project_name + "-owners"
 
-        try:
-            self.ssh_client.ext_exec_command(f"gerrit create-group {project_group}")
-        except SSHCommandError as e:
-            if b"already exists" in e.stderr.lower():
-                pass
-            else:
-                raise e
-
-        created = False
+        self.create_group(project_group)
 
         try:
-            self.ssh_client.ext_exec_command(
-                f"gerrit create-project --empty-commit --owner {project_group} {project_name}"
+            self.http_put(
+                f"/projects/{project_name}",
+                user="admin",
+                json={"create_empty_commit": True, "owners": [project_group]},
             )
-        except SSHCommandError as e:
-            if b"project already exists" in e.stderr.lower():
-                pass
-            else:
-                raise e
-        else:
             created = True
+        except AlreadyExistsError:
+            created = False
 
         self.projects.append((project_name, project_group, created))
 
         for (person, created) in self.users:
-            self.ssh_client.ext_exec_command(
-                f"gerrit set-members --add {person.username} {project_group}"
-            )
+            self.add_user_to_group(person, project_group)
 
     def create_user(self, person):
-        person.http_password = hexlify(os.urandom(16)).decode("ascii")
-
-        common_args = fr'--full-name "{person.fullname}" --http-password {person.http_password} {person.username}'
-
         created = False
 
         try:
-            self.ssh_client.ext_exec_command(
-                f"gerrit create-account --email {person.email} {common_args}"
+            self.http_put(
+                f"/accounts/{person.username}",
+                user="admin",
+                json={
+                    "name": person.fullname,
+                    "email": person.email,
+                    "ssh_key": f"{person.ssh_key.get_name()} {person.ssh_key.get_base64()}",
+                    "http_password": person.http_password,
+                },
             )
-        except SSHCommandError as e:
-            if b"already exists" in e.stderr.lower():
-                self.ssh_client.ext_exec_command(
-                    f"gerrit set-account --add-email {person.email} {common_args}"
-                )
-            else:
-                raise e
+        except AlreadyExistsError:
+            self.http_put(
+                f"/accounts/{person.username}/password.http",
+                user="admin",
+                json={"http_password": person.http_password},
+            )
+            self.http_post(
+                f"/accounts/{person.username}/sshkeys",
+                user="admin",
+                headers={"content_type": "text/plain"},
+                data=f"{person.ssh_key.get_name()} {person.ssh_key.get_base64()}",
+            )
         else:
             created = True
 
         self.users.append((person, created))
 
         for (project_name, project_group, created) in self.projects:
-            self.ssh_client.ext_exec_command(
-                f"gerrit set-members --add {person.username} {project_group}"
-            )
+            self.add_user_to_group(person, project_group)
 
     def create_new_change(self, uploader, project_name):
         change_info = self.http_post(
@@ -163,24 +167,15 @@ class GerritHandler:
 
 @fixture
 def setup_gerrit(
-    context,
-    *,
-    ssh_hostname,
-    ssh_port,
-    admin_username,
-    admin_password,
-    admin_ssh_key_filename,
-    http_url,
+    context, *, ssh_hostname, ssh_port, admin_username, admin_password, http_url
 ):
     # TODO: support running gerrit container from here
     context.gerrit = GerritHandler(
         ssh_hostname=ssh_hostname,
         ssh_port=ssh_port,
-        admin_ssh_key_filename=admin_ssh_key_filename,
         http_url=http_url,
         admin_username=admin_username,
         admin_password=admin_password,
     )
     yield
     context.gerrit.cleanup()
-
