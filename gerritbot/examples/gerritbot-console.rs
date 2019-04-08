@@ -5,46 +5,131 @@
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::path::PathBuf;
 
+use lazy_static::lazy_static;
+use regex::Regex;
+use serde::{Deserialize, Serialize};
+use serde_json;
 use structopt::StructOpt;
 
 use futures::{future, stream, sync::mpsc::channel, Future as _, Sink as _, Stream as _};
-use log::{error, info};
+use log::{error, info, warn};
 
 use gerritbot as bot;
 use gerritbot_gerrit as gerrit;
 use gerritbot_spark as spark;
 
 #[derive(StructOpt, Debug)]
+#[structopt(name = "gerritbot-console", rename_all = "kebab-case")]
+/// Run the gerritbot without actually connecting to Spark. Instead the
+/// program's stdin can be used to simulate sending messages. Replies will be
+/// sent to stdout. Log messages will only appear on stderr. If the --email
+/// option (see below) is given each input line will be treated as message from
+/// that user. Otherwise each line has to be prefixed with the email address of
+/// the intended sender, a colon (:) and an optional space character.
 struct Args {
-    /// Gerrit username
-    #[structopt(short = "u")]
+    /// Gerrit bot username
+    ///
+    /// This is the username the bot uses to connect to the Gerrit server.
+    #[structopt(short, long)]
     username: String,
     /// Gerrit hostname
+    ///
+    /// Address of the Gerrit server.
     hostname: String,
     /// Gerrit SSH port
-    #[structopt(short = "p", default_value = "29418")]
+    #[structopt(short, long, default_value = "29418")]
     port: u32,
     /// Path to SSH private key
-    #[structopt(short = "i", parse(from_os_str))]
-    private_key_path: PathBuf,
+    #[structopt(short, long, parse(from_os_str))]
+    identity_file: PathBuf,
     /// Enable verbose output
-    #[structopt(short = "v")]
+    #[structopt(short, long)]
     verbose: bool,
-    /// Gerrit user email address
-    email: String,
+    /// Log only errors
+    #[structopt(short, long, conflicts_with = "verbose")]
+    quiet: bool,
+    /// User email address
+    ///
+    /// If given input messages will be treated as if coming from this user.
+    /// Additionally, an "enable" message will be injected before the first
+    /// input line.
+    ///
+    /// This option is mutually exclusive with the --json option.
+    #[structopt(short, long, conflicts_with = "json")]
+    email: Option<String>,
+    /// JSON mode
+    ///
+    /// Switch input and output to JSON. This is option mutually exclusive with
+    /// the --email option.
+    #[structopt(long)]
+    json: bool,
+    /// Lua formatting script
+    ///
+    /// Can be used to change or test the formatting of messages. If not present
+    /// the internal default format script will be used.
     #[structopt(long = "format-script")]
     format_script: Option<String>,
+    #[structopt(short = "C", hidden = true)]
+    working_directory: Option<PathBuf>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SimpleInputMessage {
+    person_email: spark::Email,
+    person_id: Option<spark::PersonId>,
+    text: String,
+}
+
+fn email_to_person_id(email: &spark::Email) -> spark::PersonId {
+    spark::PersonId::new(email.to_string())
+}
+
+impl Into<spark::Message> for SimpleInputMessage {
+    fn into(self) -> spark::Message {
+        let SimpleInputMessage {
+            person_email,
+            person_id,
+            text,
+        } = self;
+        let person_id = person_id.unwrap_or_else(|| email_to_person_id(&person_email));
+        spark::Message::test_message(person_email, person_id, text)
+    }
+}
+
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SimpleOutputMessage {
+    person_id: spark::PersonId,
+    text: String,
 }
 
 #[derive(Clone)]
-struct ConsoleSparkClient;
+enum ConsoleSparkClient {
+    Plain,
+    Json,
+}
 
 impl bot::SparkClient for ConsoleSparkClient {
     type ReplyFuture = future::FutureResult<(), spark::Error>;
     fn reply(&self, person_id: &spark::PersonId, msg: &str) -> Self::ReplyFuture {
         // Write synchronously and crash if writing fails. There's no point in
         // error handling here.
-        write!(std::io::stdout(), "{}: {}\n", person_id, msg).expect("writing to stdout failed");
+        match self {
+            ConsoleSparkClient::Plain => write!(std::io::stdout(), "{}: {}\n", person_id, msg)
+                .expect("writing to stdout failed"),
+            ConsoleSparkClient::Json => {
+                let message = SimpleOutputMessage {
+                    person_id: person_id.clone(),
+                    text: msg.to_string(),
+                };
+                serde_json::to_writer(std::io::stdout(), &message)
+                    .expect("writing JSON to stdout failed");
+                std::io::stdout()
+                    .write(b"\n")
+                    .expect("writing to stdout failed");
+            }
+        }
         future::ok(())
     }
 }
@@ -56,9 +141,18 @@ fn main() {
         .module("gerritbot")
         .module("gerritbot_gerrit")
         .timestamp(stderrlog::Timestamp::Second)
-        .verbosity(if args.verbose { 5 } else { 2 })
+        .verbosity(match (args.quiet, args.verbose) {
+            (true, _) => 0,      // ERROR
+            (false, false) => 2, // INFO
+            (_, true) => 4,      // TRACE
+        })
         .init()
         .unwrap();
+
+    if let Some(working_directory) = args.working_directory.as_ref() {
+        info!("Changing current directory to {:?}", working_directory);
+        std::env::set_current_dir(working_directory).expect("failed to set working directory");
+    }
 
     let connect_to_gerrit = || {
         info!(
@@ -68,7 +162,7 @@ fn main() {
         gerrit::Connection::connect(
             format!("{}:{}", args.hostname, args.port),
             args.username.clone(),
-            args.private_key_path.clone(),
+            args.identity_file.clone(),
         )
         .unwrap_or_else(|e| {
             error!("failed to connect to gerrit: {}", e);
@@ -94,7 +188,6 @@ fn main() {
             bot_builder
         }
     };
-    let email = args.email.clone();
     let (stdin_lines_sender, stdin_lines) = channel(1);
     std::thread::spawn(move || {
         stream::iter_ok::<_, ()>(
@@ -105,17 +198,61 @@ fn main() {
         .forward(stdin_lines_sender.sink_map_err(|e| error!("sink error: {}", e)))
         .wait()
     });
-    let console_spark_messages = stream::once(Ok("enable\n".to_string()))
-        .chain(stdin_lines)
-        .filter_map(|line| Some(line).filter(|line| !line.is_empty()))
-        .map(move |line| {
-            spark::Message::test_message(
+
+    // If we have an email, send an enable message.
+    let maybe_enable_message = stream::iter_ok(args.email.as_ref().map(|_| "enable".to_string()));
+    let stdin_lines = maybe_enable_message.chain(stdin_lines);
+
+    let email = args.email.clone();
+    let use_json = args.json;
+
+    let message_from_line = move |line: String| {
+        if use_json {
+            serde_json::from_str::<SimpleInputMessage>(&line)
+                .map_err(|e| error!("failed to parse message: {}", e))
+                .map(Into::into)
+                .ok()
+        } else if let Some(email) = &email {
+            // If we have an email, send each line from this email.
+            Some(spark::Message::test_message(
                 spark::Email::new(email.clone()),
                 spark::PersonId::new(email.clone()),
                 line,
-            )
-        });
+            ))
+        } else {
+            // If no email was given, parse it from each line.
+            lazy_static! {
+                static ref LINE_REGEX: Regex =
+                    Regex::new(r"^(?P<email>.*): ?(?P<message>.*)$").unwrap();
+            };
 
-    let bot = bot_builder.build(gerrit_command_runner, ConsoleSparkClient);
-    tokio::run(bot.run(gerrit_event_stream, console_spark_messages));
+            LINE_REGEX
+                .captures(&line)
+                .map(|captures| {
+                    let email = captures.name("email").unwrap().as_str();
+                    let message = captures.name("message").unwrap().as_str();
+                    spark::Message::test_message(
+                        spark::Email::new(email.to_string()),
+                        spark::PersonId::new(email.to_string()),
+                        message.to_string(),
+                    )
+                })
+                .or_else(|| {
+                    warn!(r#"input not understood: please send as "<email>: <message>""#);
+                    None
+                })
+        }
+    };
+
+    let spark_messages = stdin_lines
+        .filter(|line| !line.is_empty())
+        .filter_map(message_from_line);
+    let spark_client = if use_json {
+        ConsoleSparkClient::Json
+    } else {
+        ConsoleSparkClient::Plain
+    };
+
+    let bot = bot_builder.build(gerrit_command_runner, spark_client);
+    tokio::run(bot.run(gerrit_event_stream, spark_messages));
 }
