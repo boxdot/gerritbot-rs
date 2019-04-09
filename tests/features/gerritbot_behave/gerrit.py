@@ -139,6 +139,7 @@ class GerritHandler:
             user=uploader,
         )
         self.changes.append((uploader, change_info, True))
+        return change_info
 
     def get_last_change_by(self, uploader):
         try:

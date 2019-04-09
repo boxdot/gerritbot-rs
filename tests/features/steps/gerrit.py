@@ -11,7 +11,9 @@ def step_impl(context, project_name):
 @given("{uploader} uploads a new change to the {project_name} project")
 def step_impl(context, uploader, project_name):
     uploader = context.persons.get(uploader)
-    context.gerrit.create_new_change(uploader, project_name)
+    context.last_created_change = context.gerrit.create_new_change(
+        uploader, project_name
+    )
 
 
 @given("{actor} adds {reviewer} as reviewer to {owner}'s change")
@@ -27,7 +29,7 @@ use_step_matcher("re")
 
 
 @given(
-    "(?P<reviewer>.*) replies to (?P<uploader>.*)'s change with (?P<label_name>[^ ]*)(?P<label_value>[+-]\d+)(?: and the comment \"(?P<comment>.*)\")?"
+    '(?P<reviewer>.*) replies to (?P<uploader>.*)\'s change with (?P<label_name>[^ ]*)(?P<label_value>[+-]\d+)(?: and the comment "(?P<comment>.*)")?'
 )
 def step_impl(context, reviewer, uploader, label_name, label_value, comment):
     reviewer = context.persons.get(reviewer)

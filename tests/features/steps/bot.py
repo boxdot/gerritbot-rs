@@ -37,6 +37,18 @@ def step_impl(context, person):
     )
 
 
+@then("there is a message for {person} with the following text")
+def step_impl(context, person):
+    text = context.text.format(context=context)
+    person = context.persons.get(person)
+    messages_for_person = context.bot.get_messages_for_person(person)
+    item_matcher = has_entry("text", equal_to(text))
+    assert_that(messages_for_person, has_item(item_matcher))
+    context.last_matched_message = next(
+        (m for m in messages_for_person if item_matcher.matches(m))
+    )
+
+
 @then('there is no message for {person} which includes the text "{text}"')
 def step_impl(context, person, text):
     context.execute_steps(
