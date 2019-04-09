@@ -27,3 +27,12 @@ Feature: message formatting
 
         > Good job!
         """
+
+  Scenario: added as reviewer
+     Given Bob uploads a new change to the tools project
+       And Bob adds Alice as reviewer to Bob's change
+      When we check for messages by the bot
+      Then there is a message for Alice with the following text:
+        """
+        [{context.last_created_change[subject]}]({context.gerrit.http_url}/{context.last_created_change[_number]}) (bob) 👓 Added as reviewer
+        """
