@@ -1,0 +1,6 @@
+PyHamcrest
+behave
+docker
+paramiko
+pygit2
+requests
