@@ -453,7 +453,7 @@ fn fetch_extended_info(
             if let Some(patchsets) = new_change.patch_sets.take() {
                 if let Some(new_patchset) = patchsets
                     .iter()
-                    .find(|patchset| patchset.number == patchset.number)
+                    .find(|new_patchset| new_patchset.number == patchset.number)
                 {
                     *patchset = new_patchset.clone();
                 }

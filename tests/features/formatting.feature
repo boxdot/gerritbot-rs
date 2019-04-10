@@ -37,8 +37,6 @@ Feature: message formatting
         [{context.last_created_change[subject]}]({context.gerrit.http_url}/{context.last_created_change[_number]}) (bob) 👓 Added as reviewer
         """
 
-  # TODO: missing inline comments
-  @wipo
   Scenario: inline comments
      Given Bob uploads a new change to the tools project
        And Bob creates the file "README" with the following content in the change:
@@ -65,4 +63,11 @@ Feature: message formatting
         [{context.last_created_change[subject]}]({context.gerrit.http_url}/{context.last_created_change[_number]}) (tools) 👎 -2 (Code-Review) from alice
 
         > Boo!
+
+        `README`
+
+        > [Line 0]({context.gerrit.http_url}/#/c/{context.last_created_change[_number]}/2/README@0) by alice: You shouldn't be adding this file in the first place.
+
+        > [Line 8]({context.gerrit.http_url}/#/c/{context.last_created_change[_number]}/2/README@8) by alice: Who even is Mauris?
+
         """

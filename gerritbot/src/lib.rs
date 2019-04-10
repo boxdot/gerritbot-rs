@@ -986,7 +986,10 @@ fn definitely_has_inline_comments(event: &gerrit::CommentAddedEvent) -> bool {
 
 fn format_comments(change: gerrit::Change, patchset: gerrit::Patchset) -> Option<String> {
     let change_number = change.number;
-    let host = change.url.split('/').nth(2).unwrap();
+    let base_url = {
+        let last_slash = change.url.rfind('/').unwrap();
+        &change.url[..last_slash]
+    };
     let patch_set_number = patchset.number;
 
     patchset.comments.map(|mut comments| {
@@ -1000,8 +1003,8 @@ fn format_comments(change: gerrit::Change, patchset: gerrit::Patchset) -> Option
                     .map(|comment| {
                         let mut lines = comment.message.split('\n');
                         let url = format!(
-                            "https://{}/#/c/{}/{}/{}@{}",
-                            host, change_number, patch_set_number, comment.file, comment.line
+                            "{}/#/c/{}/{}/{}@{}",
+                            base_url, change_number, patch_set_number, comment.file, comment.line
                         );
                         let first_line = lines.next().unwrap_or("");
                         let first_line = format!(
