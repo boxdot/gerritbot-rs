@@ -1764,6 +1764,6 @@ mod test {
 
         let (change, patchset) = get_change_with_comments();
         assert_eq!(format_comments(change, patchset),
-            Some("`/COMMIT_MSG`\n\n> [Line 1](https://localhost:8080/#/c/1/1//COMMIT_MSG@1) by jdoe: This is a multiline\n> comment\n> on some change.".into()));
+            Some("`/COMMIT_MSG`\n\n> [Line 1](http://localhost:8080/#/c/1/1//COMMIT_MSG@1) by jdoe: This is a multiline\n> comment\n> on some change.".into()));
     }
 }
