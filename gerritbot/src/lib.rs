@@ -7,20 +7,19 @@ use std::path::Path;
 use std::time::Duration;
 
 use futures::{future::Future, stream::Stream};
-use itertools::Itertools;
 use lazy_static::lazy_static;
 use log::{debug, error, warn};
 use lru_time_cache::LruCache;
 use regex::Regex;
-use rlua::{Function as LuaFunction, Lua};
 use serde::{Deserialize, Serialize};
 
 use gerritbot_gerrit as gerrit;
 use gerritbot_spark as spark;
 
 pub mod args;
+mod format;
 
-const UNKNOWN_USER: &str = "<unknown user>";
+use format::Formatter;
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Filter {
@@ -115,7 +114,7 @@ impl SparkClient for spark::Client {
 pub struct Bot<G = gerrit::CommandRunner, S = spark::Client> {
     state: State,
     msg_cache: Option<LruCache<MsgCacheLine, ()>>,
-    format_script: String,
+    formatter: format::Formatter,
     gerrit_command_runner: G,
     spark_client: S,
 }
@@ -135,11 +134,11 @@ struct MsgCacheParameters {
     expiration: Duration,
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct Builder {
     state: State,
     msg_cache_parameters: Option<MsgCacheParameters>,
-    format_script: String,
+    formatter: Formatter,
 }
 
 #[derive(Debug)]
@@ -166,26 +165,6 @@ pub enum AddFilterResult {
     UserDisabled,
     InvalidFilter,
     FilterNotConfigured,
-}
-
-fn get_default_format_script() -> &'static str {
-    const DEFAULT_FORMAT_SCRIPT: &str = include_str!("../../scripts/format.lua");
-    check_format_script_syntax(DEFAULT_FORMAT_SCRIPT)
-        .unwrap_or_else(|err| panic!("invalid format script: {}", err));
-    DEFAULT_FORMAT_SCRIPT
-}
-
-fn check_format_script_syntax(script_source: &str) -> Result<(), String> {
-    let lua = Lua::new();
-    lua.context(|context| {
-        let globals = context.globals();
-        context
-            .load(script_source)
-            .exec()
-            .map_err(|err| format!("syntax error: {}", err))?;
-        let _: LuaFunction = globals.get("main").map_err(|_| "main function missing")?;
-        Ok(())
-    })
 }
 
 impl State {
@@ -369,7 +348,6 @@ impl Builder {
     pub fn new(state: State) -> Self {
         Self {
             state,
-            format_script: get_default_format_script().to_string(),
             ..Default::default()
         }
     }
@@ -385,16 +363,15 @@ impl Builder {
     }
 
     pub fn with_format_script(self, script_source: String) -> Result<Self, String> {
-        check_format_script_syntax(&script_source)?;
         Ok(Self {
-            format_script: script_source,
+            formatter: Formatter::new(script_source)?,
             ..self
         })
     }
 
     pub fn build<G, S>(self, gerrit_command_runner: G, spark_client: S) -> Bot<G, S> {
         let Self {
-            format_script,
+            formatter,
             msg_cache_parameters,
             state,
         } = self;
@@ -412,7 +389,7 @@ impl Builder {
                     )
                 },
             ),
-            format_script,
+            formatter,
             state,
         }
     }
@@ -520,14 +497,8 @@ where
             Some(task)
         }
         Action::UpdateApprovals(event) => {
-            self.get_approvals_msg(&event).map(|(user, message, _is_human)|
-                if definitely_has_inline_comments(&event) {
-                    Task::Reply(Response::new(
-                        user.spark_person_id.clone(),
-                        format_msg_with_comments(message, event.change, event.patchset)))
-                } else {
-                    Task::Reply(Response::new(user.spark_person_id.clone(), message))
-                })
+            self.get_approvals_msg(event).map(|(user, message, _is_human)|
+                    Task::Reply(Response::new(user.spark_person_id.clone(), message)))
         }
         Action::Help(person_id) => Some(Task::Reply(Response::new(person_id, HELP_MSG))),
             Action::Version(person_id) => Some(Task::Reply(Response::new(person_id, VERSION_MSG))),
@@ -684,59 +655,9 @@ where
         false
     }
 
-    fn format_msg(
-        script_source: &str,
-        event: &gerrit::CommentAddedEvent,
-        approval: &gerrit::Approval,
-        is_human: bool,
-    ) -> Result<String, String> {
-        fn create_lua_event<'lua>(
-            context: rlua::Context<'lua>,
-            event: &gerrit::CommentAddedEvent,
-            approval: &gerrit::Approval,
-            is_human: bool,
-        ) -> Result<rlua::Table<'lua>, rlua::Error> {
-            let lua_event = context.create_table()?;
-            lua_event.set(
-                "approver",
-                event
-                    .author
-                    .username
-                    .as_ref()
-                    .cloned()
-                    .unwrap_or_else(|| UNKNOWN_USER.to_string()),
-            )?;
-            lua_event.set("comment", event.comment.clone())?;
-            lua_event.set("value", approval.value.parse().unwrap_or(0))?;
-            lua_event.set("type", approval.approval_type.clone())?;
-            lua_event.set("url", event.change.url.clone())?;
-            lua_event.set("subject", event.change.subject.clone())?;
-            lua_event.set("project", event.change.project.clone())?;
-            lua_event.set("is_human", is_human)?;
-            Ok(lua_event)
-        }
-
-        let lua = Lua::new();
-        lua.context(|context| -> Result<String, String> {
-            let globals = context.globals();
-            context
-                .load(script_source)
-                .exec()
-                .map_err(|err| format!("syntax error: {}", err))?;
-            let f: LuaFunction = globals
-                .get("main")
-                .map_err(|_| "main function missing".to_string())?;
-            let lua_event = create_lua_event(context, event, approval, is_human)
-                .map_err(|err| format!("failed to create lua event table: {}", err))?;
-
-            f.call::<_, String>(lua_event)
-                .map_err(|err| format!("lua formatting function failed: {}", err))
-        })
-    }
-
     fn get_approvals_msg(
         &mut self,
-        event: &gerrit::CommentAddedEvent,
+        event: Box<gerrit::CommentAddedEvent>,
     ) -> Option<(&User, String, bool)> {
         debug!("Incoming approvals: {:#?}", event);
 
@@ -787,7 +708,7 @@ where
                     return None;
                 }
 
-                let msg = match Self::format_msg(&self.format_script, event, approval, is_human) {
+                let msg = match self.formatter.format_approval(&event, approval, is_human) {
                     Ok(msg) => msg,
                     Err(err) => {
                         error!("message formatting failed: {}", err);
@@ -808,15 +729,27 @@ where
             })
             .collect();
 
-        if !msgs.is_empty() {
+        let msg = if !msgs.is_empty() {
             // We got some approvals
-            Some((&self.state.users[user_pos], msgs.join("\n\n"), is_human)) // two newlines since it is markdown
+            Some(msgs.join("\n\n")) // two newlines since it is markdown
         } else if is_human && definitely_has_inline_comments(&event) {
             // We did not get any approvals, but we got inline comments from a human.
-            Some((&self.state.users[user_pos], event.comment.clone(), is_human))
+            Some(event.comment.clone())
         } else {
             None
-        }
+        };
+
+        let user = &self.state.users[user_pos];
+
+        msg.map(|m| {
+            if definitely_has_inline_comments(&event) {
+                self.formatter
+                    .format_message_with_comments(m, &event.change, event.patchset)
+            } else {
+                m
+            }
+        })
+        .map(|m| (user, m, is_human))
     }
 
     fn get_reviewer_added_msg(
@@ -844,21 +777,9 @@ where
             return None;
         }
 
-        Some((
-            &self.state.users[user_pos],
-            format!(
-                "[{}]({}) ({}) 👓 Added as reviewer",
-                event.change.subject,
-                event.change.url,
-                event
-                    .change
-                    .owner
-                    .username
-                    .as_ref()
-                    .map(String::as_str)
-                    .unwrap_or(UNKNOWN_USER)
-            ),
-        ))
+        let message = self.formatter.format_reviewer_added(event).ok()?;
+
+        Some((&self.state.users[user_pos], message))
     }
 
     pub fn save<P>(&self, filename: P) -> Result<(), BotError>
@@ -982,71 +903,6 @@ fn definitely_has_inline_comments(event: &gerrit::CommentAddedEvent) -> bool {
         .as_ref()
         .map(|c| !c.is_empty())
         .unwrap_or(false)
-}
-
-fn format_comments(change: gerrit::Change, patchset: gerrit::Patchset) -> Option<String> {
-    let change_number = change.number;
-    let base_url = {
-        let last_slash = change.url.rfind('/').unwrap();
-        &change.url[..last_slash]
-    };
-    let patch_set_number = patchset.number;
-
-    patchset.comments.map(|mut comments| {
-        comments.sort_by(|a, b| a.file.cmp(&b.file));
-        comments
-            .into_iter()
-            .group_by(|c| c.file.clone())
-            .into_iter()
-            .map(|(file, comments)| -> String {
-                let line_comments = comments
-                    .map(|comment| {
-                        let mut lines = comment.message.split('\n');
-                        let url = format!(
-                            "{}/#/c/{}/{}/{}@{}",
-                            base_url, change_number, patch_set_number, comment.file, comment.line
-                        );
-                        let first_line = lines.next().unwrap_or("");
-                        let first_line = format!(
-                            "> [Line {}]({}) by {}: {}",
-                            comment.line,
-                            url,
-                            comment
-                                .reviewer
-                                .username
-                                .as_ref()
-                                .map(String::as_str)
-                                .unwrap_or(UNKNOWN_USER),
-                            first_line
-                        );
-                        let tail = lines
-                            .map(|l| format!("> {}", l))
-                            .intersperse("\n".into())
-                            .collect::<Vec<_>>()
-                            .concat();
-                        format!("{}\n{}", first_line, tail)
-                    })
-                    .intersperse("\n".into())
-                    .collect::<Vec<_>>()
-                    .concat();
-                format!("`{}`\n\n{}", file, line_comments)
-            })
-            .intersperse("\n\n".into())
-            .collect::<Vec<_>>()
-            .concat()
-    })
-}
-
-fn format_msg_with_comments(
-    message: String,
-    change: gerrit::Change,
-    patchset: gerrit::Patchset,
-) -> String {
-    if let Some(additional_message) = format_comments(change, patchset) {
-        format!("{}\n\n{}", message, additional_message)
-    } else {
-        message
-    }
 }
 
 #[cfg(test)]
@@ -1263,25 +1119,12 @@ mod test {
     const EVENT_JSON : &'static str = r#"
 {"author":{"name":"Approver","username":"approver","email":"approver@approvers.com"},"approvals":[{"type":"Code-Review","description":"Code-Review","value":"2","oldValue":"-1"}],"comment":"Patch Set 1: Code-Review+2\n\nJust a buggy script. FAILURE\n\nAnd more problems. FAILURE","patchSet":{"number":1,"revision":"49a65998c02eda928559f2d0b586c20bc8e37b10","parents":["fb1909b4eda306985d2bbce769310e5a50a98cf5"],"ref":"refs/changes/42/42/1","uploader":{"name":"Author","email":"author@example.com","username":"Author"},"createdOn":1494165142,"author":{"name":"Author","email":"author@example.com","username":"Author"},"isDraft":false,"kind":"REWORK","sizeInsertions":0,"sizeDeletions":0},"change":{"project":"demo-project","branch":"master","id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14","number":49,"subject":"Some review.","owner":{"name":"Author","email":"author@example.com","username":"author"},"url":"http://localhost/42","commitMessage":"Some review.\n\nChange-Id: Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14\n","status":"NEW"},"project":"demo-project","refName":"refs/heads/master","changeKey":{"id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14"},"type":"comment-added","eventCreatedOn":1499190282}"#;
 
-    const CHANGE_JSON_WITH_COMMENTS : &'static str = r#"
-{"project":"gerritbot-rs","branch":"master","id":"If70442f674c595a59f3e44280570e760ba3584c4","number":1,"subject":"Bump version to 0.6.0","owner":{"name":"Administrator","email":"admin@example.com","username":"admin"},"url":"http://localhost:8080/1","commitMessage":"Bump version to 0.6.0\n\nChange-Id: If70442f674c595a59f3e44280570e760ba3584c4\n","createdOn":1524584729,"lastUpdated":1524584975,"open":true,"status":"NEW","comments":[{"timestamp":1524584729,"reviewer":{"name":"Administrator","email":"admin@example.com","username":"admin"},"message":"Uploaded patch set 1."},{"timestamp":1524584975,"reviewer":{"name":"jdoe","email":"john.doe@localhost","username":"jdoe"},"message":"Patch Set 1:\n\n(1 comment)"}]}"#;
-    const PATCHSET_JSON_WITH_COMMENTS : &'static str = r#"{"number":1,"revision":"3f58af760fc1e39fcc4a85b8ab6a6be032cf2ae2","parents":["578bc1e684098d2ac597e030442c3472f15ac3ad"],"ref":"refs/changes/01/1/1","uploader":{"name":"Administrator","email":"admin@example.com","username":"admin"},"createdOn":1524584729,"author":{"name":"jdoe","email":"jdoe@example.com","username":""},"isDraft":false,"kind":"REWORK","comments":[{"file":"/COMMIT_MSG","line":1,"reviewer":{"name":"jdoe","email":"john.doe@localhost","username":"jdoe"},"message":"This is a multiline\ncomment\non some change."}],"sizeInsertions":2,"sizeDeletions":-2}"#;
-
     fn get_event() -> gerrit::CommentAddedEvent {
         let event: Result<gerrit::Event, _> = serde_json::from_str(EVENT_JSON);
         match event.expect("failed to decode event") {
             gerrit::Event::CommentAdded(event) => event,
             event => panic!("wrong type of event: {:?}", event),
         }
-    }
-
-    fn get_change_with_comments() -> (gerrit::Change, gerrit::Patchset) {
-        let change: Result<gerrit::Change, _> = serde_json::from_str(CHANGE_JSON_WITH_COMMENTS);
-        assert!(change.is_ok());
-        let patchset: Result<gerrit::Patchset, _> =
-            serde_json::from_str(PATCHSET_JSON_WITH_COMMENTS);
-        assert!(patchset.is_ok());
-        (change.unwrap(), patchset.unwrap())
     }
 
     #[test]
@@ -1354,7 +1197,7 @@ mod test {
     fn get_approvals_msg_for_empty_bot() {
         // bot does not have the user => no message
         let mut bot = new_bot();
-        let res = bot.get_approvals_msg(&get_event());
+        let res = bot.get_approvals_msg(Box::new(get_event()));
         assert!(res.is_none());
     }
 
@@ -1366,7 +1209,7 @@ mod test {
             PersonIdRef::new("approver_spark_id"),
             EmailRef::new("approver@example.com"),
         );
-        let res = bot.get_approvals_msg(&get_event());
+        let res = bot.get_approvals_msg(Box::new(get_event()));
         assert!(res.is_none());
     }
 
@@ -1380,7 +1223,7 @@ mod test {
             EmailRef::new("author@example.com"),
         );
         bot.state.users[0].enabled = false;
-        let res = bot.get_approvals_msg(&get_event());
+        let res = bot.get_approvals_msg(Box::new(get_event()));
         assert!(res.is_none());
     }
 
@@ -1393,7 +1236,7 @@ mod test {
             PersonIdRef::new("author_spark_id"),
             EmailRef::new("author@example.com"),
         );
-        let res = bot.get_approvals_msg(&get_event());
+        let res = bot.get_approvals_msg(Box::new(get_event()));
         assert!(res.is_some());
         let (user, msg, is_human) = res.unwrap();
         assert_eq!(user.spark_person_id, PersonIdRef::new("author_spark_id"));
@@ -1417,7 +1260,7 @@ mod test {
                 .state
                 .add_filter(PersonIdRef::new("author_spark_id"), ".*Code-Review.*");
             assert!(res.is_ok());
-            let res = bot.get_approvals_msg(&get_event());
+            let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_none());
         }
         {
@@ -1425,7 +1268,7 @@ mod test {
                 .state
                 .enable_filter(PersonIdRef::new("author_spark_id"), false);
             assert!(res.is_ok());
-            let res = bot.get_approvals_msg(&get_event());
+            let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, PersonIdRef::new("author_spark_id"));
@@ -1443,7 +1286,7 @@ mod test {
                 "some_non_matching_filter",
             );
             assert!(res.is_ok());
-            let res = bot.get_approvals_msg(&get_event());
+            let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, PersonIdRef::new("author_spark_id"));
@@ -1463,7 +1306,7 @@ mod test {
             EmailRef::new("author@example.com"),
         );
         {
-            let res = bot.get_approvals_msg(&get_event());
+            let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, PersonIdRef::new("author_spark_id"));
@@ -1472,7 +1315,7 @@ mod test {
             assert!(is_human);
         }
         {
-            let res = bot.get_approvals_msg(&get_event());
+            let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_none());
         }
     }
@@ -1487,7 +1330,7 @@ mod test {
             EmailRef::new("author@example.com"),
         );
         {
-            let res = bot.get_approvals_msg(&get_event());
+            let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, PersonIdRef::new("author_spark_id"));
@@ -1497,7 +1340,7 @@ mod test {
         }
         thread::sleep(Duration::from_millis(200));
         {
-            let res = bot.get_approvals_msg(&get_event());
+            let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
             assert_eq!(user.spark_person_id, PersonIdRef::new("author_spark_id"));
@@ -1520,59 +1363,21 @@ mod test {
         {
             let mut event = get_event();
             event.change.subject = String::from("A");
-            let res = bot.get_approvals_msg(&event);
+            let res = bot.get_approvals_msg(Box::new(event));
             assert!(res.is_some());
         }
         {
             let mut event = get_event();
             event.change.subject = String::from("B");
-            let res = bot.get_approvals_msg(&event);
+            let res = bot.get_approvals_msg(Box::new(event));
             assert!(res.is_some());
         }
         {
             let mut event = get_event();
             event.change.subject = String::from("A");
-            let res = bot.get_approvals_msg(&event);
+            let res = bot.get_approvals_msg(Box::new(event));
             assert!(res.is_some());
         }
-    }
-
-    #[test]
-    fn test_format_msg() {
-        let mut bot = new_bot();
-        bot.state.add_user(
-            PersonIdRef::new("author_spark_id"),
-            EmailRef::new("author@example.com"),
-        );
-        let event = get_event();
-        let res = TestBot::format_msg(
-            get_default_format_script(),
-            &event,
-            &event.approvals[0],
-            true,
-        );
-        assert_eq!(
-            res,
-            Ok("[Some review.](http://localhost/42) (demo-project) 👍 +2 (Code-Review) from approver\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE".to_string())
-        );
-    }
-
-    #[test]
-    fn format_msg_filters_specific_messages() {
-        let mut bot = new_bot();
-        bot.state.add_user(
-            PersonIdRef::new("author_spark_id"),
-            EmailRef::new("author@example.com"),
-        );
-        let mut event = get_event();
-        event.approvals[0].approval_type = String::from("Some new type");
-        let res = TestBot::format_msg(
-            get_default_format_script(),
-            &event,
-            &event.approvals[0],
-            true,
-        );
-        assert_eq!(res.map(|s| s.is_empty()), Ok(true));
     }
 
     #[test]
@@ -1754,16 +1559,5 @@ mod test {
 
         event.comment = "Nope, colleague comment!".to_string();
         assert!(!maybe_has_inline_comments(&event));
-    }
-
-    #[test]
-    fn test_format_comments() {
-        let (change, mut patchset) = get_change_with_comments();
-        patchset.comments = None;
-        assert_eq!(format_comments(change, patchset), None);
-
-        let (change, patchset) = get_change_with_comments();
-        assert_eq!(format_comments(change, patchset),
-            Some("`/COMMIT_MSG`\n\n> [Line 1](http://localhost:8080/#/c/1/1//COMMIT_MSG@1) by jdoe: This is a multiline\n> comment\n> on some change.".into()));
     }
 }
