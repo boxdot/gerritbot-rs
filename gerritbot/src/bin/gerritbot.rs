@@ -85,18 +85,6 @@ fn main() {
             bot_builder
         }
     };
-    let bot_builder = {
-        if let Some(format_script) = bot_config.format_script {
-            bot_builder
-                .with_format_script(format_script)
-                .unwrap_or_else(|err| {
-                    error!("Failed to set format script: {:?}", err);
-                    std::process::exit(1);
-                })
-        } else {
-            bot_builder
-        }
-    };
     let connect_to_gerrit = || {
         info!(
             "Connecting to gerrit with username {} at {}",
