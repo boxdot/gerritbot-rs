@@ -321,13 +321,6 @@ impl Builder {
         }
     }
 
-    pub fn with_format_script(self, script_source: String) -> Result<Self, String> {
-        Ok(Self {
-            formatter: Formatter::new(script_source)?,
-            ..self
-        })
-    }
-
     pub fn build<G, S>(self, gerrit_command_runner: G, spark_client: S) -> Bot<G, S> {
         let Self {
             formatter,

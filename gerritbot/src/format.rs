@@ -40,11 +40,6 @@ fn check_format_script_syntax(script_source: &str) -> Result<(), String> {
 }
 
 impl Formatter {
-    pub fn new(format_script: String) -> Result<Self, String> {
-        check_format_script_syntax(&format_script)?;
-        Ok(Self { format_script })
-    }
-
     pub fn format_approval(
         &self,
         event: &gerrit::CommentAddedEvent,

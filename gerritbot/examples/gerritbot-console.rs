@@ -176,18 +176,6 @@ fn main() {
     );
     let gerrit_command_runner = gerrit::CommandRunner::new(connect_to_gerrit());
     let bot_builder = bot::Builder::new(bot::State::new());
-    let bot_builder = {
-        if let Some(format_script) = args.format_script {
-            bot_builder
-                .with_format_script(format_script)
-                .unwrap_or_else(|err| {
-                    error!("Failed to set format script: {:?}", err);
-                    std::process::exit(1);
-                })
-        } else {
-            bot_builder
-        }
-    };
     let (stdin_lines_sender, stdin_lines) = channel(1);
     std::thread::spawn(move || {
         stream::iter_ok::<_, ()>(
