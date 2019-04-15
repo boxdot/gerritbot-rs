@@ -9,19 +9,19 @@ use futures::sync::mpsc::{channel, Receiver, Sender};
 use futures::sync::oneshot;
 use futures::{future, Future, Sink, Stream};
 use log::{debug, error, info};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Gerrit username
 pub type Username = String;
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct User {
     pub name: Option<String>,
     pub username: Option<Username>,
     pub email: String,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Approval {
     #[serde(rename = "type")]
@@ -31,7 +31,7 @@ pub struct Approval {
     pub old_value: Option<String>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Patchset {
     pub number: u32,
@@ -49,7 +49,7 @@ pub struct Patchset {
     pub comments: Option<Vec<InlineComment>>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct InlineComment {
     pub file: String,
@@ -58,7 +58,7 @@ pub struct InlineComment {
     pub message: String,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum ChangeStatus {
     NEW,
     DRAFT,
@@ -67,20 +67,20 @@ pub enum ChangeStatus {
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub enum SubmitStatus {
     OK,
     NOT_READY,
     RULE_ERROR,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct SubmitRecord {
     status: SubmitStatus,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Change {
     pub project: String,
@@ -99,20 +99,20 @@ pub struct Change {
     pub submit_records: Option<Vec<SubmitRecord>>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Comment {
     pub timestamp: u64,
     pub reviewer: User,
     pub message: String,
 }
 
-#[derive(Deserialize, Debug, Eq, PartialEq, Hash, Clone)]
+#[derive(Deserialize, Serialize, Debug, Eq, PartialEq, Hash, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ChangeKey {
     pub id: String,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct CommentAddedEvent {
     pub change: Change,
     #[serde(rename = "patchSet")]
@@ -124,7 +124,7 @@ pub struct CommentAddedEvent {
     pub created_on: u32,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct ReviewerAddedEvent {
     pub change: Change,
     #[serde(rename = "patchSet")]
@@ -134,7 +134,7 @@ pub struct ReviewerAddedEvent {
     pub created_on: u32,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub enum Event {
     #[serde(rename = "comment-added")]
