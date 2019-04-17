@@ -9,7 +9,6 @@ use std::time::Duration;
 use futures::{future::Future, stream::Stream};
 use lazy_static::lazy_static;
 use log::{debug, error, warn};
-use lru_time_cache::LruCache;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -18,8 +17,10 @@ use gerritbot_spark as spark;
 
 pub mod args;
 mod format;
+mod rate_limit;
 
 use format::Formatter;
+use rate_limit::RateLimiter;
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Filter {
@@ -56,45 +57,6 @@ impl User {
     }
 }
 
-/// Cache line in LRU Cache containing last approval messages
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum MsgCacheLine {
-    Approval {
-        /// position of the user in bots.user vector
-        user_ref: usize,
-        subject: String,
-        approver: String,
-        approval_type: String,
-        approval_value: String,
-    },
-    ReviewerAdded {
-        user_ref: usize,
-        subject: String,
-    },
-}
-
-impl MsgCacheLine {
-    fn new_approval(
-        user_ref: usize,
-        subject: String,
-        approver: String,
-        approval_type: String,
-        approval_value: String,
-    ) -> MsgCacheLine {
-        MsgCacheLine::Approval {
-            user_ref,
-            subject,
-            approver,
-            approval_type,
-            approval_value,
-        }
-    }
-
-    fn new_reviewer_added(user_ref: usize, subject: String) -> MsgCacheLine {
-        MsgCacheLine::ReviewerAdded { user_ref, subject }
-    }
-}
-
 pub trait GerritCommandRunner {}
 
 impl GerritCommandRunner for gerrit::CommandRunner {}
@@ -113,7 +75,7 @@ impl SparkClient for spark::Client {
 
 pub struct Bot<G = gerrit::CommandRunner, S = spark::Client> {
     state: State,
-    msg_cache: Option<LruCache<MsgCacheLine, ()>>,
+    rate_limiter: RateLimiter,
     formatter: format::Formatter,
     gerrit_command_runner: G,
     spark_client: S,
@@ -134,10 +96,10 @@ struct MsgCacheParameters {
     expiration: Duration,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct Builder {
     state: State,
-    msg_cache_parameters: Option<MsgCacheParameters>,
+    rate_limiter: RateLimiter,
     formatter: Formatter,
 }
 
@@ -354,10 +316,7 @@ impl Builder {
 
     pub fn with_msg_cache(self, capacity: usize, expiration: Duration) -> Self {
         Self {
-            msg_cache_parameters: Some(MsgCacheParameters {
-                capacity,
-                expiration,
-            }),
+            rate_limiter: RateLimiter::with_expiry_duration_and_capacity(expiration, capacity),
             ..self
         }
     }
@@ -372,23 +331,14 @@ impl Builder {
     pub fn build<G, S>(self, gerrit_command_runner: G, spark_client: S) -> Bot<G, S> {
         let Self {
             formatter,
-            msg_cache_parameters,
+            rate_limiter,
             state,
         } = self;
 
         Bot {
             gerrit_command_runner,
             spark_client,
-            msg_cache: msg_cache_parameters.map(
-                |MsgCacheParameters {
-                     capacity,
-                     expiration,
-                 }| {
-                    LruCache::<MsgCacheLine, ()>::with_expiry_duration_and_capacity(
-                        expiration, capacity,
-                    )
-                },
-            ),
+            rate_limiter,
             formatter,
             state,
         }
@@ -642,19 +592,6 @@ where
         return response;
     }
 
-    fn touch_cache(&mut self, key: MsgCacheLine) -> bool {
-        if let Some(cache) = self.msg_cache.as_mut() {
-            let hit = cache.get(&key).is_some();
-            if hit {
-                return true;
-            } else {
-                cache.insert(key, ());
-                return false;
-            }
-        };
-        false
-    }
-
     fn get_approvals_msg(
         &mut self,
         event: Box<gerrit::CommentAddedEvent>,
@@ -693,17 +630,11 @@ where
                 }
 
                 // filter all messages that were already sent to the user recently
-                if self.touch_cache(MsgCacheLine::new_approval(
+                if self.rate_limiter.limit(
                     user_pos,
-                    if change.topic.is_some() {
-                        change.topic.as_ref().unwrap().clone()
-                    } else {
-                        change.subject.clone()
-                    },
-                    approver.clone(),
-                    approval.approval_type.clone(),
-                    approval.value.clone(),
-                )) {
+                    change.topic.as_ref().unwrap_or(&change.subject),
+                    (approver, approval),
+                ) {
                     debug!("Filtered approval due to cache hit.");
                     return None;
                 }
@@ -765,14 +696,11 @@ where
         let change = &event.change;
 
         // filter all messages that were already sent to the user recently
-        if self.touch_cache(MsgCacheLine::new_reviewer_added(
+        if self.rate_limiter.limit(
             user_pos,
-            if change.topic.is_some() {
-                change.topic.as_ref().unwrap().clone()
-            } else {
-                change.subject.clone()
-            },
-        )) {
+            change.topic.as_ref().unwrap_or(&change.subject),
+            event,
+        ) {
             debug!("Filtered reviewer-added due to cache hit.");
             return None;
         }
