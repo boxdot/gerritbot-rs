@@ -615,6 +615,12 @@ where
 
         let is_human = !approver.to_lowercase().contains("bot");
 
+        // filter all messages that were already sent to the user recently
+        if !approvals.is_empty() && self.rate_limiter.limit(user_pos, &*event) {
+            debug!("Filtered approval due to cache hit.");
+            return None;
+        }
+
         let msgs: Vec<String> = approvals
             .iter()
             .filter_map(|approval| {
@@ -626,16 +632,6 @@ where
                     .unwrap_or(false);
                 debug!("Filtered approval: {:?}", filtered);
                 if filtered {
-                    return None;
-                }
-
-                // filter all messages that were already sent to the user recently
-                if self.rate_limiter.limit(
-                    user_pos,
-                    change.topic.as_ref().unwrap_or(&change.subject),
-                    (approver, approval),
-                ) {
-                    debug!("Filtered approval due to cache hit.");
                     return None;
                 }
 
@@ -693,14 +689,9 @@ where
         if !self.state.users[user_pos].enabled {
             return None;
         }
-        let change = &event.change;
 
         // filter all messages that were already sent to the user recently
-        if self.rate_limiter.limit(
-            user_pos,
-            change.topic.as_ref().unwrap_or(&change.subject),
-            event,
-        ) {
+        if self.rate_limiter.limit(user_pos, event) {
             debug!("Filtered reviewer-added due to cache hit.");
             return None;
         }
