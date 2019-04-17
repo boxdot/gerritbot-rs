@@ -90,6 +90,41 @@ impl Formatter {
         })
     }
 
+    pub fn format_comment_added(
+        &self,
+        event: &gerrit::CommentAddedEvent,
+        is_human: bool,
+    ) -> Result<Option<String>, String> {
+        let mut messages: Vec<String> = event
+            .approvals
+            .iter()
+            .filter(|approval| {
+                approval.old_value.as_ref() != Some(&approval.value) && approval.value != "0"
+            })
+            .map(|approval| self.format_approval(event, approval, is_human))
+            .collect::<Result<_, _>>()?;
+
+        messages.retain(|message| !message.is_empty());
+
+        let inline_comments = self.format_inline_comments(&event.change, &event.patchset);
+
+        let message = if !messages.is_empty() {
+            // We got some approvals
+            messages.join("\n\n")
+        } else if is_human && inline_comments.is_some() {
+            // We did not get any approvals, but we got inline comments from a human.
+            event.comment.clone()
+        } else {
+            return Ok(None);
+        };
+
+        Ok(Some(
+            inline_comments
+                .map(|c| format!("{}\n\n{}", message, c))
+                .unwrap_or(message),
+        ))
+    }
+
     pub fn format_reviewer_added(
         &self,
         event: &gerrit::ReviewerAddedEvent,
@@ -111,7 +146,7 @@ impl Formatter {
     fn format_inline_comments(
         &self,
         change: &gerrit::Change,
-        patchset: gerrit::Patchset,
+        patchset: &gerrit::Patchset,
     ) -> Option<String> {
         let change_number = change.number;
         let base_url = {
@@ -120,66 +155,58 @@ impl Formatter {
         };
         let patch_set_number = patchset.number;
 
-        patchset.comments.map(|mut comments| {
-            comments.sort_by(|a, b| a.file.cmp(&b.file));
-            comments
-                .into_iter()
-                .group_by(|c| c.file.clone())
-                .into_iter()
-                .map(|(file, comments)| -> String {
-                    let line_comments = comments
-                        .map(|comment| {
-                            let mut lines = comment.message.split('\n');
-                            let url = format!(
-                                "{}/#/c/{}/{}/{}@{}",
-                                base_url,
-                                change_number,
-                                patch_set_number,
-                                comment.file,
-                                comment.line
-                            );
-                            let first_line = lines.next().unwrap_or("");
-                            let first_line = format!(
-                                "> [Line {}]({}) by {}: {}",
-                                comment.line,
-                                url,
-                                comment
-                                    .reviewer
-                                    .username
-                                    .as_ref()
-                                    .map(String::as_str)
-                                    .unwrap_or(UNKNOWN_USER),
-                                first_line
-                            );
-                            let tail = lines
-                                .map(|l| format!("> {}", l))
-                                .intersperse("\n".into())
-                                .collect::<Vec<_>>()
-                                .concat();
-                            format!("{}\n{}", first_line, tail)
-                        })
-                        .intersperse("\n".into())
-                        .collect::<Vec<_>>()
-                        .concat();
-                    format!("`{}`\n\n{}", file, line_comments)
-                })
-                .intersperse("\n\n".into())
-                .collect::<Vec<_>>()
-                .concat()
-        })
-    }
-
-    pub fn format_message_with_comments(
-        &self,
-        message: String,
-        change: &gerrit::Change,
-        patchset: gerrit::Patchset,
-    ) -> String {
-        if let Some(additional_message) = self.format_inline_comments(change, patchset) {
-            format!("{}\n\n{}", message, additional_message)
-        } else {
-            message
-        }
+        patchset
+            .comments
+            .as_ref()
+            .cloned()
+            .map(|mut comments| {
+                comments.sort_by(|a, b| a.file.cmp(&b.file));
+                comments
+                    .into_iter()
+                    .group_by(|c| c.file.clone())
+                    .into_iter()
+                    .map(|(file, comments)| -> String {
+                        let line_comments = comments
+                            .map(|comment| {
+                                let mut lines = comment.message.split('\n');
+                                let url = format!(
+                                    "{}/#/c/{}/{}/{}@{}",
+                                    base_url,
+                                    change_number,
+                                    patch_set_number,
+                                    comment.file,
+                                    comment.line
+                                );
+                                let first_line = lines.next().unwrap_or("");
+                                let first_line = format!(
+                                    "> [Line {}]({}) by {}: {}",
+                                    comment.line,
+                                    url,
+                                    comment
+                                        .reviewer
+                                        .username
+                                        .as_ref()
+                                        .map(String::as_str)
+                                        .unwrap_or(UNKNOWN_USER),
+                                    first_line
+                                );
+                                let tail = lines
+                                    .map(|l| format!("> {}", l))
+                                    .intersperse("\n".into())
+                                    .collect::<Vec<_>>()
+                                    .concat();
+                                format!("{}\n{}", first_line, tail)
+                            })
+                            .intersperse("\n".into())
+                            .collect::<Vec<_>>()
+                            .concat();
+                        format!("`{}`\n\n{}", file, line_comments)
+                    })
+                    .intersperse("\n\n".into())
+                    .collect::<Vec<_>>()
+                    .concat()
+            })
+            .filter(|s| !s.is_empty())
     }
 }
 
@@ -215,11 +242,7 @@ mod test {
     #[test]
     fn test_format_approval() {
         let event = get_event();
-        let res = Formatter::default().format_approval(
-            &event,
-            &event.approvals[0],
-            true,
-        );
+        let res = Formatter::default().format_approval(&event, &event.approvals[0], true);
         assert_eq!(
             res,
             Ok("[Some review.](http://localhost/42) (demo-project) 👍 +2 (Code-Review) from approver\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE".to_string())
@@ -230,11 +253,7 @@ mod test {
     fn format_approval_filters_specific_messages() {
         let mut event = get_event();
         event.approvals[0].approval_type = String::from("Some new type");
-        let res = Formatter::default().format_approval(
-            &event,
-            &event.approvals[0],
-            true,
-        );
+        let res = Formatter::default().format_approval(&event, &event.approvals[0], true);
         assert_eq!(res.map(|s| s.is_empty()), Ok(true));
     }
 
@@ -243,12 +262,12 @@ mod test {
         let (change, mut patchset) = get_change_with_comments();
         patchset.comments = None;
         assert_eq!(
-            Formatter::default().format_inline_comments(&change, patchset),
+            Formatter::default().format_inline_comments(&change, &patchset),
             None
         );
 
         let (change, patchset) = get_change_with_comments();
-        assert_eq!(Formatter::default().format_inline_comments(&change, patchset),
+        assert_eq!(Formatter::default().format_inline_comments(&change, &patchset),
                    Some("`/COMMIT_MSG`\n\n> [Line 1](http://localhost:8080/#/c/1/1//COMMIT_MSG@1) by jdoe: This is a multiline\n> comment\n> on some change.".into()));
     }
 }

@@ -613,63 +613,19 @@ where
             debug!("Filtered approval due to cache hit.");
             return None;
         }
-
-        let msgs: Vec<String> = approvals
-            .iter()
-            .filter_map(|approval| {
-                // filter if there was no previous value, or value did not change, or it is 0
-                let filtered = !approval
-                    .old_value
-                    .as_ref()
-                    .map(|old_value| old_value != &approval.value && approval.value != "0")
-                    .unwrap_or(false);
-                debug!("Filtered approval: {:?}", filtered);
-                if filtered {
-                    return None;
-                }
-
-                let msg = match self.formatter.format_approval(&event, approval, is_human) {
-                    Ok(msg) => msg,
-                    Err(err) => {
-                        error!("message formatting failed: {}", err);
-                        return None;
-                    }
-                };
-
-                // if user has configured and enabled a filter try to apply it
-                if self.state.is_filtered(user_pos, &msg) {
-                    return None;
-                }
-
-                if !msg.is_empty() {
-                    Some(msg)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let msg = if !msgs.is_empty() {
-            // We got some approvals
-            Some(msgs.join("\n\n")) // two newlines since it is markdown
-        } else if is_human && definitely_has_inline_comments(&event) {
-            // We did not get any approvals, but we got inline comments from a human.
-            Some(event.comment.clone())
-        } else {
-            None
-        };
-
         let user = &self.state.users[user_pos];
 
-        msg.map(|m| {
-            if definitely_has_inline_comments(&event) {
-                self.formatter
-                    .format_message_with_comments(m, &event.change, event.patchset)
-            } else {
-                m
-            }
-        })
-        .map(|m| (user, m, is_human))
+        self.formatter
+            .format_comment_added(&event, is_human)
+            .unwrap_or_else(|e| {
+                error!("message formatting failed: {}", e);
+                None
+            })
+            .filter(|msg| {
+                // if user has configured and enabled a filter try to apply it
+                !self.state.is_filtered(user_pos, &msg)
+            })
+            .map(|m| (user, m, is_human))
     }
 
     fn get_reviewer_added_msg(
@@ -806,15 +762,6 @@ fn maybe_has_inline_comments(event: &gerrit::CommentAddedEvent) -> bool {
         static ref RE: Regex = Regex::new(r"\(\d+\scomments?\)").unwrap();
     }
     RE.is_match(&event.comment)
-}
-
-fn definitely_has_inline_comments(event: &gerrit::CommentAddedEvent) -> bool {
-    event
-        .patchset
-        .comments
-        .as_ref()
-        .map(|c| !c.is_empty())
-        .unwrap_or(false)
 }
 
 #[cfg(test)]
