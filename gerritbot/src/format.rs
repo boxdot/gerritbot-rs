@@ -4,10 +4,10 @@ use serde_json::Value as JsonValue;
 
 use gerritbot_gerrit as gerrit;
 
-const UNKNOWN_USER: &str = "<unknown user>";
 const DEFAULT_FORMAT_SCRIPT: &str = include_str!("../../scripts/format.lua");
 const LUA_FORMAT_COMMENT_ADDED: &str = "format_comment_added";
-const LUA_FORMAT_FUNCTIONS: &[&str] = &[LUA_FORMAT_COMMENT_ADDED];
+const LUA_FORMAT_REVIEWER_ADDED: &str = "format_reviewer_added";
+const LUA_FORMAT_FUNCTIONS: &[&str] = &[LUA_FORMAT_COMMENT_ADDED, LUA_FORMAT_REVIEWER_ADDED];
 
 pub struct Formatter {
     lua: Lua,
@@ -124,18 +124,21 @@ impl Formatter {
         &self,
         event: &gerrit::ReviewerAddedEvent,
     ) -> Result<String, String> {
-        Ok(format!(
-            "[{}]({}) ({}) 👓 Added as reviewer",
-            event.change.subject,
-            event.change.url,
-            event
-                .change
-                .owner
-                .username
-                .as_ref()
-                .map(String::as_str)
-                .unwrap_or(UNKNOWN_USER)
-        ))
+        self.lua.context(|context| {
+            let globals = context.globals();
+
+            let lua_format_reviewer_added: LuaFunction = globals
+                .get(LUA_FORMAT_REVIEWER_ADDED)
+                .map_err(|_| format!("{} function missing", LUA_FORMAT_REVIEWER_ADDED))?;
+            let lua_event = to_lua_via_json(event, context)
+                .map_err(|e| format!("failed to serialize event: {}", e))?;
+            let lua_result = lua_format_reviewer_added
+                .call::<_, LuaValue>(lua_event)
+                .map_err(|err| format!("lua formatting function failed: {}", err))?;
+
+            Ok(String::from_lua(lua_result, context)
+                .map_err(|e| format!("failed to convert formatting result to string: {}", e))?)
+        })
     }
 }
 
