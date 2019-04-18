@@ -145,11 +145,11 @@ class GerritHandler:
 
     def add_file_to_change(self, uploader, change_info, filename, content):
         self.http_put(
-            f"/changes/{change_info['id']}/edit/{filename}",
+            f"/changes/{change_info['_number']}/edit/{filename}",
             user=uploader,
             data=content.encode("utf-8"),
         )
-        self.http_post(f"/changes/{change_info['id']}/edit:publish", user=uploader)
+        self.http_post(f"/changes/{change_info['_number']}/edit:publish", user=uploader)
 
     def get_last_change_by(self, uploader):
         try:
@@ -174,14 +174,14 @@ class GerritHandler:
             review_data["comments"] = comments
 
         self.http_post(
-            f"/changes/{change['id']}/revisions/current/review",
+            f"/changes/{change['_number']}/revisions/current/review",
             json=review_data,
             user=reviewer,
         )
 
     def add_reviewer(self, change, reviewer, *, user):
         self.http_post(
-            f"/changes/{change['id']}/reviewers",
+            f"/changes/{change['_number']}/reviewers",
             json={"reviewer": reviewer.email},
             user=user,
         )
