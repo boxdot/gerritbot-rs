@@ -269,9 +269,11 @@ mod test {
     fn test_format_approval() {
         let event = get_event();
         let res = Formatter::default().format_approval(&event, &event.approvals[0], true);
+        // Result<Option<String>, _> -> Result<Option<&str>, _>
+        let res = res.as_ref().map(|o| o.as_ref().map(String::as_str));
         assert_eq!(
             res,
-            Ok(Some("[Some review.](http://localhost/42) (demo-project) 👍 +2 (Code-Review) from approver\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE".to_string()))
+            Ok(Some("[Some review.](http://localhost/42) ([demo-project](http://localhost/q/project:demo-project+status:open)) 👍 +2 (Code-Review) from [Approver](http://localhost/q/reviewer:approver@approvers.com+status:open)\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE"))
         );
     }
 
