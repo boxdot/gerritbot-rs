@@ -116,8 +116,7 @@ local function format_comment(comment, is_human)
     end
 
     if #lines > 0 then
-        -- XXX: change <br> to \n
-        return "\n\n" .. table.concat(lines, "<br>\n")
+        return "\n\n" .. table.concat(lines, "\n\n")
     end
 end
 

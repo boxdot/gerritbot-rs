@@ -178,7 +178,7 @@ mod test {
         let res = res.as_ref().map(|o| o.as_ref().map(String::as_str));
         assert_eq!(
             res,
-            Ok(Some("[Some review.](http://localhost/42) ([demo-project](http://localhost/q/project:demo-project+status:open)) 👍 +2 (Code-Review) from [Approver](http://localhost/q/reviewer:approver@approvers.com+status:open)\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE"))
+            Ok(Some("[Some review.](http://localhost/42) ([demo-project](http://localhost/q/project:demo-project+status:open)) 👍 +2 (Code-Review) from [Approver](http://localhost/q/reviewer:approver@approvers.com+status:open)\n\n> Just a buggy script. FAILURE\n\n> And more problems. FAILURE"))
         );
     }
 
@@ -191,7 +191,7 @@ mod test {
         let res = res.as_ref().map(|o| o.as_ref().map(String::as_str));
         assert_eq!(
             res,
-            Ok(Some("[Some review.](http://localhost/42) ([demo-project](http://localhost/q/project:demo-project+status:open)) 👍 +2 (Some-New-Type) from [Approver](http://localhost/q/reviewer:approver@approvers.com+status:open)\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE"))
+            Ok(Some("[Some review.](http://localhost/42) ([demo-project](http://localhost/q/project:demo-project+status:open)) 👍 +2 (Some-New-Type) from [Approver](http://localhost/q/reviewer:approver@approvers.com+status:open)\n\n> Just a buggy script. FAILURE\n\n> And more problems. FAILURE"))
         );
     }
 
@@ -209,7 +209,7 @@ mod test {
         let res = res.as_ref().map(|o| o.as_ref().map(String::as_str));
         assert_eq!(
             res,
-            Ok(Some("[Some review.](http://localhost/42) ([demo-project](http://localhost/q/project:demo-project+status:open)) 👍 +2 (Code-Review), ✔ +1 (Verified) from [Approver](http://localhost/q/reviewer:approver@approvers.com+status:open)\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE"))
+            Ok(Some("[Some review.](http://localhost/42) ([demo-project](http://localhost/q/project:demo-project+status:open)) 👍 +2 (Code-Review), ✔ +1 (Verified) from [Approver](http://localhost/q/reviewer:approver@approvers.com+status:open)\n\n> Just a buggy script. FAILURE\n\n> And more problems. FAILURE"))
         );
     }
 
