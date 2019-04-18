@@ -58,29 +58,45 @@ local function format_change_project(base_url, change)
     return result
 end
 
+local APPROVAL_ICONS = {
+    ["WaitForVerification"] = {[-1] = "⏳"},
+    ["Code-Review"] = {[-2] = "👎", [-1] = "🤷", [1] = "👌", [2] = "👍"},
+    ["Verified"] = {[-1] = "❌", [1] = "✔"},
+    -- fallback
+    ["*"] = {[-2] = "👎", [-1] = "🙅", [1] = "🙆", [2] = "👍"},
+}
+
+local function get_approval_icon(type, value, old_value)
+    if value == 0 then
+        if old_value ~= 0 then
+            return "📝"
+        else
+            return nil
+        end
+    end
+
+    type_icons = APPROVAL_ICONS[type] or APPROVAL_ICONS["*"]
+
+    return type_icons[value]
+end
+
 local function format_approval(approval)
-    if approval.type ~= "Code-Review" and approval.type ~= "WaitForVerification" and approval.type ~= "Verified" then
-        return
-    end
-
     local approval_value = tonumber(approval.value)
-
-    if string.match(approval.type, "WaitForVerification") then
-        icon = "⌛"
-    elseif approval_value > 0 then
-        icon = "👍"
-    elseif approval_value == 0 then
-        icon = "📝"
-    else
-        icon = "👎"
-    end
+    local old_approval_value = tonumber(approval.old_value or "0")
+    local icon = get_approval_icon(approval.type, approval_value, old_approval_value)
 
     local sign = ""
     if approval_value > 0 then
         sign = "+"
     end
 
-    return string.format("%s %s%s (%s)", icon, sign, approval_value, approval.type)
+    if icon then
+        icon = icon .. " "
+    else
+        icon = ""
+    end
+
+    return string.format("%s%s%s (%s)", icon, sign, approval_value, approval.type)
 end
 
 -- Filter and format messages
@@ -104,6 +120,9 @@ function format_comment_added(event, is_human)
     if #formatted_approvals > 0 then
         msg = msg .. " " .. table.concat(formatted_approvals, ", ")
     else
+        -- TODO: messages without approvals should still be formatted since they
+        -- can be comment responses. This should be handled at a higher level.
+        -- Keep this here for now to prevent spamming.
         return
     end
 
