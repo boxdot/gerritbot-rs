@@ -1,6 +1,8 @@
 use itertools::Itertools as _;
 
-use rlua::{Function as LuaFunction, Lua};
+use rlua::{FromLua as _, Function as LuaFunction, Lua, Value as LuaValue};
+use serde::Serialize;
+use serde_json::Value as JsonValue;
 
 use gerritbot_gerrit as gerrit;
 
@@ -27,10 +29,62 @@ fn load_format_script(script_source: &str) -> Result<Lua, String> {
             .load(script_source)
             .exec()
             .map_err(|err| format!("syntax error: {}", err))?;
-        let _: LuaFunction = globals.get("main").map_err(|_| "main function missing")?;
+        let _: LuaFunction = globals
+            .get("format_approval")
+            .map_err(|_| "format_approval function missing")?;
         Ok(())
     })?;
     Ok(lua)
+}
+
+fn json_to_lua<'lua>(json: &JsonValue, lua: rlua::Context<'lua>) -> rlua::Result<LuaValue<'lua>> {
+    Ok(match json {
+        JsonValue::Null => LuaValue::Nil,
+        JsonValue::Bool(b) => LuaValue::Boolean(*b),
+        JsonValue::Number(n) => {
+            if let Some(n) = n.as_i64() {
+                LuaValue::Integer(n)
+            } else if let Some(n) = n.as_f64() {
+                LuaValue::Number(n)
+            } else {
+                Err(rlua::Error::ToLuaConversionError {
+                    from: "serde_json::Number",
+                    to: "Integer",
+                    message: Some(format!("value {} too large", n)),
+                })?
+            }
+        }
+        JsonValue::String(s) => lua.create_string(s).map(LuaValue::String)?,
+        JsonValue::Array(values) => {
+            let table = lua.create_table()?;
+
+            for (i, value) in values.iter().enumerate() {
+                table.set(LuaValue::Integer(i as i64 + 1), json_to_lua(value, lua)?)?;
+            }
+
+            LuaValue::Table(table)
+        }
+        JsonValue::Object(items) => {
+            let table = lua.create_table()?;
+
+            for (key, value) in items {
+                let key = lua.create_string(key)?;
+                let value = json_to_lua(value, lua)?;
+                table.set(key, value)?;
+            }
+
+            LuaValue::Table(table)
+        }
+    })
+}
+
+fn to_lua_via_json<'lua, T: Serialize>(
+    value: T,
+    lua: rlua::Context<'lua>,
+) -> Result<LuaValue<'lua>, Box<dyn std::error::Error>> {
+    let json_value = serde_json::to_value(value)?;
+    let lua_value = json_to_lua(&json_value, lua)?;
+    Ok(lua_value)
 }
 
 impl Formatter {
@@ -39,44 +93,29 @@ impl Formatter {
         event: &gerrit::CommentAddedEvent,
         approval: &gerrit::Approval,
         is_human: bool,
-    ) -> Result<String, String> {
-        fn create_lua_event<'lua>(
-            context: rlua::Context<'lua>,
-            event: &gerrit::CommentAddedEvent,
-            approval: &gerrit::Approval,
-            is_human: bool,
-        ) -> Result<rlua::Table<'lua>, rlua::Error> {
-            let lua_event = context.create_table()?;
-            lua_event.set(
-                "approver",
-                event
-                    .author
-                    .username
-                    .as_ref()
-                    .cloned()
-                    .unwrap_or_else(|| UNKNOWN_USER.to_string()),
-            )?;
-            lua_event.set("comment", event.comment.clone())?;
-            lua_event.set("value", approval.value.parse().unwrap_or(0))?;
-            lua_event.set("type", approval.approval_type.clone())?;
-            lua_event.set("url", event.change.url.clone())?;
-            lua_event.set("subject", event.change.subject.clone())?;
-            lua_event.set("project", event.change.project.clone())?;
-            lua_event.set("is_human", is_human)?;
-            Ok(lua_event)
-        }
+    ) -> Result<Option<String>, String> {
+        self.lua
+            .context(|context| -> Result<Option<String>, String> {
+                let globals = context.globals();
 
-        self.lua.context(|context| -> Result<String, String> {
-            let globals = context.globals();
-            let f: LuaFunction = globals
-                .get("main")
-                .map_err(|_| "main function missing".to_string())?;
-            let lua_event = create_lua_event(context, event, approval, is_human)
-                .map_err(|err| format!("failed to create lua event table: {}", err))?;
+                let lua_format_approval: LuaFunction = globals
+                    .get("format_approval")
+                    .map_err(|_| "format_approval function missing".to_string())?;
+                let lua_event = to_lua_via_json(event, context)
+                    .map_err(|e| format!("failed to serialize event: {}", e))?;
+                let lua_approval = to_lua_via_json(approval, context)
+                    .map_err(|e| format!("failed to serialize approval: {}", e))?;
+                let lua_result = lua_format_approval
+                    .call::<_, LuaValue>((lua_event, lua_approval, is_human))
+                    .map_err(|err| format!("lua formatting function failed: {}", err))?;
 
-            f.call::<_, String>(lua_event)
-                .map_err(|err| format!("lua formatting function failed: {}", err))
-        })
+                match lua_result {
+                    LuaValue::Nil => Ok(None),
+                    _ => Ok(Some(String::from_lua(lua_result, context).map_err(
+                        |e| format!("failed to convert formatting result to string: {}", e),
+                    )?)),
+                }
+            })
     }
 
     pub fn format_comment_added(
@@ -84,16 +123,14 @@ impl Formatter {
         event: &gerrit::CommentAddedEvent,
         is_human: bool,
     ) -> Result<Option<String>, String> {
-        let mut messages: Vec<String> = event
+        let messages: Vec<String> = event
             .approvals
             .iter()
             .filter(|approval| {
                 approval.old_value.as_ref() != Some(&approval.value) && approval.value != "0"
             })
-            .map(|approval| self.format_approval(event, approval, is_human))
+            .filter_map(|approval| self.format_approval(event, approval, is_human).transpose())
             .collect::<Result<_, _>>()?;
-
-        messages.retain(|message| !message.is_empty());
 
         let inline_comments = self.format_inline_comments(&event.change, &event.patchset);
 
@@ -234,7 +271,7 @@ mod test {
         let res = Formatter::default().format_approval(&event, &event.approvals[0], true);
         assert_eq!(
             res,
-            Ok("[Some review.](http://localhost/42) (demo-project) 👍 +2 (Code-Review) from approver\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE".to_string())
+            Ok(Some("[Some review.](http://localhost/42) (demo-project) 👍 +2 (Code-Review) from approver\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE".to_string()))
         );
     }
 
@@ -243,7 +280,7 @@ mod test {
         let mut event = get_event();
         event.approvals[0].approval_type = String::from("Some new type");
         let res = Formatter::default().format_approval(&event, &event.approvals[0], true);
-        assert_eq!(res.map(|s| s.is_empty()), Ok(true));
+        assert_eq!(res, Ok(None));
     }
 
     #[test]
