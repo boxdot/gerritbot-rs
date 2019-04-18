@@ -1,25 +1,25 @@
 -- Get the Gerrit base URL from the given change URL.
-function get_gerrit_base_url(change_url)
+local function get_gerrit_base_url(change_url)
     return string.sub(change_url, 1, #change_url - string.find(string.reverse(change_url), "/"))
 end
 
 -- Get a URL for a Gerrit query.
-function get_query_url(base_url, query, ...)
+local function get_query_url(base_url, query, ...)
     return string.format("%s/q/%s", base_url, string.format(query, ...))
 end
 
 -- Format a link.
-function format_link(text, target)
+local function format_link(text, target)
     return string.format("[%s](%s)", text, target)
 end
 
 -- Format a link to a Gerrit query.
-function format_query_link(base_url, text, query, ...)
+local function format_query_link(base_url, text, query, ...)
     return format_link(text, get_query_url(base_url, query, ...))
 end
 
 -- Format a link to a user.
-function format_user(base_url, user, role)
+local function format_user(base_url, user, role)
     return format_query_link(
         base_url,
         user.name or user.email,
@@ -29,12 +29,12 @@ function format_user(base_url, user, role)
 end
 
 -- Format a change's subject.
-function format_change_subject(change)
+local function format_change_subject(change)
     return format_link(change.subject, change.url)
 end
 
 -- Format a change's project.
-function format_change_project(base_url, change)
+local function format_change_project(base_url, change)
     local result = format_query_link(
         base_url,
         change.project,
