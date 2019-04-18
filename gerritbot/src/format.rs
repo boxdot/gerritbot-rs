@@ -1,4 +1,8 @@
-use rlua::{FromLua as _, Function as LuaFunction, Lua, StdLib as LuaStdLib, Value as LuaValue};
+use std::convert::identity;
+
+use rlua::{
+    FromLua, Function as LuaFunction, Lua, StdLib as LuaStdLib, ToLuaMulti, Value as LuaValue,
+};
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 
@@ -94,29 +98,42 @@ fn to_lua_via_json<'lua, T: Serialize>(
 }
 
 impl Formatter {
+    fn format_lua<'lua, T, E, F, A>(
+        lua: rlua::Context<'lua>,
+        function_name: &str,
+        event: E,
+        prepare_args: F,
+    ) -> Result<T, String>
+    where
+        T: FromLua<'lua>,
+        E: Serialize,
+        F: FnOnce(LuaValue<'lua>) -> A,
+        A: ToLuaMulti<'lua>,
+    {
+        let globals = lua.globals();
+
+        let format_function: LuaFunction = globals
+            .get(function_name)
+            .map_err(|_| format!("{} function missing", function_name))?;
+        let event =
+            to_lua_via_json(event, lua).map_err(|e| format!("failed to serialize event: {}", e))?;
+        let args = prepare_args(event);
+        let result = format_function
+            .call::<_, LuaValue>(args)
+            .map_err(|err| format!("lua formatting function failed: {}", err))?;
+
+        T::from_lua(result, lua).map_err(|e| format!("failed to convert formatting result: {}", e))
+    }
+
     pub fn format_comment_added(
         &self,
         event: &gerrit::CommentAddedEvent,
         is_human: bool,
     ) -> Result<Option<String>, String> {
         self.lua.context(|context| {
-            let globals = context.globals();
-
-            let lua_format_comment_added: LuaFunction = globals
-                .get(LUA_FORMAT_COMMENT_ADDED)
-                .map_err(|_| "format_approval function missing".to_string())?;
-            let lua_event = to_lua_via_json(event, context)
-                .map_err(|e| format!("failed to serialize event: {}", e))?;
-            let lua_result = lua_format_comment_added
-                .call::<_, LuaValue>((lua_event, is_human))
-                .map_err(|err| format!("lua formatting function failed: {}", err))?;
-
-            match lua_result {
-                LuaValue::Nil => Ok(None),
-                _ => Ok(Some(String::from_lua(lua_result, context).map_err(
-                    |e| format!("failed to convert formatting result to string: {}", e),
-                )?)),
-            }
+            Formatter::format_lua(context, LUA_FORMAT_COMMENT_ADDED, event, |event| {
+                (event, is_human)
+            })
         })
     }
 
@@ -125,19 +142,7 @@ impl Formatter {
         event: &gerrit::ReviewerAddedEvent,
     ) -> Result<String, String> {
         self.lua.context(|context| {
-            let globals = context.globals();
-
-            let lua_format_reviewer_added: LuaFunction = globals
-                .get(LUA_FORMAT_REVIEWER_ADDED)
-                .map_err(|_| format!("{} function missing", LUA_FORMAT_REVIEWER_ADDED))?;
-            let lua_event = to_lua_via_json(event, context)
-                .map_err(|e| format!("failed to serialize event: {}", e))?;
-            let lua_result = lua_format_reviewer_added
-                .call::<_, LuaValue>(lua_event)
-                .map_err(|err| format!("lua formatting function failed: {}", err))?;
-
-            Ok(String::from_lua(lua_result, context)
-                .map_err(|e| format!("failed to convert formatting result to string: {}", e))?)
+            Formatter::format_lua(context, LUA_FORMAT_REVIEWER_ADDED, event, identity)
         })
     }
 }
