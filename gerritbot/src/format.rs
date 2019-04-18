@@ -1,5 +1,3 @@
-use itertools::Itertools as _;
-
 use rlua::{FromLua as _, Function as LuaFunction, Lua, StdLib as LuaStdLib, Value as LuaValue};
 use serde::Serialize;
 use serde_json::Value as JsonValue;
@@ -101,48 +99,27 @@ impl Formatter {
         event: &gerrit::CommentAddedEvent,
         is_human: bool,
     ) -> Result<Option<String>, String> {
-        let message =
-            self.lua
-                .context(|context| -> Result<Option<String>, String> {
-                    let globals = context.globals();
+        self.lua
+            .context(|context| -> Result<Option<String>, String> {
+                let globals = context.globals();
 
-                    let lua_format_comment_added: LuaFunction = globals
+                let lua_format_comment_added: LuaFunction =
+                    globals
                         .get(LUA_FORMAT_COMMENT_ADDED)
                         .map_err(|_| "format_approval function missing".to_string())?;
-                    let lua_event = to_lua_via_json(event, context)
-                        .map_err(|e| format!("failed to serialize event: {}", e))?;
-                    let lua_result = lua_format_comment_added
-                        .call::<_, LuaValue>((lua_event, is_human))
-                        .map_err(|err| format!("lua formatting function failed: {}", err))?;
+                let lua_event = to_lua_via_json(event, context)
+                    .map_err(|e| format!("failed to serialize event: {}", e))?;
+                let lua_result = lua_format_comment_added
+                    .call::<_, LuaValue>((lua_event, is_human))
+                    .map_err(|err| format!("lua formatting function failed: {}", err))?;
 
-                    match lua_result {
-                        LuaValue::Nil => Ok(None),
-                        _ => Ok(Some(String::from_lua(lua_result, context).map_err(
-                            |e| format!("failed to convert formatting result to string: {}", e),
-                        )?)),
-                    }
-                })?;
-
-        let inline_comments = self.format_inline_comments(&event.change, &event.patchset);
-
-        let message = message.or_else(|| {
-            if is_human && inline_comments.is_some() {
-                // We did not get any approvals, but we got inline comments from a human.
-                Some(event.comment.clone())
-            } else {
-                None
-            }
-        });
-
-        if let Some(message) = message {
-            Ok(Some(
-                inline_comments
-                    .map(|c| format!("{}\n\n{}", message, c))
-                    .unwrap_or(message),
-            ))
-        } else {
-            Ok(None)
-        }
+                match lua_result {
+                    LuaValue::Nil => Ok(None),
+                    _ => Ok(Some(String::from_lua(lua_result, context).map_err(
+                        |e| format!("failed to convert formatting result to string: {}", e),
+                    )?)),
+                }
+            })
     }
 
     pub fn format_reviewer_added(
@@ -161,72 +138,6 @@ impl Formatter {
                 .map(String::as_str)
                 .unwrap_or(UNKNOWN_USER)
         ))
-    }
-
-    fn format_inline_comments(
-        &self,
-        change: &gerrit::Change,
-        patchset: &gerrit::Patchset,
-    ) -> Option<String> {
-        let change_number = change.number;
-        let base_url = {
-            let last_slash = change.url.rfind('/').unwrap();
-            &change.url[..last_slash]
-        };
-        let patch_set_number = patchset.number;
-
-        patchset
-            .comments
-            .as_ref()
-            .cloned()
-            .map(|mut comments| {
-                comments.sort_by(|a, b| a.file.cmp(&b.file));
-                comments
-                    .into_iter()
-                    .group_by(|c| c.file.clone())
-                    .into_iter()
-                    .map(|(file, comments)| -> String {
-                        let line_comments = comments
-                            .map(|comment| {
-                                let mut lines = comment.message.split('\n');
-                                let url = format!(
-                                    "{}/#/c/{}/{}/{}@{}",
-                                    base_url,
-                                    change_number,
-                                    patch_set_number,
-                                    comment.file,
-                                    comment.line
-                                );
-                                let first_line = lines.next().unwrap_or("");
-                                let first_line = format!(
-                                    "> [Line {}]({}) by {}: {}",
-                                    comment.line,
-                                    url,
-                                    comment
-                                        .reviewer
-                                        .username
-                                        .as_ref()
-                                        .map(String::as_str)
-                                        .unwrap_or(UNKNOWN_USER),
-                                    first_line
-                                );
-                                let tail = lines
-                                    .map(|l| format!("> {}", l))
-                                    .intersperse("\n".into())
-                                    .collect::<Vec<_>>()
-                                    .concat();
-                                format!("{}\n{}", first_line, tail)
-                            })
-                            .intersperse("\n".into())
-                            .collect::<Vec<_>>()
-                            .concat();
-                        format!("`{}`\n\n{}", file, line_comments)
-                    })
-                    .intersperse("\n\n".into())
-                    .collect::<Vec<_>>()
-                    .concat()
-            })
-            .filter(|s| !s.is_empty())
     }
 }
 
@@ -314,15 +225,17 @@ mod test {
 
     #[test]
     fn test_format_comments() {
-        let (change, mut patchset) = get_change_with_comments();
-        patchset.comments = None;
-        assert_eq!(
-            Formatter::default().format_inline_comments(&change, &patchset),
-            None
-        );
-
+        let mut event = get_event();
         let (change, patchset) = get_change_with_comments();
-        assert_eq!(Formatter::default().format_inline_comments(&change, &patchset),
-                   Some("`/COMMIT_MSG`\n\n> [Line 1](http://localhost:8080/#/c/1/1//COMMIT_MSG@1) by jdoe: This is a multiline\n> comment\n> on some change.".into()));
+        event.comment = "(1 comment)".to_string();
+        event.change = change;
+        event.patchset = patchset;
+
+        let res = Formatter::default()
+            .format_comment_added(&event, true)
+            .expect("format failed")
+            .expect("no comments");
+
+        assert!(res.ends_with("`/COMMIT_MSG`\n\n> [Line 1](http://localhost:8080/#/c/1/1//COMMIT_MSG@1) by jdoe: This is a multiline\n> comment\n> on some change.\n"), "no inline comments: {:?}", res);
     }
 }
