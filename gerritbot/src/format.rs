@@ -1,6 +1,6 @@
 use itertools::Itertools as _;
 
-use rlua::{FromLua as _, Function as LuaFunction, Lua, Value as LuaValue};
+use rlua::{FromLua as _, Function as LuaFunction, Lua, StdLib as LuaStdLib, Value as LuaValue};
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 
@@ -22,7 +22,8 @@ impl Default for Formatter {
 }
 
 fn load_format_script(script_source: &str) -> Result<Lua, String> {
-    let lua = Lua::new();
+    let lua_std_lib = LuaStdLib::BASE | LuaStdLib::STRING | LuaStdLib::TABLE;
+    let lua = Lua::new_with(lua_std_lib);
     lua.context(|context| -> Result<(), String> {
         let globals = context.globals();
         context
