@@ -209,3 +209,13 @@ function format_comment_added(event, is_human)
 
     return msg
 end
+
+function format_reviewer_added(event)
+    local change = event.change
+
+    return string.format(
+        "%s (%s) 👓 Added as reviewer",
+        format_change_subject(change),
+        (change.owner.username or "<unknown user>")
+    )
+end
