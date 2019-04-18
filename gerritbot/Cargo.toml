@@ -9,7 +9,6 @@ edition = "2018"
 futures = "0.1"
 gerritbot-gerrit = { path = "../gerritbot-gerrit" }
 gerritbot-spark = { path = "../gerritbot-spark" }
-itertools = "0.8"
 lazy_static = "1.3"
 log = "0.4"
 lru_time_cache = "0.9"
