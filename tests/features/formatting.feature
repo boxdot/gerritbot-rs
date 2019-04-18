@@ -14,7 +14,7 @@ Feature: message formatting
       When we check for messages by the bot
       Then there is a message for Bob with the following text:
         """
-        [{context.last_created_change[subject]}]({context.gerrit.http_url}/{context.last_created_change[_number]}) (tools) 👍 +2 (Code-Review) from alice
+        [{context.last_created_change[subject]}]({context.urls.changes[last]}) ([tools]({context.urls.projects[tools]})) 👍 +2 (Code-Review) from [Alice Smith]({context.urls.users[alice].reviewer})
         """
 
   Scenario: review with message
@@ -23,7 +23,7 @@ Feature: message formatting
       When we check for messages by the bot
       Then there is a message for Bob with the following text:
         """
-        [{context.last_created_change[subject]}]({context.gerrit.http_url}/{context.last_created_change[_number]}) (tools) 👍 +2 (Code-Review) from alice
+        [{context.last_created_change[subject]}]({context.urls.changes[last]}) ([tools]({context.urls.projects[tools]})) 👍 +2 (Code-Review) from [Alice Smith]({context.urls.users[alice].reviewer})
 
         > Good job!
         """
@@ -60,7 +60,7 @@ Feature: message formatting
       When we check for messages by the bot
       Then there is a message for Bob with the following text:
         """
-        [{context.last_created_change[subject]}]({context.gerrit.http_url}/{context.last_created_change[_number]}) (tools) 👎 -2 (Code-Review) from alice
+        [{context.last_created_change[subject]}]({context.urls.changes[last]}) ([tools]({context.urls.projects[tools]})) 👎 -2 (Code-Review) from [Alice Smith]({context.urls.users[alice].reviewer})
 
         > Boo!
 

@@ -5,6 +5,7 @@ from behave import use_fixture
 from gerritbot_behave.gerrit import setup_gerrit
 from gerritbot_behave.bot import setup_bot
 from gerritbot_behave.persons import Persons, Person
+from gerritbot_behave.format import URLs
 
 
 def before_all(context):
@@ -38,6 +39,7 @@ def before_all(context):
     context.bot_user = Person("gerritbot", "gerritbot@gerritbot.rs")
     context.gerrit.create_user(context.bot_user)
     context.gerrit.add_user_to_group(context.bot_user, "Non-Interactive+Users")
+    context.urls = URLs(context)
 
 
 def before_scenario(context, scenario):
