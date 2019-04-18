@@ -99,27 +99,25 @@ impl Formatter {
         event: &gerrit::CommentAddedEvent,
         is_human: bool,
     ) -> Result<Option<String>, String> {
-        self.lua
-            .context(|context| -> Result<Option<String>, String> {
-                let globals = context.globals();
+        self.lua.context(|context| {
+            let globals = context.globals();
 
-                let lua_format_comment_added: LuaFunction =
-                    globals
-                        .get(LUA_FORMAT_COMMENT_ADDED)
-                        .map_err(|_| "format_approval function missing".to_string())?;
-                let lua_event = to_lua_via_json(event, context)
-                    .map_err(|e| format!("failed to serialize event: {}", e))?;
-                let lua_result = lua_format_comment_added
-                    .call::<_, LuaValue>((lua_event, is_human))
-                    .map_err(|err| format!("lua formatting function failed: {}", err))?;
+            let lua_format_comment_added: LuaFunction = globals
+                .get(LUA_FORMAT_COMMENT_ADDED)
+                .map_err(|_| "format_approval function missing".to_string())?;
+            let lua_event = to_lua_via_json(event, context)
+                .map_err(|e| format!("failed to serialize event: {}", e))?;
+            let lua_result = lua_format_comment_added
+                .call::<_, LuaValue>((lua_event, is_human))
+                .map_err(|err| format!("lua formatting function failed: {}", err))?;
 
-                match lua_result {
-                    LuaValue::Nil => Ok(None),
-                    _ => Ok(Some(String::from_lua(lua_result, context).map_err(
-                        |e| format!("failed to convert formatting result to string: {}", e),
-                    )?)),
-                }
-            })
+            match lua_result {
+                LuaValue::Nil => Ok(None),
+                _ => Ok(Some(String::from_lua(lua_result, context).map_err(
+                    |e| format!("failed to convert formatting result to string: {}", e),
+                )?)),
+            }
+        })
     }
 
     pub fn format_reviewer_added(
