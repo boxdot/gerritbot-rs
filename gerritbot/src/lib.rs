@@ -96,7 +96,7 @@ struct MsgCacheParameters {
     expiration: Duration,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct Builder {
     state: State,
     rate_limiter: RateLimiter,

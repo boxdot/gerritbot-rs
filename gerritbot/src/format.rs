@@ -5,30 +5,23 @@ use rlua::{Function as LuaFunction, Lua};
 use gerritbot_gerrit as gerrit;
 
 const UNKNOWN_USER: &str = "<unknown user>";
+const DEFAULT_FORMAT_SCRIPT: &str = include_str!("../../scripts/format.lua");
 
-#[derive(Debug, Clone)]
 pub struct Formatter {
-    format_script: String,
+    lua: Lua,
 }
 
 impl Default for Formatter {
     fn default() -> Self {
         Self {
-            format_script: get_default_format_script().to_string(),
+            lua: load_format_script(DEFAULT_FORMAT_SCRIPT).unwrap(),
         }
     }
 }
 
-fn get_default_format_script() -> &'static str {
-    const DEFAULT_FORMAT_SCRIPT: &str = include_str!("../../scripts/format.lua");
-    check_format_script_syntax(DEFAULT_FORMAT_SCRIPT)
-        .unwrap_or_else(|err| panic!("invalid format script: {}", err));
-    DEFAULT_FORMAT_SCRIPT
-}
-
-fn check_format_script_syntax(script_source: &str) -> Result<(), String> {
+fn load_format_script(script_source: &str) -> Result<Lua, String> {
     let lua = Lua::new();
-    lua.context(|context| {
+    lua.context(|context| -> Result<(), String> {
         let globals = context.globals();
         context
             .load(script_source)
@@ -36,7 +29,8 @@ fn check_format_script_syntax(script_source: &str) -> Result<(), String> {
             .map_err(|err| format!("syntax error: {}", err))?;
         let _: LuaFunction = globals.get("main").map_err(|_| "main function missing")?;
         Ok(())
-    })
+    })?;
+    Ok(lua)
 }
 
 impl Formatter {
@@ -72,13 +66,8 @@ impl Formatter {
             Ok(lua_event)
         }
 
-        let lua = Lua::new();
-        lua.context(|context| -> Result<String, String> {
+        self.lua.context(|context| -> Result<String, String> {
             let globals = context.globals();
-            context
-                .load(&self.format_script)
-                .exec()
-                .map_err(|err| format!("syntax error: {}", err))?;
             let f: LuaFunction = globals
                 .get("main")
                 .map_err(|_| "main function missing".to_string())?;
