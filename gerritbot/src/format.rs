@@ -272,10 +272,43 @@ mod test {
     }
 
     #[test]
-    fn format_approval_filters_specific_messages() {
+    fn format_approval_unknown_labels() {
         let mut event = get_event();
-        event.approvals[0].approval_type = String::from("Some new type");
+        event.approvals[0].approval_type = String::from("Some-New-Type");
         let res = Formatter::default().format_comment_added(&event, true);
+        // Result<Option<String>, _> -> Result<Option<&str>, _>
+        let res = res.as_ref().map(|o| o.as_ref().map(String::as_str));
+        assert_eq!(
+            res,
+            Ok(Some("[Some review.](http://localhost/42) ([demo-project](http://localhost/q/project:demo-project+status:open)) 👍 +2 (Some-New-Type) from [Approver](http://localhost/q/reviewer:approver@approvers.com+status:open)\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE"))
+        );
+    }
+
+    #[test]
+    fn format_approval_multiple_labels() {
+        let mut event = get_event();
+        event.approvals.push(gerrit::Approval {
+            approval_type: "Verified".to_string(),
+            description: "Verified".to_string(),
+            value: "1".to_string(),
+            old_value: None,
+        });
+        let res = Formatter::default().format_comment_added(&event, true);
+        // Result<Option<String>, _> -> Result<Option<&str>, _>
+        let res = res.as_ref().map(|o| o.as_ref().map(String::as_str));
+        assert_eq!(
+            res,
+            Ok(Some("[Some review.](http://localhost/42) ([demo-project](http://localhost/q/project:demo-project+status:open)) 👍 +2 (Code-Review), ✔ +1 (Verified) from [Approver](http://localhost/q/reviewer:approver@approvers.com+status:open)\n\n> Just a buggy script. FAILURE<br>\n> And more problems. FAILURE"))
+        );
+    }
+
+    #[test]
+    fn format_approval_no_approvals() {
+        let mut event = get_event();
+        event.approvals.clear();
+        let res = Formatter::default().format_comment_added(&event, true);
+        // Result<Option<String>, _> -> Result<Option<&str>, _>
+        let res = res.as_ref().map(|o| o.as_ref().map(String::as_str));
         assert_eq!(res, Ok(None));
     }
 
