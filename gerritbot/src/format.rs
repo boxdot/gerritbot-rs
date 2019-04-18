@@ -236,6 +236,6 @@ mod test {
             .expect("format failed")
             .expect("no comments");
 
-        assert!(res.ends_with("`/COMMIT_MSG`\n\n> [Line 1](http://localhost:8080/#/c/1/1//COMMIT_MSG@1) by jdoe: This is a multiline\n> comment\n> on some change.\n"), "no inline comments: {:?}", res);
+        assert!(res.ends_with("`/COMMIT_MSG`\n\n> [Line 1](http://localhost:8080/#/c/1/1//COMMIT_MSG@1) by [jdoe](http://localhost:8080/q/reviewer:john.doe@localhost+status:open): This is a multiline\n> comment\n> on some change.\n"), "no inline comments: {:?}", res);
     }
 }
