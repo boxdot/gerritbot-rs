@@ -141,8 +141,7 @@ local function format_inline_comment(base_url, change, patchset, comment)
                     "> [Line %s](%s) by %s: %s",
                     comment.line,
                     url,
-                    -- TODO: use format_user
-                    comment.reviewer.username,
+                    format_user(base_url, comment.reviewer, "reviewer"),
                     line
                 )
             )

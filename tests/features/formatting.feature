@@ -66,8 +66,8 @@ Feature: message formatting
 
         `README`
 
-        > [Line 0]({context.gerrit.http_url}/#/c/{context.last_created_change[_number]}/2/README@0) by alice: You shouldn't be adding this file in the first place.
+        > [Line 0]({context.gerrit.http_url}/#/c/{context.last_created_change[_number]}/2/README@0) by [Alice Smith]({context.urls.users[alice].reviewer}): You shouldn't be adding this file in the first place.
 
-        > [Line 8]({context.gerrit.http_url}/#/c/{context.last_created_change[_number]}/2/README@8) by alice: Who even is Mauris?
+        > [Line 8]({context.gerrit.http_url}/#/c/{context.last_created_change[_number]}/2/README@8) by [Alice Smith]({context.urls.users[alice].reviewer}): Who even is Mauris?
 
         """
