@@ -212,10 +212,12 @@ end
 
 function format_reviewer_added(event)
     local change = event.change
+    local base_url = get_gerrit_base_url(change.url)
 
     return string.format(
-        "%s (%s) 👓 Added as reviewer",
+        "%s (%s) by %s 👓 Added as reviewer",
         format_change_subject(change),
-        (change.owner.username or "<unknown user>")
+        format_change_project(base_url, change),
+        format_user(base_url, change.owner, "owner")
     )
 end

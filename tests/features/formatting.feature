@@ -34,7 +34,7 @@ Feature: message formatting
       When we check for messages by the bot
       Then there is a message for Alice with the following text:
         """
-        [{context.last_created_change[subject]}]({context.gerrit.http_url}/{context.last_created_change[_number]}) (bob) 👓 Added as reviewer
+        [{context.last_created_change[subject]}]({context.urls.changes[last]}) ([tools]({context.urls.projects[tools]})) by [Bob Jones]({context.urls.users[bob]}) 👓 Added as reviewer
         """
 
   Scenario: inline comments
