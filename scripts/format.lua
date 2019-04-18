@@ -58,17 +58,10 @@ local function format_change_project(base_url, change)
     return result
 end
 
--- Filter and format messages
--- return nil to filter the message
-function format_approval(event, approval, is_human)
+local function format_approval(approval)
     if approval.type ~= "Code-Review" and approval.type ~= "WaitForVerification" and approval.type ~= "Verified" then
         return
     end
-
-    local change = event.change
-    local base_url = get_gerrit_base_url(change.url)
-
-    local msg = format_change_subject(change) .. " (" .. format_change_project(base_url, change) .. ")"
 
     local approval_value = tonumber(approval.value)
 
@@ -87,7 +80,33 @@ function format_approval(event, approval, is_human)
         sign = "+"
     end
 
-    msg = msg .. string.format(" %s %s%s (%s)", icon, sign, approval_value, approval.type)
+    return string.format("%s %s%s (%s)", icon, sign, approval_value, approval.type)
+end
+
+-- Filter and format messages
+-- return nil to filter the message
+function format_comment_added(event, is_human)
+    local change = event.change
+    local base_url = get_gerrit_base_url(change.url)
+
+    local msg = format_change_subject(change) .. " (" .. format_change_project(base_url, change) .. ")"
+
+    local formatted_approvals = {}
+
+    for _i, approval in ipairs(event.approvals) do
+        local formatted_approval = format_approval(approval)
+
+        if formatted_approval then
+            table.insert(formatted_approvals, formatted_approval)
+        end
+    end
+
+    if #formatted_approvals > 0 then
+        msg = msg .. " " .. table.concat(formatted_approvals, ", ")
+    else
+        return
+    end
+
     msg = msg .. " from " .. format_user(base_url, event.author, "reviewer")
 
     local len = 0

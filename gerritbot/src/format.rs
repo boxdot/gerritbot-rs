@@ -8,6 +8,8 @@ use gerritbot_gerrit as gerrit;
 
 const UNKNOWN_USER: &str = "<unknown user>";
 const DEFAULT_FORMAT_SCRIPT: &str = include_str!("../../scripts/format.lua");
+const LUA_FORMAT_COMMENT_ADDED: &str = "format_comment_added";
+const LUA_FORMAT_FUNCTIONS: &[&str] = &[LUA_FORMAT_COMMENT_ADDED];
 
 pub struct Formatter {
     lua: Lua,
@@ -30,9 +32,14 @@ fn load_format_script(script_source: &str) -> Result<Lua, String> {
             .load(script_source)
             .exec()
             .map_err(|err| format!("syntax error: {}", err))?;
-        let _: LuaFunction = globals
-            .get("format_approval")
-            .map_err(|_| "format_approval function missing")?;
+
+        // check that the required functions are present
+        for function_name in LUA_FORMAT_FUNCTIONS {
+            let _: LuaFunction = globals
+                .get(*function_name)
+                .map_err(|_| format!("{} function missing", function_name))?;
+        }
+
         Ok(())
     })?;
     Ok(lua)
@@ -89,67 +96,53 @@ fn to_lua_via_json<'lua, T: Serialize>(
 }
 
 impl Formatter {
-    pub fn format_approval(
-        &self,
-        event: &gerrit::CommentAddedEvent,
-        approval: &gerrit::Approval,
-        is_human: bool,
-    ) -> Result<Option<String>, String> {
-        self.lua
-            .context(|context| -> Result<Option<String>, String> {
-                let globals = context.globals();
-
-                let lua_format_approval: LuaFunction = globals
-                    .get("format_approval")
-                    .map_err(|_| "format_approval function missing".to_string())?;
-                let lua_event = to_lua_via_json(event, context)
-                    .map_err(|e| format!("failed to serialize event: {}", e))?;
-                let lua_approval = to_lua_via_json(approval, context)
-                    .map_err(|e| format!("failed to serialize approval: {}", e))?;
-                let lua_result = lua_format_approval
-                    .call::<_, LuaValue>((lua_event, lua_approval, is_human))
-                    .map_err(|err| format!("lua formatting function failed: {}", err))?;
-
-                match lua_result {
-                    LuaValue::Nil => Ok(None),
-                    _ => Ok(Some(String::from_lua(lua_result, context).map_err(
-                        |e| format!("failed to convert formatting result to string: {}", e),
-                    )?)),
-                }
-            })
-    }
-
     pub fn format_comment_added(
         &self,
         event: &gerrit::CommentAddedEvent,
         is_human: bool,
     ) -> Result<Option<String>, String> {
-        let messages: Vec<String> = event
-            .approvals
-            .iter()
-            .filter(|approval| {
-                approval.old_value.as_ref() != Some(&approval.value) && approval.value != "0"
-            })
-            .filter_map(|approval| self.format_approval(event, approval, is_human).transpose())
-            .collect::<Result<_, _>>()?;
+        let message =
+            self.lua
+                .context(|context| -> Result<Option<String>, String> {
+                    let globals = context.globals();
+
+                    let lua_format_comment_added: LuaFunction = globals
+                        .get(LUA_FORMAT_COMMENT_ADDED)
+                        .map_err(|_| "format_approval function missing".to_string())?;
+                    let lua_event = to_lua_via_json(event, context)
+                        .map_err(|e| format!("failed to serialize event: {}", e))?;
+                    let lua_result = lua_format_comment_added
+                        .call::<_, LuaValue>((lua_event, is_human))
+                        .map_err(|err| format!("lua formatting function failed: {}", err))?;
+
+                    match lua_result {
+                        LuaValue::Nil => Ok(None),
+                        _ => Ok(Some(String::from_lua(lua_result, context).map_err(
+                            |e| format!("failed to convert formatting result to string: {}", e),
+                        )?)),
+                    }
+                })?;
 
         let inline_comments = self.format_inline_comments(&event.change, &event.patchset);
 
-        let message = if !messages.is_empty() {
-            // We got some approvals
-            messages.join("\n\n")
-        } else if is_human && inline_comments.is_some() {
-            // We did not get any approvals, but we got inline comments from a human.
-            event.comment.clone()
-        } else {
-            return Ok(None);
-        };
+        let message = message.or_else(|| {
+            if is_human && inline_comments.is_some() {
+                // We did not get any approvals, but we got inline comments from a human.
+                Some(event.comment.clone())
+            } else {
+                None
+            }
+        });
 
-        Ok(Some(
-            inline_comments
-                .map(|c| format!("{}\n\n{}", message, c))
-                .unwrap_or(message),
-        ))
+        if let Some(message) = message {
+            Ok(Some(
+                inline_comments
+                    .map(|c| format!("{}\n\n{}", message, c))
+                    .unwrap_or(message),
+            ))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn format_reviewer_added(
@@ -269,7 +262,7 @@ mod test {
     #[test]
     fn test_format_approval() {
         let event = get_event();
-        let res = Formatter::default().format_approval(&event, &event.approvals[0], true);
+        let res = Formatter::default().format_comment_added(&event, true);
         // Result<Option<String>, _> -> Result<Option<&str>, _>
         let res = res.as_ref().map(|o| o.as_ref().map(String::as_str));
         assert_eq!(
@@ -282,7 +275,7 @@ mod test {
     fn format_approval_filters_specific_messages() {
         let mut event = get_event();
         event.approvals[0].approval_type = String::from("Some new type");
-        let res = Formatter::default().format_approval(&event, &event.approvals[0], true);
+        let res = Formatter::default().format_comment_added(&event, true);
         assert_eq!(res, Ok(None));
     }
 
