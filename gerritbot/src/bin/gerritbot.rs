@@ -45,9 +45,12 @@ fn main() {
         .module(module_path!())
         .module("gerritbot_gerrit")
         .module("gerritbot_spark")
-        .quiet(args.quiet)
         .timestamp(stderrlog::Timestamp::Second)
-        .verbosity(if args.verbose { 5 } else { 2 })
+        .verbosity(match (args.quiet, args.verbose) {
+            (true, _) => 0,      // ERROR
+            (false, false) => 2, // INFO
+            (_, true) => 4,      // TRACE
+        })
         .init()
         .unwrap();
     let args::Config {
