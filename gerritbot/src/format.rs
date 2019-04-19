@@ -98,6 +98,12 @@ fn to_lua_via_json<'lua, T: Serialize>(
 }
 
 impl Formatter {
+    pub fn new(format_script: &str) -> Result<Self, String> {
+        Ok(Self {
+            lua: load_format_script(&format_script)?,
+        })
+    }
+
     fn format_lua<'lua, T, E, F, A>(
         lua: rlua::Context<'lua>,
         function_name: &str,
