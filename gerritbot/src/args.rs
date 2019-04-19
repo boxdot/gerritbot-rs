@@ -38,6 +38,7 @@ pub enum ModeConfig {
 pub struct BotConfig {
     pub msg_expiration: u64,
     pub msg_capacity: usize,
+    pub format_script: Option<String>,
 }
 
 /// Cisco Webex Teams <> Gerrit Bot
