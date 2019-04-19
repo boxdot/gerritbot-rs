@@ -43,6 +43,7 @@ pub struct BotConfig {
 
 /// Cisco Webex Teams <> Gerrit Bot
 #[derive(StructOpt, Debug, Clone)]
+#[structopt(rename_all = "kebab-case")]
 pub struct Args {
     /// Print more
     #[structopt(short, long)]
@@ -53,6 +54,9 @@ pub struct Args {
     /// YAML configuration file
     #[structopt(long, short, default_value = "config.yml")]
     pub config: PathBuf,
+    /// Dump default format script and exit
+    #[structopt(long)]
+    pub dump_format_script: bool,
 }
 
 pub fn parse_args() -> Args {
