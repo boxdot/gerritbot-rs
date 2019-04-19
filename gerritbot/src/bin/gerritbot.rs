@@ -7,10 +7,10 @@ use std::time::Duration;
 use futures::{future, future::lazy, Future, Stream};
 use log::{debug, error, info, warn};
 
+use gerritbot as bot;
+use gerritbot::args;
 use gerritbot_gerrit as gerrit;
 use gerritbot_spark as spark;
-use gerritbot as bot;
-use gerritbot::args as args;
 
 /// Create spark message stream. Returns a future representing a webhook server
 /// and a stream of messages.
@@ -41,6 +41,12 @@ fn create_spark_message_stream(
 
 fn main() {
     let args = args::parse_args();
+
+    if args.dump_format_script {
+        print!("{}", bot::DEFAULT_FORMAT_SCRIPT);
+        return;
+    }
+
     stderrlog::new()
         .module(module_path!())
         .module("gerritbot_gerrit")

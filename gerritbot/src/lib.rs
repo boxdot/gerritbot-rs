@@ -20,6 +20,7 @@ mod format;
 mod rate_limit;
 
 use format::Formatter;
+pub use format::DEFAULT_FORMAT_SCRIPT;
 use rate_limit::RateLimiter;
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq)]
