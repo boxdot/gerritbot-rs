@@ -55,11 +55,11 @@ impl User {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct State {
-    pub users: Vec<User>,
+    users: Vec<User>,
     #[serde(skip_serializing, skip_deserializing)]
-    pub person_id_index: HashMap<spark::PersonId, usize>,
+    person_id_index: HashMap<spark::PersonId, usize>,
     #[serde(skip_serializing, skip_deserializing)]
-    pub email_index: HashMap<spark::Email, usize>,
+    email_index: HashMap<spark::Email, usize>,
 }
 
 impl State {
@@ -146,6 +146,14 @@ impl State {
             .map(|pos| &self.users[pos])
     }
 
+    pub fn find_user_by_email<'a, E: ?Sized>(&self, email: &E) -> Option<&User>
+    where
+        spark::Email: std::borrow::Borrow<E>,
+        E: std::hash::Hash + Eq,
+    {
+        self.email_index.get(email).map(|pos| &self.users[*pos])
+    }
+
     pub fn enable<'a>(
         &'a mut self,
         person_id: &spark::PersonIdRef,
@@ -221,8 +229,11 @@ impl State {
         }
     }
 
-    pub fn is_filtered(&self, user_pos: usize, msg: &str) -> bool {
-        let user = &self.users[user_pos];
+    pub fn users(&self) -> impl Iterator<Item = &User> + Clone {
+        self.users.iter()
+    }
+
+    pub fn is_filtered(&self, user: &User, msg: &str) -> bool {
         if let Some(filter) = user.filter.as_ref() {
             if filter.enabled {
                 if let Ok(re) = Regex::new(&filter.regex) {

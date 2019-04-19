@@ -3,6 +3,9 @@ use std::time::Duration;
 use lru_time_cache::LruCache;
 
 use gerritbot_gerrit as gerrit;
+use gerritbot_spark::PersonId;
+
+use super::state::User;
 
 #[derive(Clone, Default)]
 pub struct RateLimiter {
@@ -18,13 +21,18 @@ impl RateLimiter {
         }
     }
 
-    pub fn limit<E>(&mut self, user_index: usize, event: E) -> bool
+    pub fn limit<E>(&mut self, user: &User, event: E) -> bool
     where
         E: IntoCacheLine,
     {
         self.cache
             .as_mut()
-            .and_then(|cache| cache.insert(IntoCacheLine::into_cache_line(user_index, &event), ()))
+            .and_then(|cache| {
+                cache.insert(
+                    IntoCacheLine::into_cache_line(user.spark_person_id.clone(), &event),
+                    (),
+                )
+            })
             .is_some()
     }
 }
@@ -55,24 +63,23 @@ pub struct Approval {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MsgCacheLine {
     Approvals {
-        /// position of the user in bots.user vector
-        user_ref: usize,
+        person_id: PersonId,
         subject: Subject,
         approver: String,
         approvals: Vec<Approval>,
     },
     ReviewerAdded {
-        user_ref: usize,
+        person_id: PersonId,
         subject: Subject,
     },
 }
 
 pub trait IntoCacheLine {
-    fn into_cache_line(user_index: usize, event: &Self) -> MsgCacheLine;
+    fn into_cache_line(person_id: PersonId, event: &Self) -> MsgCacheLine;
 }
 
 impl IntoCacheLine for &gerrit::CommentAddedEvent {
-    fn into_cache_line(user_index: usize, event: &Self) -> MsgCacheLine {
+    fn into_cache_line(person_id: PersonId, event: &Self) -> MsgCacheLine {
         let mut approvals: Vec<_> = event
             .approvals
             .iter()
@@ -92,7 +99,7 @@ impl IntoCacheLine for &gerrit::CommentAddedEvent {
         approvals.sort_unstable();
 
         MsgCacheLine::Approvals {
-            user_ref: user_index,
+            person_id,
             subject: Subject::from_change(&event.change),
             approver: event.author.email.clone(),
             approvals,
@@ -101,9 +108,9 @@ impl IntoCacheLine for &gerrit::CommentAddedEvent {
 }
 
 impl IntoCacheLine for &gerrit::ReviewerAddedEvent {
-    fn into_cache_line(user_index: usize, event: &Self) -> MsgCacheLine {
+    fn into_cache_line(person_id: PersonId, event: &Self) -> MsgCacheLine {
         MsgCacheLine::ReviewerAdded {
-            user_ref: user_index,
+            person_id,
             subject: Subject::from_change(&event.change),
         }
     }

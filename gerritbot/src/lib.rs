@@ -378,22 +378,21 @@ where
             // No need to notify about user's own approvals.
             return None;
         }
-        let owner_email = spark::Email::new(change.owner.email.clone());
+        let owner_email = spark::EmailRef::new(&change.owner.email);
 
         // try to find the use and check it is enabled
-        let user_pos = *self.state.email_index.get(&owner_email)?;
-        if !self.state.users[user_pos].enabled {
-            return None;
-        }
+        let user = self
+            .state
+            .find_user_by_email(owner_email)
+            .filter(|user| user.enabled)?;
 
         let is_human = !approver.to_lowercase().contains("bot");
 
         // filter all messages that were already sent to the user recently
-        if !approvals.is_empty() && self.rate_limiter.limit(user_pos, &*event) {
+        if !approvals.is_empty() && self.rate_limiter.limit(user, &*event) {
             debug!("Filtered approval due to cache hit.");
             return None;
         }
-        let user = &self.state.users[user_pos];
 
         self.formatter
             .format_comment_added(&event, is_human)
@@ -403,7 +402,7 @@ where
             })
             .filter(|msg| {
                 // if user has configured and enabled a filter try to apply it
-                !self.state.is_filtered(user_pos, &msg)
+                !self.state.is_filtered(user, &msg)
             })
             .map(|m| (user, m, is_human))
     }
@@ -412,22 +411,21 @@ where
         &mut self,
         event: &gerrit::ReviewerAddedEvent,
     ) -> Option<(&User, String)> {
-        let reviewer = event.reviewer.clone();
-        let reviewer_email = spark::Email::new(reviewer.email.clone());
-        let user_pos = *self.state.email_index.get(&reviewer_email)?;
-        if !self.state.users[user_pos].enabled {
-            return None;
-        }
+        let reviewer_email = spark::EmailRef::new(&event.reviewer.email);
+        let user = self
+            .state
+            .find_user_by_email(reviewer_email)
+            .filter(|user| user.enabled)?;
 
         // filter all messages that were already sent to the user recently
-        if self.rate_limiter.limit(user_pos, event) {
+        if self.rate_limiter.limit(user, event) {
             debug!("Filtered reviewer-added due to cache hit.");
             return None;
         }
 
         let message = self.formatter.format_reviewer_added(event).ok()?;
 
-        Some((&self.state.users[user_pos], message))
+        Some((user, message))
     }
 
     pub fn save<P>(&self, filename: P) -> Result<(), BotError>
@@ -443,7 +441,7 @@ where
         let user = self.state.find_user(person_id);
         let enabled = user.map_or(false, |u| u.enabled);
         let enabled_user_count =
-            self.state.users.iter().filter(|u| u.enabled).count() - if enabled { 1 } else { 0 };
+            self.state.users().filter(|u| u.enabled).count() - if enabled { 1 } else { 0 };
         format!(
             "Notifications for you are **{}**. I am notifying {}.",
             if enabled { "enabled" } else { "disabled" },
@@ -683,11 +681,11 @@ mod test {
             }
 
             before {
-                assert_that!(bot.state.users).has_length(1);
+                assert_that!(bot.state.users().count()).is_equal_to(1);
             }
 
             it "has the expected attributes" {
-                let user = &bot.state.users[0];
+                let user = bot.state.users().nth(0).unwrap();
                 assert_that!(user).has_person_id("some_person_id");
                 assert_that!(user).has_email("some@example.com");
                 assert_that!(user).is_enabled();
@@ -699,54 +697,58 @@ mod test {
             }
 
             test "disabled status response" {
-                bot.state.users[0].enabled = false;
+                bot.enable("some_person_id", "some@example.com", false);
                 let resp = bot.status_for(PersonIdRef::new("some_person_id"));
                 assert_that!(resp).contains("disabled");
             }
 
             test "existing user can be enabled" {
                 bot.enable("some_person_id", "some@example.com", true);
-                assert_that!(bot.state.users)
+                let users: Vec<_> = bot.state.users().collect();
+                assert_that!(users)
                     .has_item_matching(
                         |u| u.spark_person_id == PersonIdRef::new("some_person_id")
                             && u.email == EmailRef::new("some@example.com")
                             && u.enabled);
-                assert_that!(bot.state.users).has_length(1);
+                assert_that!(bot.state.users().count()).is_equal_to(1);
             }
 
             test "existing can be disabled" {
                 bot.enable("some_person_id", "some@example.com", false);
-                assert_that!(bot.state.users)
+                let users: Vec<_> = bot.state.users().collect();
+                assert_that!(users)
                     .has_item_matching(
                         |u| u.spark_person_id == PersonIdRef::new("some_person_id")
                             && u.email == EmailRef::new("some@example.com")
                             && !u.enabled);
-                assert_that!(bot.state.users).has_length(1);
+                assert_that!(bot.state.users().count()).is_equal_to(1);
             }
         }
 
         test "non-existing user is automatically added when enabled" {
-            assert_that!(bot.state.users).has_length(0);
+            assert_that!(bot.state.users().count()).is_equal_to(0);
             let mut bot = bot;
             bot.enable("some_person_id", "some@example.com", true);
-            assert_that!(bot.state.users)
+            let users: Vec<_> = bot.state.users().collect();
+            assert_that!(users)
                 .has_item_matching(
                     |u| u.spark_person_id == PersonIdRef::new("some_person_id")
                         && u.email == EmailRef::new("some@example.com")
                         && u.enabled);
-            assert_that!(bot.state.users).has_length(1);
+            assert_that!(bot.state.users().count()).is_equal_to(1);
         }
 
         test "non-existing user is automatically added when disabled" {
-            assert_that!(bot.state.users).has_length(0);
+            assert_that!(bot.state.users().count()).is_equal_to(0);
             let mut bot = bot;
             bot.enable("some_person_id", "some@example.com", false);
-            assert_that!(bot.state.users)
+            let users: Vec<_> = bot.state.users().collect();
+            assert_that!(users)
                 .has_item_matching(
                     |u| u.spark_person_id == PersonIdRef::new("some_person_id")
                         && u.email == EmailRef::new("some@example.com")
                         && !u.enabled);
-            assert_that!(bot.state.users).has_length(1);
+            assert_that!(bot.state.users().count()).is_equal_to(1);
         }
 
         test "unknown user gets disabled status response" {
@@ -795,7 +797,7 @@ mod test {
             PersonIdRef::new("author_spark_id"),
             EmailRef::new("author@example.com"),
         );
-        bot.state.users[0].enabled = false;
+        bot.enable("author_spark_id", "author@example.com", false);
         let res = bot.get_approvals_msg(Box::new(get_event()));
         assert!(res.is_none());
     }
