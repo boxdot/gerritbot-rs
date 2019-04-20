@@ -337,14 +337,6 @@ impl From<hyper::Error> for Error {
     }
 }
 
-/*
-impl From<sqs::Error> for Error {
-    fn from(err: sqs::Error) -> Self {
-        Error::SqsError(err)
-    }
-}
-*/
-
 impl From<serde_json::Error> for Error {
     fn from(err: serde_json::Error) -> Self {
         Error::JsonError(err)
