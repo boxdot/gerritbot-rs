@@ -40,27 +40,6 @@ impl SparkClient for spark::Client {
     }
 }
 
-pub struct Bot<G = gerrit::CommandRunner, S = spark::Client> {
-    state: State,
-    rate_limiter: RateLimiter,
-    formatter: format::Formatter,
-    gerrit_command_runner: G,
-    spark_client: S,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct MsgCacheParameters {
-    capacity: usize,
-    expiration: Duration,
-}
-
-#[derive(Default)]
-pub struct Builder {
-    state: State,
-    rate_limiter: RateLimiter,
-    formatter: Formatter,
-}
-
 #[derive(Debug)]
 pub enum BotError {
     Io(io::Error),
@@ -77,6 +56,13 @@ impl convert::From<serde_json::Error> for BotError {
     fn from(err: serde_json::Error) -> BotError {
         BotError::Serialization(err)
     }
+}
+
+#[derive(Default)]
+pub struct Builder {
+    state: State,
+    rate_limiter: RateLimiter,
+    formatter: Formatter,
 }
 
 impl Builder {
@@ -173,6 +159,14 @@ pub fn request_extended_gerrit_info(event: &gerrit::Event) -> Cow<'static, [gerr
     }
 
     Cow::Owned(extended_info)
+}
+
+pub struct Bot<G = gerrit::CommandRunner, S = spark::Client> {
+    state: State,
+    rate_limiter: RateLimiter,
+    formatter: format::Formatter,
+    gerrit_command_runner: G,
+    spark_client: S,
 }
 
 impl<G, S> Bot<G, S>
