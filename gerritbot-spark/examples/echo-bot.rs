@@ -70,8 +70,8 @@ fn main() {
                 let messages_future = messages.for_each(move |message| {
                     debug!("got a message: {:?}", message);
                     client
-                        .reply(
-                            &message.person_id,
+                        .send_message(
+                            &message.person_email,
                             &format!("got post:\n```\n{:#?}\n```", message),
                         )
                         .map_err(|e| error!("failed to send message: {}", e))
