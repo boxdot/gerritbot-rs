@@ -9,7 +9,6 @@ use futures::sync::mpsc::channel;
 use futures::{IntoFuture as _, Sink, Stream};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 mod sqs;
 
@@ -217,6 +216,61 @@ impl Message {
     }
 }
 
+#[derive(Serialize, Debug, Clone)]
+pub enum CreateMessageTarget<'a> {
+    #[serde(rename = "roomId")]
+    RoomId(&'a RoomIdRef),
+    #[serde(rename = "toPersonId")]
+    PersonId(&'a PersonIdRef),
+    #[serde(rename = "toPersonEmail")]
+    PersonEmail(&'a EmailRef),
+}
+
+impl<'a> From<&'a RoomId> for CreateMessageTarget<'a> {
+    fn from(room_id: &'a RoomId) -> CreateMessageTarget<'a> {
+        CreateMessageTarget::RoomId(room_id)
+    }
+}
+
+impl<'a> From<&'a RoomIdRef> for CreateMessageTarget<'a> {
+    fn from(room_id: &'a RoomIdRef) -> CreateMessageTarget<'a> {
+        CreateMessageTarget::RoomId(room_id)
+    }
+}
+
+impl<'a> From<&'a PersonId> for CreateMessageTarget<'a> {
+    fn from(person_id: &'a PersonId) -> CreateMessageTarget<'a> {
+        CreateMessageTarget::PersonId(person_id)
+    }
+}
+
+impl<'a> From<&'a PersonIdRef> for CreateMessageTarget<'a> {
+    fn from(person_id: &'a PersonIdRef) -> CreateMessageTarget<'a> {
+        CreateMessageTarget::PersonId(person_id)
+    }
+}
+
+impl<'a> From<&'a Email> for CreateMessageTarget<'a> {
+    fn from(email: &'a Email) -> CreateMessageTarget<'a> {
+        CreateMessageTarget::PersonEmail(email)
+    }
+}
+
+impl<'a> From<&'a EmailRef> for CreateMessageTarget<'a> {
+    fn from(email: &'a EmailRef) -> CreateMessageTarget<'a> {
+        CreateMessageTarget::PersonEmail(email)
+    }
+}
+
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateMessageParameters<'a> {
+    #[serde(flatten)]
+    target: CreateMessageTarget<'a>,
+    text: Option<&'a str>,
+    markdown: Option<&'a str>,
+}
+
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct PersonDetails {
@@ -390,7 +444,7 @@ impl Client {
             .post(&format!("{}/{}", self.url, resource))
             .bearer_auth(&self.bot_token)
             .header(http::header::ACCEPT, "application/json")
-            .json(&data)
+            .json(data)
             .send()
             .from_err()
             .map(|_| ())
@@ -466,13 +520,40 @@ impl Client {
         &self.bot_id
     }
 
-    pub fn reply(&self, person_id: &PersonId, msg: &str) -> impl Future<Item = (), Error = Error> {
-        let json = json!({
-            "toPersonId": person_id,
-            "markdown": msg,
-        });
-        debug!("send message to {}", person_id);
-        self.api_post_json("messages", &json)
+    pub fn reply<'a>(
+        &self,
+        person_id: &'a PersonIdRef,
+        msg: &'a str,
+    ) -> impl Future<Item = (), Error = Error> {
+        self.send_message(person_id, msg)
+    }
+
+    pub fn send_message<'a, T: ?Sized>(
+        &self,
+        target: &'a T,
+        markdown: &'a str,
+    ) -> impl Future<Item = (), Error = Error>
+    where
+        &'a T: Into<CreateMessageTarget<'a>>,
+    {
+        self.create_message(CreateMessageParameters {
+            target: target.into(),
+            markdown: Some(markdown),
+            text: None,
+        })
+    }
+
+    pub fn create_message<'a>(
+        &self,
+        parameters: CreateMessageParameters<'a>,
+    ) -> impl Future<Item = (), Error = Error> {
+        debug!("send message to {:?}", parameters.target);
+        let json = match serde_json::to_value(&parameters) {
+            Ok(json) => json,
+            Err(e) => return future::Either::A(future::err(e).from_err()),
+        };
+
+        future::Either::B(self.api_post_json("messages", &json))
     }
 
     pub fn get_message(
