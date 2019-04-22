@@ -8,14 +8,13 @@ matrix:
   allow_failures:
     - rust: nightly
 before_install:
-  - sudo add-apt-repository ppa:deadsnakes/ppa -y
   - sudo apt-get update -qq
-  - sudo apt install libssh2-1-dev python3.6 docker-compose -y
-  - curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
-  - sudo python3.6 get-pip.py
-  - python3.6 -m pip install --user -r requirements.txt
+  - sudo apt install libssh2-1-dev python3-pip docker-compose -y
+  - python3 --version
+  - sudo -H python3 -m pip install --upgrade pip setuptools
+  - sudo -H python3 -m pip install -r requirements.txt
 script:
   - cargo build --verbose --all
   - cargo test --verbose --all
   - docker-compose up -d gerrit
-  - python3.6 -m behave -v -D gerrit_start_timeout=60 | cat
+  - behave -v -D gerrit_start_timeout=60 | cat
