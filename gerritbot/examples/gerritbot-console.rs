@@ -93,7 +93,12 @@ impl Into<spark::Message> for SimpleInputMessage {
             text,
         } = self;
         let person_id = person_id.unwrap_or_else(|| email_to_person_id(&person_email));
-        spark::Message::test_message(person_email, person_id, text)
+        spark::Message {
+            person_email,
+            person_id,
+            text,
+            ..Default::default()
+        }
     }
 }
 
@@ -214,11 +219,12 @@ fn main() {
                 .ok()
         } else if let Some(email) = &email {
             // If we have an email, send each line from this email.
-            Some(spark::Message::test_message(
-                spark::Email::new(email.clone()),
-                spark::PersonId::new(email.clone()),
-                line,
-            ))
+            Some(spark::Message {
+                person_email: spark::Email::new(email.clone()),
+                person_id: spark::PersonId::new(email.clone()),
+                text: line,
+                ..Default::default()
+            })
         } else {
             // If no email was given, parse it from each line.
             lazy_static! {
@@ -231,11 +237,12 @@ fn main() {
                 .map(|captures| {
                     let email = captures.name("email").unwrap().as_str();
                     let message = captures.name("message").unwrap().as_str();
-                    spark::Message::test_message(
-                        spark::Email::new(email.to_string()),
-                        spark::PersonId::new(email.to_string()),
-                        message.to_string(),
-                    )
+                    spark::Message {
+                        person_email: spark::Email::new(email.to_string()),
+                        person_id: spark::PersonId::new(email.to_string()),
+                        text: message.to_string(),
+                        ..Default::default()
+                    }
                 })
                 .or_else(|| {
                     warn!(r#"input not understood: please send as "<email>: <message>""#);
