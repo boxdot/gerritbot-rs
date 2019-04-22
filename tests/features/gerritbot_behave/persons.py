@@ -9,9 +9,6 @@ class Person:
         self.fullname = name
         self.email = email
         self.username = name.split(None, 1)[0].lower()
-        self.webex_teams_person_id = hashlib.sha1(
-            self.email.encode("utf-8")
-        ).hexdigest()
         self.http_password = hexlify(os.urandom(16)).decode("ascii")
         self.ssh_key = paramiko.RSAKey.generate(1024)
 

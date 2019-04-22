@@ -8,7 +8,7 @@ use spectral::prelude::*;
 use speculate::speculate;
 
 use gerritbot_spark as spark;
-use spark::{EmailRef, PersonId, PersonIdRef};
+use spark::{Email, EmailRef};
 
 use gerritbot::*;
 
@@ -18,7 +18,7 @@ impl GerritCommandRunner for TestGerritCommandRunner {}
 
 #[derive(Debug, Clone)]
 struct Reply {
-    person_id: PersonId,
+    email: Email,
     message: String,
 }
 
@@ -31,9 +31,9 @@ struct TestSparkClient {
 
 impl SparkClient for TestSparkClient {
     type ReplyFuture = future::FutureResult<(), spark::Error>;
-    fn send_message(&self, person_id: &PersonId, msg: &str) -> Self::ReplyFuture {
+    fn send_message(&self, email: &EmailRef, msg: &str) -> Self::ReplyFuture {
         self.replies.borrow_mut().push(Reply {
-            person_id: person_id.to_owned(),
+            email: email.to_owned(),
             message: msg.to_string(),
         });
         future::ok(())
@@ -43,7 +43,6 @@ impl SparkClient for TestSparkClient {
 type TestBot = Bot<TestGerritCommandRunner, TestSparkClient>;
 
 lazy_static! {
-    static ref TEST_PERSON_ID: &'static PersonIdRef = PersonIdRef::new("test_person_id");
     static ref TEST_PERSON_EMAIL: &'static EmailRef = EmailRef::new("test@person.test");
 }
 
@@ -68,7 +67,6 @@ impl TestBotTrait for TestBot {
     fn send_messages(self, messages: &[&str]) {
         let spark_messages = stream::iter_ok(messages.iter().map(|msg| spark::Message {
             person_email: TEST_PERSON_EMAIL.to_owned(),
-            person_id: TEST_PERSON_ID.to_owned(),
             text: msg.to_string(),
             ..Default::default()
         }));
@@ -91,7 +89,7 @@ speculate! {
             bot.send_message("status");
             let replies = Rc::try_unwrap(replies).unwrap().into_inner();
             assert_that!(replies).has_length(1);
-            assert_that!(replies[0].person_id).is_equal_to(TEST_PERSON_ID.to_owned());
+            assert_that!(replies[0].email).is_equal_to(TEST_PERSON_EMAIL.to_owned());
             assert_that!(replies[0].message).contains("disabled");
         }
 
@@ -99,9 +97,9 @@ speculate! {
             bot.send_messages(&["enable", "status"][..]);
             let replies = Rc::try_unwrap(replies).unwrap().into_inner();
             assert_that!(replies).has_length(2);
-            assert_that!(replies[0].person_id).is_equal_to(TEST_PERSON_ID.to_owned());
+            assert_that!(replies[0].email).is_equal_to(TEST_PERSON_EMAIL.to_owned());
             assert_that!(replies[0].message).contains("Happy reviewing!");
-            assert_that!(replies[1].person_id).is_equal_to(TEST_PERSON_ID.to_owned());
+            assert_that!(replies[1].email).is_equal_to(TEST_PERSON_EMAIL.to_owned());
             assert_that!(replies[1].message).contains("enabled");
         }
 
@@ -109,7 +107,7 @@ speculate! {
             bot.send_message("this is not a known command");
             let replies = Rc::try_unwrap(replies).unwrap().into_inner();
             assert_that!(replies).has_length(1);
-            assert_that!(replies[0].person_id).is_equal_to(TEST_PERSON_ID.to_owned());
+            assert_that!(replies[0].email).is_equal_to(TEST_PERSON_EMAIL.to_owned());
             assert_that!(replies[0].message).contains("I am GerritBot");
         }
 
@@ -117,7 +115,7 @@ speculate! {
             bot.send_message("version");
             let replies = Rc::try_unwrap(replies).unwrap().into_inner();
             assert_that!(replies).has_length(1);
-            assert_that!(replies[0].person_id).is_equal_to(TEST_PERSON_ID.to_owned());
+            assert_that!(replies[0].email).is_equal_to(TEST_PERSON_EMAIL.to_owned());
             assert_that!(replies[0].message).contains(env!("CARGO_PKG_NAME"));
             assert_that!(replies[0].message).contains(env!("CARGO_PKG_VERSION"));
             assert_that!(replies[0].message).contains(env!("VERGEN_SHA"));

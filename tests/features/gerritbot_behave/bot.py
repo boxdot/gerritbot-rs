@@ -19,8 +19,7 @@ class BotHandler:
         log = logging.getLogger("bot-messages")
         serialized_message = json.dumps(
             {
-                "personEmail": sender.email,
-                "personId": sender.webex_teams_person_id,
+                "email": sender.email,
                 "text": message,
             }
         ).encode("utf-8")
@@ -49,7 +48,7 @@ class BotHandler:
         return [
             m
             for m in self.current_messages
-            if m["personId"] == person.webex_teams_person_id
+            if m["email"] == person.email
         ]
 
     def _read_messages(self):

@@ -35,7 +35,9 @@ impl Filter {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
-    pub spark_person_id: spark::PersonId,
+    // Legacy attribute.  Keep so we don't drop it on deserialize, serialize.
+    // Should be removed later.
+    spark_person_id: Option<String>,
     /// email of the user; assumed to be the same in Spark and Gerrit
     pub email: spark::Email,
     pub enabled: bool,
@@ -43,9 +45,9 @@ pub struct User {
 }
 
 impl User {
-    fn new(person_id: spark::PersonId, email: spark::Email) -> Self {
+    fn new(email: spark::Email) -> Self {
         Self {
-            spark_person_id: person_id,
+            spark_person_id: None,
             email: email,
             filter: None,
             enabled: true,
@@ -56,8 +58,6 @@ impl User {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct State {
     users: Vec<User>,
-    #[serde(skip_serializing, skip_deserializing)]
-    person_id_index: HashMap<spark::PersonId, usize>,
     #[serde(skip_serializing, skip_deserializing)]
     email_index: HashMap<spark::Email, usize>,
 }
@@ -83,8 +83,6 @@ impl State {
 
     fn index_users(&mut self) {
         for (user_pos, user) in self.users.iter().enumerate() {
-            self.person_id_index
-                .insert(user.spark_person_id.clone(), user_pos);
             self.email_index.insert(user.email.clone(), user_pos);
         }
     }
@@ -95,53 +93,40 @@ impl State {
 
     // Note: This method is not idempotent, and in particular, when adding the same user twice,
     // it will completely mess up the indexes.
-    pub fn add_user<'a>(
-        &'a mut self,
-        person_id: &spark::PersonIdRef,
-        email: &spark::EmailRef,
-    ) -> &'a mut User {
+    pub fn add_user<'a>(&'a mut self, email: &spark::EmailRef) -> &'a mut User {
         let user_pos = self.users.len();
-        self.users
-            .push(User::new(person_id.to_owned(), email.to_owned()));
-        self.person_id_index.insert(person_id.to_owned(), user_pos);
+        self.users.push(User::new(email.to_owned()));
         self.email_index.insert(email.to_owned(), user_pos);
         self.users.last_mut().unwrap()
     }
 
-    fn find_or_add_user_by_person_id<'a>(
-        &'a mut self,
-        person_id: &spark::PersonIdRef,
-        email: &spark::EmailRef,
-    ) -> &'a mut User {
-        let pos = self
-            .users
-            .iter()
-            .position(|u| u.spark_person_id == person_id);
+    fn find_or_add_user_by_email<'a>(&'a mut self, email: &spark::EmailRef) -> &'a mut User {
+        let pos = self.users.iter().position(|u| u.email == email);
         let user: &'a mut User = match pos {
             Some(pos) => &mut self.users[pos],
-            None => self.add_user(person_id, email),
+            None => self.add_user(email),
         };
         user
     }
 
-    fn find_user_mut<'a, P: ?Sized>(&'a mut self, person_id: &P) -> Option<&'a mut User>
+    fn find_user_mut<'a, P: ?Sized>(&'a mut self, email: &P) -> Option<&'a mut User>
     where
-        spark::PersonId: std::borrow::Borrow<P>,
+        spark::Email: std::borrow::Borrow<P>,
         P: std::hash::Hash + Eq,
     {
-        self.person_id_index
-            .get(person_id)
+        self.email_index
+            .get(email)
             .cloned()
             .map(move |pos| &mut self.users[pos])
     }
 
-    pub fn find_user<'a, P: ?Sized>(&'a self, person_id: &P) -> Option<&'a User>
+    pub fn find_user<'a, P: ?Sized>(&'a self, email: &P) -> Option<&'a User>
     where
-        spark::PersonId: std::borrow::Borrow<P>,
+        spark::Email: std::borrow::Borrow<P>,
         P: std::hash::Hash + Eq,
     {
-        self.person_id_index
-            .get(person_id)
+        self.email_index
+            .get(email)
             .cloned()
             .map(|pos| &self.users[pos])
     }
@@ -154,26 +139,21 @@ impl State {
         self.email_index.get(email).map(|pos| &self.users[*pos])
     }
 
-    pub fn enable<'a>(
-        &'a mut self,
-        person_id: &spark::PersonIdRef,
-        email: &spark::EmailRef,
-        enabled: bool,
-    ) -> &'a User {
-        let user: &'a mut User = self.find_or_add_user_by_person_id(person_id, email);
+    pub fn enable<'a>(&'a mut self, email: &spark::EmailRef, enabled: bool) -> &'a User {
+        let user: &'a mut User = self.find_or_add_user_by_email(email);
         user.enabled = enabled;
         user
     }
 
     pub fn add_filter<A>(
         &mut self,
-        person_id: &spark::PersonIdRef,
+        email: &spark::EmailRef,
         filter: A,
     ) -> Result<(), AddFilterResult>
     where
         A: Into<String>,
     {
-        let user = self.find_user_mut(person_id);
+        let user = self.find_user_mut(email);
         match user {
             Some(user) => {
                 if !user.enabled {
@@ -193,9 +173,9 @@ impl State {
 
     pub fn get_filter<'a>(
         &'a self,
-        person_id: &spark::PersonIdRef,
+        email: &spark::EmailRef,
     ) -> Result<Option<&'a Filter>, AddFilterResult> {
-        let user = self.find_user(person_id);
+        let user = self.find_user(email);
         match user {
             Some(user) => Ok(user.filter.as_ref()),
             None => Err(AddFilterResult::UserNotFound),
@@ -204,10 +184,10 @@ impl State {
 
     pub fn enable_filter(
         &mut self,
-        person_id: &spark::PersonIdRef,
+        email: &spark::EmailRef,
         enabled: bool,
     ) -> Result<String /* filter */, AddFilterResult> {
-        let user = self.find_user_mut(person_id);
+        let user = self.find_user_mut(email);
         match user {
             Some(user) => {
                 if !user.enabled {
@@ -241,7 +221,7 @@ impl State {
                 } else {
                     warn!(
                         "User {} has configured invalid filter regex: {}",
-                        user.spark_person_id, filter.regex
+                        user.email, filter.regex
                     );
                 }
             }
@@ -252,29 +232,19 @@ impl State {
 
 #[cfg(test)]
 mod test {
-    use spark::{EmailRef, PersonIdRef};
+    use spark::EmailRef;
 
     use super::*;
 
     #[test]
     fn test_add_user() {
         let mut state = State::new();
-        state.add_user(
-            PersonIdRef::new("some_person_id"),
-            EmailRef::new("some@example.com"),
-        );
+        state.add_user(EmailRef::new("some@example.com"));
         assert_eq!(state.users.len(), 1);
-        assert_eq!(state.person_id_index.len(), 1);
         assert_eq!(state.email_index.len(), 1);
-        assert_eq!(
-            state.users[0].spark_person_id,
-            PersonIdRef::new("some_person_id")
-        );
         assert_eq!(state.users[0].email, EmailRef::new("some@example.com"));
         assert_eq!(
-            state
-                .person_id_index
-                .get(PersonIdRef::new("some_person_id")),
+            state.email_index.get(EmailRef::new("some@example.com")),
             Some(&0)
         );
         assert_eq!(
@@ -282,22 +252,12 @@ mod test {
             Some(&0)
         );
 
-        state.add_user(
-            PersonIdRef::new("some_person_id_2"),
-            EmailRef::new("some_2@example.com"),
-        );
+        state.add_user(EmailRef::new("some_2@example.com"));
         assert_eq!(state.users.len(), 2);
-        assert_eq!(state.person_id_index.len(), 2);
         assert_eq!(state.email_index.len(), 2);
-        assert_eq!(
-            state.users[1].spark_person_id,
-            PersonIdRef::new("some_person_id_2")
-        );
         assert_eq!(state.users[1].email, EmailRef::new("some_2@example.com"));
         assert_eq!(
-            state
-                .person_id_index
-                .get(PersonIdRef::new("some_person_id_2")),
+            state.email_index.get(EmailRef::new("some_2@example.com")),
             Some(&1)
         );
         assert_eq!(
@@ -305,96 +265,77 @@ mod test {
             Some(&1)
         );
 
-        let user = state.find_user(PersonIdRef::new("some_person_id"));
+        let user = state.find_user(EmailRef::new("some@example.com"));
         assert!(user.is_some());
-        assert_eq!(
-            user.unwrap().spark_person_id,
-            PersonIdRef::new("some_person_id")
-        );
         assert_eq!(user.unwrap().email, EmailRef::new("some@example.com"));
 
-        let user = state.find_user(PersonIdRef::new("some_person_id_2"));
+        let user = state.find_user(EmailRef::new("some_2@example.com"));
         assert!(user.is_some());
-        assert_eq!(
-            user.unwrap().spark_person_id,
-            PersonIdRef::new("some_person_id_2")
-        );
         assert_eq!(user.unwrap().email, EmailRef::new("some_2@example.com"));
     }
 
     #[test]
     fn add_invalid_filter_for_existing_user() {
         let mut state = State::new();
-        state.add_user(
-            PersonIdRef::new("some_person_id"),
-            EmailRef::new("some@example.com"),
-        );
-        let res = state.add_filter(PersonIdRef::new("some_person_id"), ".some_weard_regex/[");
+        state.add_user(EmailRef::new("some@example.com"));
+        let res = state.add_filter(EmailRef::new("some@example.com"), ".some_weard_regex/[");
         assert_eq!(res, Err(AddFilterResult::InvalidFilter));
         assert!(state
             .users
             .iter()
-            .position(|u| u.spark_person_id == PersonIdRef::new("some_person_id")
-                && u.email == EmailRef::new("some@example.com")
-                && u.filter == None)
+            .position(|u| u.email == EmailRef::new("some@example.com") && u.filter == None)
             .is_some());
 
-        let res = state.enable_filter(PersonIdRef::new("some_person_id"), true);
+        let res = state.enable_filter(EmailRef::new("some@example.com"), true);
         assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
-        let res = state.enable_filter(PersonIdRef::new("some_person_id"), false);
+        let res = state.enable_filter(EmailRef::new("some@example.com"), false);
         assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
     }
 
     #[test]
     fn add_valid_filter_for_existing_user() {
         let mut state = State::new();
-        state.add_user(
-            PersonIdRef::new("some_person_id"),
-            EmailRef::new("some@example.com"),
-        );
+        state.add_user(EmailRef::new("some@example.com"));
 
-        let res = state.add_filter(PersonIdRef::new("some_person_id"), ".*some_word.*");
+        let res = state.add_filter(EmailRef::new("some@example.com"), ".*some_word.*");
         assert!(res.is_ok());
         assert!(state
             .users
             .iter()
-            .position(|u| u.spark_person_id == PersonIdRef::new("some_person_id")
-                && u.email == EmailRef::new("some@example.com")
+            .position(|u| u.email == EmailRef::new("some@example.com")
                 && u.filter == Some(Filter::new(".*some_word.*")))
             .is_some());
 
         {
-            let filter = state.get_filter(PersonIdRef::new("some_person_id"));
+            let filter = state.get_filter(EmailRef::new("some@example.com"));
             assert_eq!(filter, Ok(Some(&Filter::new(".*some_word.*"))));
         }
-        let res = state.enable_filter(PersonIdRef::new("some_person_id"), false);
+        let res = state.enable_filter(EmailRef::new("some@example.com"), false);
         assert_eq!(res, Ok(String::from(".*some_word.*")));
         assert!(state
             .users
             .iter()
-            .position(|u| u.spark_person_id == PersonIdRef::new("some_person_id")
-                && u.email == EmailRef::new("some@example.com")
+            .position(|u| u.email == EmailRef::new("some@example.com")
                 && u.filter.as_ref().map(|f| f.enabled) == Some(false))
             .is_some());
         {
             let filter = state
-                .get_filter(PersonIdRef::new("some_person_id"))
+                .get_filter(EmailRef::new("some@example.com"))
                 .unwrap()
                 .unwrap();
             assert_eq!(filter.regex, ".*some_word.*");
             assert_eq!(filter.enabled, false);
         }
-        let res = state.enable_filter(PersonIdRef::new("some_person_id"), true);
+        let res = state.enable_filter(EmailRef::new("some@example.com"), true);
         assert_eq!(res, Ok(String::from(".*some_word.*")));
         assert!(state
             .users
             .iter()
-            .position(|u| u.spark_person_id == PersonIdRef::new("some_person_id")
-                && u.email == EmailRef::new("some@example.com")
+            .position(|u| u.email == EmailRef::new("some@example.com")
                 && u.filter.as_ref().map(|f| f.enabled) == Some(true))
             .is_some());
         {
-            let filter = state.get_filter(PersonIdRef::new("some_person_id"));
+            let filter = state.get_filter(EmailRef::new("some@example.com"));
             assert_eq!(filter, Ok(Some(&Filter::new(".*some_word.*"))));
         }
     }
@@ -402,57 +343,48 @@ mod test {
     #[test]
     fn add_valid_filter_for_non_existing_user() {
         let mut state = State::new();
-        let res = state.add_filter(PersonIdRef::new("some_person_id"), ".*some_word.*");
+        let res = state.add_filter(EmailRef::new("some@example.com"), ".*some_word.*");
         assert_eq!(res, Err(AddFilterResult::UserNotFound));
-        let res = state.enable_filter(PersonIdRef::new("some_person_id"), true);
+        let res = state.enable_filter(EmailRef::new("some@example.com"), true);
         assert_eq!(res, Err(AddFilterResult::UserNotFound));
-        let res = state.enable_filter(PersonIdRef::new("some_person_id"), false);
+        let res = state.enable_filter(EmailRef::new("some@example.com"), false);
         assert_eq!(res, Err(AddFilterResult::UserNotFound));
     }
 
     #[test]
     fn add_valid_filter_for_disabled_user() {
         let mut state = State::new();
-        state.add_user(
-            PersonIdRef::new("some_person_id"),
-            EmailRef::new("some@example.com"),
-        );
+        state.add_user(EmailRef::new("some@example.com"));
         state.users[0].enabled = false;
 
-        let res = state.add_filter(PersonIdRef::new("some_person_id"), ".*some_word.*");
+        let res = state.add_filter(EmailRef::new("some@example.com"), ".*some_word.*");
         assert_eq!(res, Err(AddFilterResult::UserDisabled));
-        let res = state.enable_filter(PersonIdRef::new("some_person_id"), true);
+        let res = state.enable_filter(EmailRef::new("some@example.com"), true);
         assert_eq!(res, Err(AddFilterResult::UserDisabled));
-        let res = state.enable_filter(PersonIdRef::new("some_person_id"), false);
+        let res = state.enable_filter(EmailRef::new("some@example.com"), false);
         assert_eq!(res, Err(AddFilterResult::UserDisabled));
     }
 
     #[test]
     fn enable_non_configured_filter_for_existing_user() {
         let mut state = State::new();
-        state.add_user(
-            PersonIdRef::new("some_person_id"),
-            EmailRef::new("some@example.com"),
-        );
+        state.add_user(EmailRef::new("some@example.com"));
 
-        let res = state.enable_filter(PersonIdRef::new("some_person_id"), true);
+        let res = state.enable_filter(EmailRef::new("some@example.com"), true);
         assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
-        let res = state.enable_filter(PersonIdRef::new("some_person_id"), false);
+        let res = state.enable_filter(EmailRef::new("some@example.com"), false);
         assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
     }
 
     #[test]
     fn enable_invalid_filter_for_existing_user() {
         let mut state = State::new();
-        state.add_user(
-            PersonIdRef::new("some_person_id"),
-            EmailRef::new("some@example.com"),
-        );
+        state.add_user(EmailRef::new("some@example.com"));
         state.users[0].filter = Some(Filter::new("invlide_filter_set_from_outside["));
 
-        let res = state.enable_filter(PersonIdRef::new("some_person_id"), true);
+        let res = state.enable_filter(EmailRef::new("some@example.com"), true);
         assert_eq!(res, Err(AddFilterResult::InvalidFilter));
-        let res = state.enable_filter(PersonIdRef::new("some_person_id"), false);
+        let res = state.enable_filter(EmailRef::new("some@example.com"), false);
         assert_eq!(res, Err(AddFilterResult::InvalidFilter));
     }
 

@@ -3,7 +3,7 @@ use std::time::Duration;
 use lru_time_cache::LruCache;
 
 use gerritbot_gerrit as gerrit;
-use gerritbot_spark::PersonId;
+use gerritbot_spark::Email;
 
 use super::state::User;
 
@@ -29,7 +29,7 @@ impl RateLimiter {
             .as_mut()
             .and_then(|cache| {
                 cache.insert(
-                    IntoCacheLine::into_cache_line(user.spark_person_id.clone(), &event),
+                    IntoCacheLine::into_cache_line(user.email.clone(), &event),
                     (),
                 )
             })
@@ -63,23 +63,23 @@ pub struct Approval {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MsgCacheLine {
     Approvals {
-        person_id: PersonId,
+        email: Email,
         subject: Subject,
         approver: String,
         approvals: Vec<Approval>,
     },
     ReviewerAdded {
-        person_id: PersonId,
+        email: Email,
         subject: Subject,
     },
 }
 
 pub trait IntoCacheLine {
-    fn into_cache_line(person_id: PersonId, event: &Self) -> MsgCacheLine;
+    fn into_cache_line(email: Email, event: &Self) -> MsgCacheLine;
 }
 
 impl IntoCacheLine for &gerrit::CommentAddedEvent {
-    fn into_cache_line(person_id: PersonId, event: &Self) -> MsgCacheLine {
+    fn into_cache_line(email: Email, event: &Self) -> MsgCacheLine {
         let mut approvals: Vec<_> = event
             .approvals
             .iter()
@@ -108,7 +108,7 @@ impl IntoCacheLine for &gerrit::CommentAddedEvent {
             .to_string();
 
         MsgCacheLine::Approvals {
-            person_id,
+            email,
             subject: Subject::from_change(&event.change),
             approver,
             approvals,
@@ -117,9 +117,9 @@ impl IntoCacheLine for &gerrit::CommentAddedEvent {
 }
 
 impl IntoCacheLine for &gerrit::ReviewerAddedEvent {
-    fn into_cache_line(person_id: PersonId, event: &Self) -> MsgCacheLine {
+    fn into_cache_line(email: Email, event: &Self) -> MsgCacheLine {
         MsgCacheLine::ReviewerAdded {
-            person_id,
+            email,
             subject: Subject::from_change(&event.change),
         }
     }
