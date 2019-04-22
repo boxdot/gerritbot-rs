@@ -112,7 +112,7 @@ enum ConsoleSparkClient {
 
 impl bot::SparkClient for ConsoleSparkClient {
     type ReplyFuture = future::FutureResult<(), spark::Error>;
-    fn reply(&self, person_id: &spark::PersonId, msg: &str) -> Self::ReplyFuture {
+    fn send_message(&self, person_id: &spark::PersonId, msg: &str) -> Self::ReplyFuture {
         // Write synchronously and crash if writing fails. There's no point in
         // error handling here.
         match self {

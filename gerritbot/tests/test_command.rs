@@ -31,7 +31,7 @@ struct TestSparkClient {
 
 impl SparkClient for TestSparkClient {
     type ReplyFuture = future::FutureResult<(), spark::Error>;
-    fn reply(&self, person_id: &PersonId, msg: &str) -> Self::ReplyFuture {
+    fn send_message(&self, person_id: &PersonId, msg: &str) -> Self::ReplyFuture {
         self.replies.borrow_mut().push(Reply {
             person_id: person_id.to_owned(),
             message: msg.to_string(),

@@ -520,14 +520,6 @@ impl Client {
         &self.bot_id
     }
 
-    pub fn reply<'a>(
-        &self,
-        person_id: &'a PersonIdRef,
-        msg: &'a str,
-    ) -> impl Future<Item = (), Error = Error> {
-        self.send_message(person_id, msg)
-    }
-
     pub fn send_message<'a, T: ?Sized>(
         &self,
         target: &'a T,

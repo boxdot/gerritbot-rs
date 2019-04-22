@@ -30,13 +30,13 @@ impl GerritCommandRunner for gerrit::CommandRunner {}
 
 pub trait SparkClient: Clone {
     type ReplyFuture: Future<Item = (), Error = spark::Error> + Send;
-    fn reply(&self, person_id: &spark::PersonId, msg: &str) -> Self::ReplyFuture;
+    fn send_message(&self, person_id: &spark::PersonId, msg: &str) -> Self::ReplyFuture;
 }
 
 impl SparkClient for spark::Client {
     type ReplyFuture = Box<dyn Future<Item = (), Error = spark::Error> + Send>;
-    fn reply(&self, person_id: &spark::PersonId, msg: &str) -> Self::ReplyFuture {
-        Box::new(self.reply(person_id, msg))
+    fn send_message(&self, person_id: &spark::PersonId, msg: &str) -> Self::ReplyFuture {
+        Box::new(self.send_message(person_id, msg))
     }
 }
 
@@ -194,7 +194,7 @@ where
             .for_each(move |response| {
                 debug!("Replying with: {}", response.message);
                 spark_client
-                    .reply(&response.person_id, &response.message)
+                    .send_message(&response.person_id, &response.message)
                     .map_err(|e| error!("failed to send spark message: {}", e))
             })
     }
@@ -559,7 +559,7 @@ mod test {
 
     impl SparkClient for TestSparkClient {
         type ReplyFuture = future::FutureResult<(), spark::Error>;
-        fn reply(&self, _person_id: &PersonId, _msg: &str) -> Self::ReplyFuture {
+        fn send_message(&self, _person_id: &PersonId, _msg: &str) -> Self::ReplyFuture {
             future::ok(())
         }
     }
