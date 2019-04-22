@@ -66,12 +66,11 @@ impl TestBotTrait for TestBot {
     }
 
     fn send_messages(self, messages: &[&str]) {
-        let spark_messages = stream::iter_ok(messages.iter().map(|msg| {
-            spark::Message::test_message(
-                TEST_PERSON_EMAIL.to_owned(),
-                TEST_PERSON_ID.to_owned(),
-                msg.to_string(),
-            )
+        let spark_messages = stream::iter_ok(messages.iter().map(|msg| spark::Message {
+            person_email: TEST_PERSON_EMAIL.to_owned(),
+            person_id: TEST_PERSON_ID.to_owned(),
+            text: msg.to_string(),
+            ..Default::default()
         }));
         let gerrit_events = stream::empty();
         self.run(gerrit_events, spark_messages).wait().unwrap();

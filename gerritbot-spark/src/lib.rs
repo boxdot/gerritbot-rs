@@ -183,35 +183,34 @@ pub struct WebhookMessage {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
-    created: Option<Timestamp>,
-    id: MessageId,
+    pub created: Option<Timestamp>,
+    pub id: MessageId,
     pub person_email: Email,
     pub person_id: PersonId,
-    room_id: RoomId,
-    room_type: RoomType,
+    pub room_id: RoomId,
+    pub room_type: RoomType,
 
     // a message contained in a post does not have text loaded
     #[serde(default)]
     pub text: String,
-    markdown: Option<String>,
-    html: Option<String>,
-    files: Option<Vec<String>>,
+    pub markdown: Option<String>,
+    pub html: Option<String>,
+    pub files: Option<Vec<String>>,
 }
 
-impl Message {
-    /// Create a simple message for use in tests.
-    pub fn test_message(person_email: Email, person_id: PersonId, text: String) -> Self {
+impl Default for Message {
+    fn default() -> Self {
         Self {
-            person_email,
-            person_id,
-            text,
-            created: None,
+            created: Default::default(),
+            id: Default::default(),
+            person_email: Default::default(),
+            person_id: Default::default(),
             room_id: Default::default(),
             room_type: RoomType::Direct,
-            html: None,
-            files: None,
-            id: Default::default(),
-            markdown: None,
+            text: Default::default(),
+            markdown: Default::default(),
+            html: Default::default(),
+            files: Default::default(),
         }
     }
 }
