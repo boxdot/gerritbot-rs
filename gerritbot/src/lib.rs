@@ -606,10 +606,10 @@ where
             // No need to notify about user's own approvals.
             return None;
         }
-        let owner_email = spark::Email::new(change.owner.email.clone());
+        let owner_email = spark::EmailRef::new(change.owner.email.as_ref()?);
 
         // try to find the use and check it is enabled
-        let user_pos = *self.state.email_index.get(&owner_email)?;
+        let user_pos = *self.state.email_index.get(owner_email)?;
         if !self.state.users[user_pos].enabled {
             return None;
         }
@@ -641,8 +641,8 @@ where
         event: &gerrit::ReviewerAddedEvent,
     ) -> Option<(&User, String)> {
         let reviewer = event.reviewer.clone();
-        let reviewer_email = spark::Email::new(reviewer.email.clone());
-        let user_pos = *self.state.email_index.get(&reviewer_email)?;
+        let reviewer_email = spark::EmailRef::new(reviewer.email.as_ref()?);
+        let user_pos = *self.state.email_index.get(reviewer_email)?;
         if !self.state.users[user_pos].enabled {
             return None;
         }
