@@ -14,7 +14,7 @@ Feature: message formatting
       When we check for messages by the bot
       Then there is a message for Bob with the following text:
         """
-        [{context.last_created_change[subject]}]({context.urls.changes[last]}) ([tools]({context.urls.projects[tools]})) 👍 +2 (Code-Review) from [Alice Smith]({context.urls.users[alice].reviewer})
+        [{context.last_created_change[subject]}]({context.urls.changes[last]}) ([tools]({context.urls.projects[tools]})) 👍 +2 (Code-Review) from [Alice Smith]({context.urls.users[alice].reviewer}), 🏁 Submittable
         """
 
   Scenario: review with message
@@ -23,9 +23,29 @@ Feature: message formatting
       When we check for messages by the bot
       Then there is a message for Bob with the following text:
         """
-        [{context.last_created_change[subject]}]({context.urls.changes[last]}) ([tools]({context.urls.projects[tools]})) 👍 +2 (Code-Review) from [Alice Smith]({context.urls.users[alice].reviewer})
+        [{context.last_created_change[subject]}]({context.urls.changes[last]}) ([tools]({context.urls.projects[tools]})) 👍 +2 (Code-Review) from [Alice Smith]({context.urls.users[alice].reviewer}), 🏁 Submittable
 
         > Good job!
+        """
+
+  Scenario: insufficient review without message
+     Given Bob uploads a new change to the tools project
+       And Alice replies to Bob's change with Code-Review+1
+      When we check for messages by the bot
+      Then there is a message for Bob with the following text:
+        """
+        [{context.last_created_change[subject]}]({context.urls.changes[last]}) ([tools]({context.urls.projects[tools]})) 👌 +1 (Code-Review) from [Alice Smith]({context.urls.users[alice].reviewer})
+        """
+
+  Scenario: insufficient review with message
+     Given Bob uploads a new change to the tools project
+       And Alice replies to Bob's change with Code-Review+1 and the comment "Okay job."
+      When we check for messages by the bot
+      Then there is a message for Bob with the following text:
+        """
+        [{context.last_created_change[subject]}]({context.urls.changes[last]}) ([tools]({context.urls.projects[tools]})) 👌 +1 (Code-Review) from [Alice Smith]({context.urls.users[alice].reviewer})
+
+        > Okay job.
         """
 
   Scenario: added as reviewer

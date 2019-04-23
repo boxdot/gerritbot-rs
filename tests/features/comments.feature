@@ -14,6 +14,7 @@ Feature: review comments
       When we check for messages by the bot
       Then there is a message for Bob which includes the text "Code-Review"
        And this message includes the text "+2"
+       And this message includes the text "Submittable"
 
   Scenario: review with message
      Given Bob uploads a new change to the tools project
@@ -22,6 +23,23 @@ Feature: review comments
       Then there is a message for Bob which includes the text "Code-Review"
        And this message includes the text "+2"
        And this message includes the text "Good job!"
+       And this message includes the text "Submittable"
+
+  Scenario: insufficient review without message
+     Given Bob uploads a new change to the tools project
+       And Alice replies to Bob's change with Code-Review+1
+      When we check for messages by the bot
+      Then there is a message for Bob which includes the text "Code-Review"
+       And this message includes the text "+1"
+       And this message does not include the text "Submittable"
+
+  Scenario: insufficient review without message
+     Given Bob uploads a new change to the tools project
+       And Alice replies to Bob's change with Code-Review+1 and the comment "Okay job."
+      When we check for messages by the bot
+      Then there is a message for Bob which includes the text "Code-Review"
+       And this message includes the text "+1"
+       And this message does not include the text "Submittable"
 
   Scenario: inline comments
      Given Bob uploads a new change to the tools project
