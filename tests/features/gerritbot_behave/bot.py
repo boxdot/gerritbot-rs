@@ -10,9 +10,10 @@ from behave import fixture
 
 
 class BotHandler:
-    def __init__(self, *, process, message_queue):
+    def __init__(self, *, process, message_queue, message_timeout):
         self.process = process
         self.message_queue = message_queue
+        self.message_timeout = message_timeout
 
     def send_message(self, sender, message):
         log = logging.getLogger("bot-messages")
@@ -35,7 +36,7 @@ class BotHandler:
             # XXX: we should find a better way to check if there are no more
             # messages coming
             try:
-                message = self.message_queue.get(timeout=0.2)
+                message = self.message_queue.get(timeout=self.message_timeout)
             except queue.Empty:
                 break
             else:
@@ -75,7 +76,7 @@ class BotHandler:
 
 
 @fixture
-def setup_bot(context, *, user, hostname, port):
+def setup_bot(context, *, user, hostname, port, message_timeout):
     with tempfile.TemporaryDirectory() as bot_directory:
         user.ssh_key.write_private_key_file(os.path.join(bot_directory, "id_rsa"))
         with open(os.path.join(bot_directory, "id_rsa.pub"), "w") as f:
@@ -111,7 +112,11 @@ def setup_bot(context, *, user, hostname, port):
 
         message_queue = queue.Queue()
 
-        bot = context.bot = BotHandler(process=bot_process, message_queue=message_queue)
+        bot = context.bot = BotHandler(
+            process=bot_process,
+            message_queue=message_queue,
+            message_timeout=message_timeout,
+        )
         read_messages_thread = threading.Thread(target=bot._read_messages)
         read_messages_thread.start()
 

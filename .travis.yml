@@ -18,4 +18,4 @@ script:
   - cargo build --verbose --all
   - cargo test --verbose --all
   - docker-compose up -d gerrit
-  - set -o pipefail; python3.6 -m behave -v -D gerrit_start_timeout=60 | cat
+  - set -o pipefail; python3.6 -m behave -v -D gerrit_start_timeout=60 -D gerritbot_message_timeout=1 | cat
