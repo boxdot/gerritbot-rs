@@ -75,6 +75,13 @@ def step_impl(context, text):
     assert_that(context.last_matched_message, has_entry("text", contains_string(text)))
 
 
+@then('this message does not include the text "{text}"')
+def step_impl(context, text):
+    assert_that(
+        context.last_matched_message, has_entry("text", is_not(contains_string(text)))
+    )
+
+
 @step("{sender} sends the {command} command to the bot")
 def step_impl(context, sender, command):
     if sender == "everybody":
