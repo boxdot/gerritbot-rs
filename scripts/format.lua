@@ -81,8 +81,13 @@ local function get_approval_icon(type, value, old_value)
 end
 
 local function format_approval(approval)
-    local approval_value = tonumber(approval.value)
-    local old_approval_value = tonumber(approval.old_value or "0")
+    local approval_value = tonumber(approval.value) or 0
+    local old_approval_value = tonumber(approval.oldValue) or 0
+
+    if old_approval_value == approval_value then
+        return nil
+    end
+
     local icon = get_approval_icon(approval.type, approval_value, old_approval_value)
 
     local sign = ""
@@ -185,6 +190,8 @@ function format_comment_added(event, is_human)
     local msg = format_change_subject(change) .. " (" .. format_change_project(base_url, change) .. ")"
 
     local formatted_approvals = {}
+
+    table.sort(event.approvals, function(a1, a2) return a1.type < a2.type end)
 
     for _i, approval in ipairs(event.approvals) do
         local formatted_approval = format_approval(approval)
