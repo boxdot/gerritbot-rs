@@ -211,6 +211,14 @@ function format_comment_added(event, is_human)
     end
 
     msg = msg .. " from " .. format_user(base_url, event.author, "reviewer")
+
+    for _i, submit_record in ipairs(change.submitRecords or {}) do
+        if submit_record.status == "OK" then
+            msg = msg .. ", 🏁 Submittable"
+            break
+        end
+    end
+
     msg = msg .. (format_comment(event.comment, is_human) or "")
     msg = msg .. (format_inline_comments(base_url, change, patchset) or "")
 
