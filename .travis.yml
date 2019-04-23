@@ -17,4 +17,4 @@ script:
   - cargo build --verbose --all
   - cargo test --verbose --all
   - docker-compose up -d gerrit
-  - behave -v -D gerrit_start_timeout=60 | cat
+  - set -o pipefail; behave -v -D gerrit_start_timeout=60 | cat
