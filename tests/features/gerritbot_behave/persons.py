@@ -20,6 +20,9 @@ class Persons:
     def __init__(self):
         self.persons = {}
 
+    def __iter__(self):
+        return iter(self.persons.values())
+
     def get(self, name):
         try:
             return self.persons[name.lower()]
@@ -30,7 +33,7 @@ class Persons:
         person = Person(name, email)
 
         if person.username in self.persons:
-            raise ValueError(f"person {username} already exists")
+            raise ValueError(f"person {person.username} already exists")
 
         self.persons[person.username] = person
         return person

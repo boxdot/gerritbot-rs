@@ -873,13 +873,18 @@ where
     pub fn status_for(&self, person_id: &spark::PersonIdRef) -> String {
         let user = self.state.find_user(person_id);
         let enabled = user.map_or(false, |u| u.enabled);
+        let enabled_user_count =
+            self.state.users.iter().filter(|u| u.enabled).count() - if enabled { 1 } else { 0 };
         format!(
-            "Notifications for you are **{}**. I am notifying another {} user(s).",
+            "Notifications for you are **{}**. I am notifying {}.",
             if enabled { "enabled" } else { "disabled" },
-            if self.state.num_users() == 0 {
-                0
-            } else {
-                self.state.num_users() - if enabled { 1 } else { 0 }
+            match (enabled, enabled_user_count) {
+                (false, 0) => format!("no users"),
+                (true, 0) => format!("no other users"),
+                (false, 1) => format!("one user"),
+                (true, 1) => format!("another user"),
+                (false, _) => format!("{} users", enabled_user_count),
+                (true, _) => format!("another {} users", enabled_user_count),
             }
         )
     }
@@ -981,7 +986,10 @@ fn definitely_has_inline_comments(event: &gerrit::CommentAddedEvent) -> bool {
 
 fn format_comments(change: gerrit::Change, patchset: gerrit::Patchset) -> Option<String> {
     let change_number = change.number;
-    let host = change.url.split('/').nth(2).unwrap();
+    let base_url = {
+        let last_slash = change.url.rfind('/').unwrap();
+        &change.url[..last_slash]
+    };
     let patch_set_number = patchset.number;
 
     patchset.comments.map(|mut comments| {
@@ -995,8 +1003,8 @@ fn format_comments(change: gerrit::Change, patchset: gerrit::Patchset) -> Option
                     .map(|comment| {
                         let mut lines = comment.message.split('\n');
                         let url = format!(
-                            "https://{}/#/c/{}/{}/{}@{}",
-                            host, change_number, patch_set_number, comment.file, comment.line
+                            "{}/#/c/{}/{}/{}@{}",
+                            base_url, change_number, patch_set_number, comment.file, comment.line
                         );
                         let first_line = lines.next().unwrap_or("");
                         let first_line = format!(
@@ -1756,6 +1764,6 @@ mod test {
 
         let (change, patchset) = get_change_with_comments();
         assert_eq!(format_comments(change, patchset),
-            Some("`/COMMIT_MSG`\n\n> [Line 1](https://localhost:8080/#/c/1/1//COMMIT_MSG@1) by jdoe: This is a multiline\n> comment\n> on some change.".into()));
+            Some("`/COMMIT_MSG`\n\n> [Line 1](http://localhost:8080/#/c/1/1//COMMIT_MSG@1) by jdoe: This is a multiline\n> comment\n> on some change.".into()));
     }
 }

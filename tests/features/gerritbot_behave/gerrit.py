@@ -41,7 +41,9 @@ class GerritHandler:
             urljoin(urljoin(self.http_url, "a/"), url.lstrip("/")), auth=auth, **kwds
         )
         r.raise_for_status()
-        return self.parse_json_response(r.text)
+
+        if r.status_code != requests.codes.no_content:
+            return self.parse_json_response(r.text)
 
     def http_put(self, *args, **kwds):
         try:
@@ -139,6 +141,15 @@ class GerritHandler:
             user=uploader,
         )
         self.changes.append((uploader, change_info, True))
+        return change_info
+
+    def add_file_to_change(self, uploader, change_info, filename, content):
+        self.http_put(
+            f"/changes/{change_info['id']}/edit/{filename}",
+            user=uploader,
+            data=content.encode("utf-8"),
+        )
+        self.http_post(f"/changes/{change_info['id']}/edit:publish", user=uploader)
 
     def get_last_change_by(self, uploader):
         try:
@@ -152,18 +163,27 @@ class GerritHandler:
         except StopIteration:
             raise ValueError(f"failed to find change by {uploader.username}")
 
-    def reply(self, change, reviewer, *, message=None, labels=None):
+    def reply(self, change, reviewer, *, message=None, labels=None, comments=None):
         review_data = {}
 
         if message is not None:
             review_data["message"] = message
         if labels is not None:
             review_data["labels"] = labels
+        if comments is not None:
+            review_data["comments"] = comments
 
         self.http_post(
             f"/changes/{change['id']}/revisions/current/review",
             json=review_data,
             user=reviewer,
+        )
+
+    def add_reviewer(self, change, reviewer, *, user):
+        self.http_post(
+            f"/changes/{change['id']}/reviewers",
+            json={"reviewer": reviewer.email},
+            user=user,
         )
 
 
