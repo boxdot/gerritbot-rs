@@ -18,7 +18,7 @@ pub type Username = String;
 pub struct User {
     pub name: Option<String>,
     pub username: Option<Username>,
-    pub email: String,
+    pub email: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]

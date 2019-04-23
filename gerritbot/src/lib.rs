@@ -372,7 +372,7 @@ where
             // No need to notify about user's own approvals.
             return None;
         }
-        let owner_email = spark::EmailRef::new(&change.owner.email);
+        let owner_email = spark::EmailRef::new(change.owner.email.as_ref()?);
 
         // try to find the use and check it is enabled
         let user = self
@@ -405,7 +405,7 @@ where
         &mut self,
         event: &gerrit::ReviewerAddedEvent,
     ) -> Option<(&User, String)> {
-        let reviewer_email = spark::EmailRef::new(&event.reviewer.email);
+        let reviewer_email = spark::EmailRef::new(event.reviewer.email.as_ref()?);
         let user = self
             .state
             .find_user_by_email(reviewer_email)

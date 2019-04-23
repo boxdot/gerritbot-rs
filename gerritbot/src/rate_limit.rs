@@ -98,10 +98,19 @@ impl IntoCacheLine for &gerrit::CommentAddedEvent {
         // sort approvals to get a stable key
         approvals.sort_unstable();
 
+        let approver = event
+            .author
+            .email
+            .as_ref()
+            .or(event.author.username.as_ref())
+            .map(String::as_str)
+            .unwrap_or("<unknown user>")
+            .to_string();
+
         MsgCacheLine::Approvals {
             person_id,
             subject: Subject::from_change(&event.change),
-            approver: event.author.email.clone(),
+            approver,
             approvals,
         }
     }
