@@ -58,12 +58,14 @@ local function format_change_project(base_url, change)
     return result
 end
 
+-- Lua string pattern → table of emoji
 local APPROVAL_ICONS = {
-    ["WaitForVerification"] = {[-1] = "⏳"},
-    ["Code-Review"] = {[-2] = "👎", [-1] = "🤷", [1] = "👌", [2] = "👍"},
-    ["Verified"] = {[-1] = "❌", [1] = "✔"},
+    {"WaitForVerification", {[-1] = "⏳"}},
+    {"Code[-]Review", {[-2] = "👎", [-1] = "✋", [1] = "👌", [2] = "👍"}},
+    {"Verified", {[-1] = "⛈️", [1] = "🌞"}},
+    {"QA", {[-1] = "❌", [1] = "✅"}},
     -- fallback
-    ["*"] = {[-2] = "👎", [-1] = "🙅", [1] = "🙆", [2] = "👍"},
+    {"", {[-2] = "😬", [-1] = "🤨", [1] = "😉", [2] = "🤩"}},
 }
 
 local function get_approval_icon(type, value, old_value)
@@ -75,9 +77,14 @@ local function get_approval_icon(type, value, old_value)
         end
     end
 
-    type_icons = APPROVAL_ICONS[type] or APPROVAL_ICONS["*"]
+    for _, item in pairs(APPROVAL_ICONS) do
+        local type_pattern = item[1]
+        local type_icons = item[2]
 
-    return type_icons[value]
+        if string.match(string.lower(type), string.lower(type_pattern)) then
+            return type_icons[value]
+        end
+    end
 end
 
 local function format_approval(approval)
