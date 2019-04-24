@@ -37,10 +37,12 @@ impl Filter {
 pub struct User {
     // Legacy attribute.  Keep so we don't drop it on deserialize, serialize.
     // Should be removed later.
+    #[serde(skip_serializing_if = "Option::is_none")]
     spark_person_id: Option<String>,
     /// email of the user; assumed to be the same in Spark and Gerrit
     pub email: spark::Email,
     pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<Filter>,
 }
 
