@@ -190,12 +190,18 @@ where
             .select(spark_actions)
             .filter_map(move |action| bot_for_action.lock().unwrap().update(action))
             .filter_map(move |task| bot_for_task.lock().unwrap().handle_task(task))
-            .for_each(move |response| {
+            .map(move |response| {
                 debug!("Replying with: {}", response.message);
-                spark_client
-                    .send_message(&response.email, &response.message)
+                spark_client.send_message(&response.email, &response.message)
+            })
+            .map(|send_future| {
+                // try sending a message for up to 5 seconds, then give up
+                tokio::timer::Timeout::new(send_future, Duration::from_secs(5))
                     .map_err(|e| error!("failed to send spark message: {}", e))
             })
+            // try sending up to 10 messages at a time
+            .buffer_unordered(10)
+            .for_each(|()| Ok(()))
     }
 
     /// Action controller
