@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
 
-use log::warn;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -10,27 +9,51 @@ use gerritbot_spark as spark;
 
 use super::BotError;
 
-#[derive(Debug, PartialEq)]
-pub enum AddFilterResult {
-    UserNotFound,
-    UserDisabled,
-    InvalidFilter,
-    FilterNotConfigured,
-}
-
-#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Filter {
-    pub regex: String,
+#[derive(Debug, Clone)]
+struct Filter {
+    pub regex: Regex,
     pub enabled: bool,
 }
 
-impl Filter {
-    pub fn new<A: Into<String>>(regex: A) -> Self {
-        Self {
-            regex: regex.into(),
-            enabled: true,
-        }
-    }
+#[derive(Serialize, Deserialize)]
+struct FilterForSerialize<'a> {
+    regex: &'a str,
+    enabled: bool,
+}
+
+/// Serialize the filter by storing the regex as a string.
+fn serialize_filter<S>(filter: &Option<Filter>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    filter
+        .as_ref()
+        .map(|f| FilterForSerialize {
+            regex: f.regex.as_str(),
+            enabled: f.enabled,
+        })
+        .serialize(serializer)
+}
+
+/// Deserialize the filter by compiling the regex.
+fn deserialize_filter<'de, D>(deserializer: D) -> Result<Option<Filter>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let maybe_filter = Option::<FilterForSerialize>::deserialize(deserializer)?;
+
+    maybe_filter
+        .map(|f| {
+            Regex::new(f.regex)
+                .map(|regex| Filter {
+                    regex,
+                    enabled: f.enabled,
+                })
+                .map_err(|e| {
+                    <D::Error as serde::de::Error>::custom(format!("invalid regex: {}", e))
+                })
+        })
+        .transpose()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,8 +65,12 @@ pub struct User {
     /// email of the user; assumed to be the same in Spark and Gerrit
     pub email: spark::Email,
     pub enabled: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub filter: Option<Filter>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_filter",
+        deserialize_with = "deserialize_filter"
+    )]
+    filter: Option<Filter>,
 }
 
 impl User {
@@ -147,68 +174,42 @@ impl State {
         user
     }
 
-    pub fn add_filter<A>(
+    pub fn add_filter(
         &mut self,
         email: &spark::EmailRef,
-        filter: A,
-    ) -> Result<(), AddFilterResult>
-    where
-        A: Into<String>,
-    {
-        let user = self.find_user_mut(email);
-        match user {
-            Some(user) => {
-                if !user.enabled {
-                    Err(AddFilterResult::UserDisabled)
-                } else {
-                    let filter: String = filter.into();
-                    if Regex::new(&filter).is_err() {
-                        return Err(AddFilterResult::InvalidFilter);
-                    }
-                    user.filter = Some(Filter::new(filter));
-                    Ok(())
-                }
-            }
-            None => Err(AddFilterResult::UserNotFound),
-        }
+        filter: &str,
+    ) -> Result<(), regex::Error> {
+        let user = self.find_or_add_user_by_email(email);
+        user.filter = Some(Filter {
+            regex: Regex::new(filter)?,
+            enabled: true,
+        });
+        Ok(())
     }
 
-    pub fn get_filter<'a>(
-        &'a self,
-        email: &spark::EmailRef,
-    ) -> Result<Option<&'a Filter>, AddFilterResult> {
-        let user = self.find_user(email);
-        match user {
-            Some(user) => Ok(user.filter.as_ref()),
-            None => Err(AddFilterResult::UserNotFound),
-        }
+    /// Get the filter for the given user given the user exists and has a filter
+    /// configured.
+    pub fn get_filter(&self, email: &spark::EmailRef) -> Option<(&str, bool)> {
+        self.find_user(email)
+            .and_then(|u| u.filter.as_ref())
+            .map(|f| (f.regex.as_str(), f.enabled))
     }
 
-    pub fn enable_filter(
+    /// Enable or disable the configured filter for the user and return it given
+    /// that the user exists and has a filter configured. Error means the user
+    /// doesn't exist or doesn't have a filter configured.
+    pub fn enable_and_get_filter(
         &mut self,
         email: &spark::EmailRef,
         enabled: bool,
-    ) -> Result<String /* filter */, AddFilterResult> {
-        let user = self.find_user_mut(email);
-        match user {
-            Some(user) => {
-                if !user.enabled {
-                    Err(AddFilterResult::UserDisabled)
-                } else {
-                    match user.filter.as_mut() {
-                        Some(filter) => {
-                            if Regex::new(&filter.regex).is_err() {
-                                return Err(AddFilterResult::InvalidFilter);
-                            }
-                            filter.enabled = enabled;
-                            Ok(filter.regex.clone())
-                        }
-                        None => Err(AddFilterResult::FilterNotConfigured),
-                    }
-                }
-            }
-            None => Err(AddFilterResult::UserNotFound),
-        }
+    ) -> Result<&str, ()> {
+        self.find_user_mut(email)
+            .and_then(|u| u.filter.as_mut())
+            .map(|f| {
+                f.enabled = enabled;
+                f.regex.as_str()
+            })
+            .ok_or(())
     }
 
     pub fn users(&self) -> impl Iterator<Item = &User> + Clone {
@@ -216,19 +217,10 @@ impl State {
     }
 
     pub fn is_filtered(&self, user: &User, msg: &str) -> bool {
-        if let Some(filter) = user.filter.as_ref() {
-            if filter.enabled {
-                if let Ok(re) = Regex::new(&filter.regex) {
-                    return re.is_match(msg);
-                } else {
-                    warn!(
-                        "User {} has configured invalid filter regex: {}",
-                        user.email, filter.regex
-                    );
-                }
-            }
-        }
-        false
+        user.filter
+            .as_ref()
+            .map(|f| f.enabled && f.regex.is_match(msg))
+            .unwrap_or(false)
     }
 }
 
@@ -281,17 +273,17 @@ mod test {
         let mut state = State::new();
         state.add_user(EmailRef::new("some@example.com"));
         let res = state.add_filter(EmailRef::new("some@example.com"), ".some_weard_regex/[");
-        assert_eq!(res, Err(AddFilterResult::InvalidFilter));
+        assert!(res.is_err());
         assert!(state
             .users
             .iter()
-            .position(|u| u.email == EmailRef::new("some@example.com") && u.filter == None)
+            .position(|u| u.email == EmailRef::new("some@example.com") && u.filter.is_none())
             .is_some());
 
-        let res = state.enable_filter(EmailRef::new("some@example.com"), true);
-        assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
-        let res = state.enable_filter(EmailRef::new("some@example.com"), false);
-        assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
+        let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), true);
+        assert_eq!(res, Err(()));
+        let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), false);
+        assert_eq!(res, Err(()));
     }
 
     #[test]
@@ -305,15 +297,15 @@ mod test {
             .users
             .iter()
             .position(|u| u.email == EmailRef::new("some@example.com")
-                && u.filter == Some(Filter::new(".*some_word.*")))
+                && u.filter.as_ref().map(|f| f.regex.as_str()) == Some(".*some_word.*"))
             .is_some());
 
         {
             let filter = state.get_filter(EmailRef::new("some@example.com"));
-            assert_eq!(filter, Ok(Some(&Filter::new(".*some_word.*"))));
+            assert_eq!(filter, Some((".*some_word.*", true)));
         }
-        let res = state.enable_filter(EmailRef::new("some@example.com"), false);
-        assert_eq!(res, Ok(String::from(".*some_word.*")));
+        let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), false);
+        assert_eq!(res, Ok(".*some_word.*"));
         assert!(state
             .users
             .iter()
@@ -321,15 +313,11 @@ mod test {
                 && u.filter.as_ref().map(|f| f.enabled) == Some(false))
             .is_some());
         {
-            let filter = state
-                .get_filter(EmailRef::new("some@example.com"))
-                .unwrap()
-                .unwrap();
-            assert_eq!(filter.regex, ".*some_word.*");
-            assert_eq!(filter.enabled, false);
+            let filter = state.get_filter(EmailRef::new("some@example.com"));
+            assert_eq!(filter, Some((".*some_word.*", false)));
         }
-        let res = state.enable_filter(EmailRef::new("some@example.com"), true);
-        assert_eq!(res, Ok(String::from(".*some_word.*")));
+        let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), true);
+        assert_eq!(res, Ok(".*some_word.*"));
         assert!(state
             .users
             .iter()
@@ -338,7 +326,7 @@ mod test {
             .is_some());
         {
             let filter = state.get_filter(EmailRef::new("some@example.com"));
-            assert_eq!(filter, Ok(Some(&Filter::new(".*some_word.*"))));
+            assert_eq!(filter, Some((".*some_word.*", true)));
         }
     }
 
@@ -346,11 +334,11 @@ mod test {
     fn add_valid_filter_for_non_existing_user() {
         let mut state = State::new();
         let res = state.add_filter(EmailRef::new("some@example.com"), ".*some_word.*");
-        assert_eq!(res, Err(AddFilterResult::UserNotFound));
-        let res = state.enable_filter(EmailRef::new("some@example.com"), true);
-        assert_eq!(res, Err(AddFilterResult::UserNotFound));
-        let res = state.enable_filter(EmailRef::new("some@example.com"), false);
-        assert_eq!(res, Err(AddFilterResult::UserNotFound));
+        assert_eq!(res, Ok(()));
+        let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), true);
+        assert_eq!(res, Ok(".*some_word.*"));
+        let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), false);
+        assert_eq!(res, Ok(".*some_word.*"));
     }
 
     #[test]
@@ -360,11 +348,11 @@ mod test {
         state.users[0].enabled = false;
 
         let res = state.add_filter(EmailRef::new("some@example.com"), ".*some_word.*");
-        assert_eq!(res, Err(AddFilterResult::UserDisabled));
-        let res = state.enable_filter(EmailRef::new("some@example.com"), true);
-        assert_eq!(res, Err(AddFilterResult::UserDisabled));
-        let res = state.enable_filter(EmailRef::new("some@example.com"), false);
-        assert_eq!(res, Err(AddFilterResult::UserDisabled));
+        assert_eq!(res, Ok(()));
+        let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), true);
+        assert_eq!(res, Ok(".*some_word.*"));
+        let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), false);
+        assert_eq!(res, Ok(".*some_word.*"));
     }
 
     #[test]
@@ -372,22 +360,9 @@ mod test {
         let mut state = State::new();
         state.add_user(EmailRef::new("some@example.com"));
 
-        let res = state.enable_filter(EmailRef::new("some@example.com"), true);
-        assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
-        let res = state.enable_filter(EmailRef::new("some@example.com"), false);
-        assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
+        let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), true);
+        assert_eq!(res, Err(()));
+        let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), false);
+        assert_eq!(res, Err(()));
     }
-
-    #[test]
-    fn enable_invalid_filter_for_existing_user() {
-        let mut state = State::new();
-        state.add_user(EmailRef::new("some@example.com"));
-        state.users[0].filter = Some(Filter::new("invlide_filter_set_from_outside["));
-
-        let res = state.enable_filter(EmailRef::new("some@example.com"), true);
-        assert_eq!(res, Err(AddFilterResult::InvalidFilter));
-        let res = state.enable_filter(EmailRef::new("some@example.com"), false);
-        assert_eq!(res, Err(AddFilterResult::InvalidFilter));
-    }
-
 }

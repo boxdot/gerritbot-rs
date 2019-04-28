@@ -22,7 +22,7 @@ use format::Formatter;
 pub use format::DEFAULT_FORMAT_SCRIPT;
 use rate_limit::RateLimiter;
 pub use state::State;
-use state::{AddFilterResult, User};
+use state::User;
 
 pub trait GerritCommandRunner {}
 
@@ -117,8 +117,8 @@ fn spark_message_to_action(message: spark::Message) -> Action {
         "help" => Action::Help(sender_email),
         "version" => Action::Version(sender_email),
         "filter" => Action::FilterStatus(sender_email),
-        "filter enable" => Action::FilterEnable(sender_email),
-        "filter disable" => Action::FilterDisable(sender_email),
+        "filter enable" => Action::FilterEnable(sender_email, true),
+        "filter disable" => Action::FilterEnable(sender_email, false),
         _ => FILTER_REGEX
             .captures(&message.text.trim()[..])
             .and_then(|cap| cap.get(1))
@@ -208,144 +208,80 @@ where
     /// Return an optional message to send to the user
     fn update(&mut self, action: Action) -> Option<Task> {
         match action {
-        Action::Enable(email) => {
-            self.state.enable(&email, true);
-            let task = Task::ReplyAndSave(Response::new(email, "Got it! Happy reviewing!"));
-            Some(task)
-        }
-        Action::Disable(email) => {
-            self.state.enable(&email, false);
-            let task = Task::ReplyAndSave(Response::new(email, "Got it! I will stay silent."));
-            Some(task)
-        }
-        Action::UpdateApprovals(event) => {
-            self.get_approvals_msg(event).map(|(user, message, _is_human)|
-                    Task::Reply(Response::new(user.email.clone(), message)))
-        }
-        Action::Help(email) => Some(Task::Reply(Response::new(email, HELP_MSG))),
+            Action::Enable(email) => {
+                self.state.enable(&email, true);
+                let task = Task::ReplyAndSave(Response::new(email, "Got it! Happy reviewing!"));
+                Some(task)
+            }
+            Action::Disable(email) => {
+                self.state.enable(&email, false);
+                let task = Task::ReplyAndSave(Response::new(email, "Got it! I will stay silent."));
+                Some(task)
+            }
+            Action::UpdateApprovals(event) => {
+                self.get_approvals_msg(event)
+                    .map(|(user, message, _is_human)| {
+                        Task::Reply(Response::new(user.email.clone(), message))
+                    })
+            }
+            Action::Help(email) => Some(Task::Reply(Response::new(email, HELP_MSG))),
             Action::Version(email) => Some(Task::Reply(Response::new(email, VERSION_MSG))),
-        Action::Unknown(email) => Some(Task::Reply(Response::new(email, GREETINGS_MSG))),
-        Action::Status(email) => {
-            let status = self.status_for(&email);
-            Some(Task::Reply(Response::new(email, status)))
-        }
-        Action::FilterStatus(email) => {
-            let resp: String = match self.state.get_filter(&email) {
-                Ok(Some(filter)) => {
+            Action::Unknown(email) => Some(Task::Reply(Response::new(email, GREETINGS_MSG))),
+            Action::Status(email) => {
+                let status = self.status_for(&email);
+                Some(Task::Reply(Response::new(email, status)))
+            }
+            Action::FilterStatus(email) => {
+                let resp = if let Some((filter_str, filter_enabled)) = self.state.get_filter(&email)
+                {
                     format!(
                         "The following filter is configured for you: `{}`. It is **{}**.",
-                        filter.regex,
-                        if filter.enabled {
+                        filter_str,
+                        if filter_enabled {
                             "enabled"
                         } else {
                             "disabled"
                         }
                     )
-                }
-                Ok(None) => "No filter is configured for you.".into(),
-                Err(err) => {
-                    match err {
-                        AddFilterResult::UserNotFound => {
-                            "Notification for you are disabled. Please enable notifications first, and then add a filter.".into()
-                        }
-                        _ => {
-                            error!("Invalid action arm with Error: {:?}", err);
-                            "".into()
-                        }
-                    }
-                }
-            };
-            if !resp.is_empty() {
+                } else {
+                    "No filter is configured for you.".to_string()
+                };
+
                 Some(Task::Reply(Response::new(email, resp)))
-            } else {
-                None
             }
-        }
-        Action::FilterAdd(email, filter) => {
-            Some(match self.state.add_filter(&email, filter) {
-                Ok(()) => Task::ReplyAndSave(Response::new(
-                    email,
-                    "Filter successfully added and enabled.")),
-                Err(err) => {
-                    Task::Reply(Response::new(
-                        email,
-                        match err {
-                            AddFilterResult::UserDisabled |
-                            AddFilterResult::UserNotFound => {
-                                "Notification for you are disabled. Please enable notifications first, and then add a filter."
-                            }
-                            AddFilterResult::InvalidFilter => {
-                                "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
-                            }
-                            AddFilterResult::FilterNotConfigured => {
-                                assert!(false, "this should not be possible");
-                                ""
-                            }
-                        },
-                    ))
+            Action::FilterAdd(email, filter) => {
+                let resp = self.state.add_filter(&email, &filter).map(
+                |()|
+                "Filter successfully added and enabled."
+            ).unwrap_or(
+                "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax");
+                Some(Task::Reply(Response::new(email, resp.to_string())))
+            }
+            Action::FilterEnable(email, enable) => {
+                let resp = self.state.enable_and_get_filter(&email, enable).map(
+                |filter|
+                if enable {
+                format!(
+                    "Filter successfully enabled. The following filter is configured: {}",
+                    filter
+                )
+                } else {
+                    "Filter successfully disabled.".to_string()
                 }
-            })
+            ).unwrap_or_else(|()|
+                             if enable {
+                                 "Cannot enable filter since there is none configured. User `filter <regex>` to add a new filter.".to_string()
+                             } else {
+                                 "No need to disable the filter since there is none configured.".to_string()
+                             }
+                );
+
+                Some(Task::ReplyAndSave(Response::new(email, resp)))
+            }
+            Action::ReviewerAdded(event) => self
+                .get_reviewer_added_msg(&event)
+                .map(|(user, message)| Task::Reply(Response::new(user.email.clone(), message))),
         }
-        Action::FilterEnable(email) => {
-            Some(match self.state.enable_filter(&email, true) {
-                Ok(filter) => {
-                    Task::ReplyAndSave(Response::new(
-                        email,
-                        format!(
-                            "Filter successfully enabled. The following filter is configured: {}",
-                            filter
-                        ),
-                    ))
-                }
-                Err(err) => {
-                    Task::Reply(Response::new(
-                        email,
-                        match err {
-                            AddFilterResult::UserDisabled |
-                            AddFilterResult::UserNotFound => {
-                                "Notification for you are disabled. Please enable notifications first, and then add a filter."
-                            }
-                            AddFilterResult::InvalidFilter => {
-                                "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
-                            }
-                            AddFilterResult::FilterNotConfigured => {
-                                "Cannot enable filter since there is none configured. User `filter <regex>` to add a new filter."
-                            }
-                        },
-                    ))
-                }
-            })
-        }
-        Action::FilterDisable(email) => {
-            Some(match self.state.enable_filter(&email, false) {
-                Ok(_) => Task::ReplyAndSave(
-                    Response::new(email, "Filter successfully disabled."),
-                ),
-                Err(err) => {
-                    Task::Reply(Response::new(
-                        email,
-                        match err {
-                            AddFilterResult::UserDisabled |
-                            AddFilterResult::UserNotFound => {
-                                "Notification for you are disabled. No need to disable the filter."
-                            }
-                            AddFilterResult::InvalidFilter => {
-                                "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
-                            }
-                            AddFilterResult::FilterNotConfigured => {
-                                "No need to disable the filter since there is none configured."
-                            }
-                        },
-                    ))
-                }
-            })
-        }
-        Action::ReviewerAdded(event) => {
-            self.get_reviewer_added_msg(&event).map(|(user, message)| {
-                Task::Reply(Response::new(user.email.clone(), message))
-            })
-        }
-    }
     }
 
     fn handle_task(&mut self, task: Task) -> Option<Response> {
@@ -467,8 +403,7 @@ pub enum Action {
     Version(spark::Email),
     FilterStatus(spark::Email),
     FilterAdd(spark::Email, String /* filter */),
-    FilterEnable(spark::Email),
-    FilterDisable(spark::Email),
+    FilterEnable(spark::Email, bool),
     ReviewerAdded(Box<gerrit::ReviewerAddedEvent>),
 }
 
@@ -810,7 +745,7 @@ mod test {
         {
             let res = bot
                 .state
-                .enable_filter(EmailRef::new("author@example.com"), false);
+                .enable_and_get_filter(EmailRef::new("author@example.com"), false);
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
@@ -822,7 +757,7 @@ mod test {
         {
             let res = bot
                 .state
-                .enable_filter(EmailRef::new("author@example.com"), true);
+                .enable_and_get_filter(EmailRef::new("author@example.com"), true);
             assert!(res.is_ok());
             let res = bot.state.add_filter(
                 EmailRef::new("author@example.com"),
