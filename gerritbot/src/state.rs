@@ -68,7 +68,8 @@ pub struct User {
     #[serde(
         skip_serializing_if = "Option::is_none",
         serialize_with = "serialize_filter",
-        deserialize_with = "deserialize_filter"
+        deserialize_with = "deserialize_filter",
+        default
     )]
     filter: Option<Filter>,
 }
