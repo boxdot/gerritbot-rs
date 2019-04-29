@@ -1,17 +1,10 @@
 use std::fs::File;
 use std::path::PathBuf;
 
-use docopt::Docopt;
 use log::debug;
 use rusoto_core::Region;
 use serde::Deserialize;
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct Args {
-    pub flag_verbose: bool,
-    pub flag_quiet: bool,
-    pub flag_config: PathBuf,
-}
+use structopt::StructOpt;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
@@ -48,32 +41,27 @@ pub struct BotConfig {
     pub format_script: Option<String>,
 }
 
-const USAGE: &str = "
-Cisco Spark <> Gerrit Bot
-
-Usage:
-    gerritbot-rs [--verbose | --quiet] --config=<PATH>
-    gerritbot-rs [--help]
-
-    -h --help     Show this screen.
-    -v --verbose  Print more
-    -q --quiet    Be silent
-
-    -c --config=<PATH>   YAML configuration file [default: config.yml]
-";
+/// Cisco Webex Teams <> Gerrit Bot
+#[derive(StructOpt, Debug, Clone)]
+pub struct Args {
+    /// Print more
+    #[structopt(short, long)]
+    pub verbose: bool,
+    /// Be silent
+    #[structopt(short, long, conflicts_with = "verbose")]
+    pub quiet: bool,
+    /// YAML configuration file
+    #[structopt(long, short, default_value = "config.yml")]
+    pub config: PathBuf,
+}
 
 pub fn parse_args() -> Args {
-    let args: Args = Docopt::new(USAGE)
-        .and_then(|d| d.deserialize())
-        .unwrap_or_else(|e| e.exit());
-    debug!("{:#?}", args);
-    args
+    Args::from_args()
 }
 
 pub fn parse_config(path: PathBuf) -> Config {
     let file = File::open(path).unwrap_or_else(|e| {
         eprintln!("Could not open config file: {}", e);
-        eprintln!("{}", USAGE);
         ::std::process::exit(1)
     });
     let mut config: Config = serde_yaml::from_reader(file).unwrap_or_else(|e| {

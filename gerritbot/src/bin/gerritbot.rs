@@ -45,16 +45,16 @@ fn main() {
         .module(module_path!())
         .module("gerritbot_gerrit")
         .module("gerritbot_spark")
-        .quiet(args.flag_quiet)
+        .quiet(args.quiet)
         .timestamp(stderrlog::Timestamp::Second)
-        .verbosity(if args.flag_verbose { 5 } else { 2 })
+        .verbosity(if args.verbose { 5 } else { 2 })
         .init()
         .unwrap();
     let args::Config {
         gerrit: gerrit_config,
         bot: bot_config,
         spark: spark_config,
-    } = args::parse_config(args.flag_config);
+    } = args::parse_config(args.config);
 
     // load or create a new bot
     let bot_state = bot::State::load("state.json")
