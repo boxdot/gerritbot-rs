@@ -2,7 +2,7 @@
 #![recursion_limit = "128"]
 
 use futures::future::lazy;
-use futures::{Future as _, Stream as _};
+use futures::{future::Either, Future as _, Stream as _};
 use log::{debug, error, info};
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -25,12 +25,15 @@ struct Args {
     #[structopt(short = "f")]
     config_file: PathBuf,
     /// Enable verbose output
-    #[structopt(short = "v")]
+    #[structopt(short)]
     verbose: bool,
+    #[structopt(short, long)]
+    debug: bool,
 }
 
 fn main() {
     let args = Args::from_args();
+    let debug = args.debug;
     stderrlog::new()
         .module(module_path!())
         .module("gerritbot_spark")
@@ -46,8 +49,8 @@ fn main() {
             std::process::exit(1);
         });
     let sqs_region: rusoto_core::Region = spark_config.sqs_region.parse().unwrap_or_else(|e| {
-            error!("invalid sqs_region: {}", e);
-            std::process::exit(1);
+        error!("invalid sqs_region: {}", e);
+        std::process::exit(1);
     });
 
     tokio::run(lazy(move || {
@@ -66,20 +69,25 @@ fn main() {
                     .map(move |()| next_client)
             })
             .and_then(move |client| {
-                spark::sqs_event_stream(
-                    spark_config.sqs_url.clone(),
-                    sqs_region,
-                    client.clone(),
-                )
-                .for_each(move |message| {
-                    debug!("got a message: {:?}", message);
-                    client
-                        .send_message(
-                            &message.room_id,
-                            &format!("got post:\n```\n{:#?}\n```", message),
-                        )
+                spark::sqs_event_stream(spark_config.sqs_url.clone(), sqs_region, client.clone())
+                    .for_each(move |message| {
+                        debug!("got a message: {:?}", message);
+
+                        if debug {
+                            Either::B(client.send_message(
+                                &message.room_id,
+                                &format!("got post:\n```\n{:#?}\n```", message),
+                            ))
+                        } else {
+                            Either::A(client.create_message(spark::CreateMessageParameters {
+                                target: (&message.room_id).into(),
+                                markdown: message.markdown.as_ref().map(String::as_str),
+                                html: message.html.as_ref().map(String::as_str),
+                                text: Some(&message.text),
+                            }))
+                        }
                         .map_err(|e| error!("failed to send message: {}", e))
-                })
+                    })
             })
     }));
 }

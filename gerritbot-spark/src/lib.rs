@@ -265,9 +265,11 @@ impl<'a> From<&'a EmailRef> for CreateMessageTarget<'a> {
 #[serde(rename_all = "camelCase")]
 pub struct CreateMessageParameters<'a> {
     #[serde(flatten)]
-    target: CreateMessageTarget<'a>,
-    text: Option<&'a str>,
-    markdown: Option<&'a str>,
+    pub target: CreateMessageTarget<'a>,
+    pub text: Option<&'a str>,
+    pub markdown: Option<&'a str>,
+    /// Note: This parameter is not in the documented API.
+    pub html: Option<&'a str>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -531,6 +533,7 @@ impl Client {
             target: target.into(),
             markdown: Some(markdown),
             text: None,
+            html: None,
         })
     }
 
