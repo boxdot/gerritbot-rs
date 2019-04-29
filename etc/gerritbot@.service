@@ -1,0 +1,17 @@
+[Unit]
+Description=Gerrit <> Cisco Spark Bot written in Rust
+After=syslog.target network.target
+
+[Service]
+PrivateTmp=true
+Type=simple
+Restart=always
+RestartSec=1min
+StartLimitBurst=3
+User=gerritbot
+Group=gerritbot
+WorkingDirectory=/etc/gerritbot/%i
+ExecStart=/opt/gerritbot/%i/gerritbot --config config-here.yml
+
+[Install]
+WantedBy=multi-user.target
