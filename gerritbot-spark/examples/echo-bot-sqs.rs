@@ -75,7 +75,7 @@ fn main() {
                     debug!("got a message: {:?}", message);
                     client
                         .send_message(
-                            &message.person_email,
+                            &message.room_id,
                             &format!("got post:\n```\n{:#?}\n```", message),
                         )
                         .map_err(|e| error!("failed to send message: {}", e))
