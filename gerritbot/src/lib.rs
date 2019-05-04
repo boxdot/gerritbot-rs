@@ -227,7 +227,7 @@ where
             Action::UpdateApprovals(event) => self
                 .get_approvals_msg(event)
                 .map(|(user, message, _is_human)| {
-                    Task::Reply(Response::new(user.email.clone(), message))
+                    Task::Reply(Response::new(user.email().to_owned(), message))
                 })
                 .into_iter()
                 .collect(),
@@ -287,7 +287,7 @@ where
             }
             Action::ReviewerAdded(event) => self
                 .get_reviewer_added_msg(&event)
-                .map(|(user, message)| Task::Reply(Response::new(user.email.clone(), message)))
+                .map(|(user, message)| Task::Reply(Response::new(user.email().to_owned(), message)))
                 .into_iter()
                 .collect(),
         }
@@ -328,7 +328,7 @@ where
         let user = self
             .state
             .find_user_by_email(owner_email)
-            .filter(|user| user.enabled)?;
+            .filter(|user| user.is_enabled())?;
 
         let is_human = !approver.to_lowercase().contains("bot");
 
@@ -359,7 +359,7 @@ where
         let user = self
             .state
             .find_user_by_email(reviewer_email)
-            .filter(|user| user.enabled)?;
+            .filter(|user| user.is_enabled())?;
 
         // filter all messages that were already sent to the user recently
         if self.rate_limiter.limit(user, event) {
@@ -383,9 +383,9 @@ where
 
     pub fn status_for(&self, email: &spark::EmailRef) -> String {
         let user = self.state.find_user(email);
-        let enabled = user.map_or(false, |u| u.enabled);
+        let enabled = user.map_or(false, |u| u.is_enabled());
         let enabled_user_count =
-            self.state.users().filter(|u| u.enabled).count() - if enabled { 1 } else { 0 };
+            self.state.users().filter(|u| u.is_enabled()).count() - if enabled { 1 } else { 0 };
         format!(
             "Notifications for you are **{}**. I am notifying {}.",
             if enabled { "enabled" } else { "disabled" },
@@ -541,7 +541,7 @@ mod test {
 
     impl<'s> UserAssertions for spectral::Spec<'s, &User> {
         fn has_email(&mut self, expected: &str) {
-            let actual = &self.subject.email;
+            let actual = self.subject.email();
             let expected = EmailRef::new(expected);
             if actual != expected {
                 spectral::AssertionFailure::from_spec(self)
@@ -552,7 +552,7 @@ mod test {
         }
 
         fn is_enabled(&mut self) {
-            if !self.subject.enabled {
+            if !self.subject.is_enabled() {
                 spectral::AssertionFailure::from_spec(self)
                     .with_expected("user is enabled".to_string())
                     .with_actual("it is not".to_string())
@@ -561,7 +561,7 @@ mod test {
         }
 
         fn is_not_enabled(&mut self) {
-            if self.subject.enabled {
+            if self.subject.is_enabled() {
                 spectral::AssertionFailure::from_spec(self)
                     .with_expected("user is not enabled".to_string())
                     .with_actual("it is".to_string())
@@ -636,8 +636,8 @@ mod test {
                 let users: Vec<_> = bot.state.users().collect();
                 assert_that!(users)
                     .has_item_matching(
-                        |u| u.email == EmailRef::new("some@example.com")
-                            && u.enabled);
+                        |u| u.email() == EmailRef::new("some@example.com")
+                            && u.is_enabled());
                 assert_that!(bot.state.users().count()).is_equal_to(1);
             }
 
@@ -646,8 +646,8 @@ mod test {
                 let users: Vec<_> = bot.state.users().collect();
                 assert_that!(users)
                     .has_item_matching(
-                        |u| u.email == EmailRef::new("some@example.com")
-                            && !u.enabled);
+                        |u| u.email() == EmailRef::new("some@example.com")
+                            && !u.is_enabled());
                 assert_that!(bot.state.users().count()).is_equal_to(1);
             }
         }
@@ -659,9 +659,9 @@ mod test {
             let users: Vec<_> = bot.state.users().collect();
             assert_that!(users)
                 .has_item_matching(
-                    |u| u.email == EmailRef::new("some@example.com")
+                    |u| u.email() == EmailRef::new("some@example.com")
 
-                        && u.enabled);
+                        && u.is_enabled());
             assert_that!(bot.state.users().count()).is_equal_to(1);
         }
 
@@ -672,8 +672,8 @@ mod test {
             let users: Vec<_> = bot.state.users().collect();
             assert_that!(users)
                 .has_item_matching(
-                    |u| u.email == EmailRef::new("some@example.com")
-                        && !u.enabled);
+                    |u| u.email() == EmailRef::new("some@example.com")
+                        && !u.is_enabled());
             assert_that!(bot.state.users().count()).is_equal_to(1);
         }
 
@@ -731,7 +731,7 @@ mod test {
         let res = bot.get_approvals_msg(Box::new(get_event()));
         assert!(res.is_some());
         let (user, msg, is_human) = res.unwrap();
-        assert_eq!(user.email, EmailRef::new("author@example.com"));
+        assert_eq!(user.email(), EmailRef::new("author@example.com"));
         assert!(msg.contains("Some review."));
         assert!(is_human);
     }
@@ -759,7 +759,7 @@ mod test {
             let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.email, EmailRef::new("author@example.com"));
+            assert_eq!(user.email(), EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
             assert!(is_human);
         }
@@ -776,7 +776,7 @@ mod test {
             let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.email, EmailRef::new("author@example.com"));
+            assert_eq!(user.email(), EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
             assert!(is_human);
         }
@@ -792,7 +792,7 @@ mod test {
             let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.email, EmailRef::new("author@example.com"));
+            assert_eq!(user.email(), EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
             assert!(is_human);
         }
@@ -812,7 +812,7 @@ mod test {
             let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.email, EmailRef::new("author@example.com"));
+            assert_eq!(user.email(), EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
             assert!(is_human);
         }
@@ -821,7 +821,7 @@ mod test {
             let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
             let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.email, EmailRef::new("author@example.com"));
+            assert_eq!(user.email(), EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
             assert!(is_human);
         }

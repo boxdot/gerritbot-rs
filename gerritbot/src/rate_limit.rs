@@ -29,7 +29,7 @@ impl RateLimiter {
             .as_mut()
             .and_then(|cache| {
                 cache.insert(
-                    IntoCacheLine::into_cache_line(user.email.clone(), &event),
+                    IntoCacheLine::into_cache_line(user.email().to_owned(), &event),
                     (),
                 )
             })

@@ -63,8 +63,8 @@ pub struct User {
     #[serde(skip_serializing_if = "Option::is_none")]
     spark_person_id: Option<String>,
     /// email of the user; assumed to be the same in Spark and Gerrit
-    pub email: spark::Email,
-    pub enabled: bool,
+    email: spark::Email,
+    enabled: bool,
     #[serde(
         skip_serializing_if = "Option::is_none",
         serialize_with = "serialize_filter",
@@ -82,6 +82,14 @@ impl User {
             filter: None,
             enabled: true,
         }
+    }
+
+    pub fn email(&self) -> &spark::EmailRef {
+        &self.email
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
     }
 }
 
