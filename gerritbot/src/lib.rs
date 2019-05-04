@@ -5,7 +5,7 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use futures::{future::Future, stream::Stream};
+use futures::{future::Future, stream, stream::Stream};
 use lazy_static::lazy_static;
 use log::{debug, error};
 use regex::Regex;
@@ -188,7 +188,9 @@ where
 
         gerrit_actions
             .select(spark_actions)
-            .filter_map(move |action| bot_for_action.lock().unwrap().update(action))
+            .map(move |action| bot_for_action.lock().unwrap().update(action))
+            .map(stream::iter_ok)
+            .flatten()
             .filter_map(move |task| bot_for_task.lock().unwrap().handle_task(task))
             .map(move |response| {
                 debug!("Replying with: {}", response.message);
@@ -206,30 +208,35 @@ where
 
     /// Action controller
     /// Return an optional message to send to the user
-    fn update(&mut self, action: Action) -> Option<Task> {
+    fn update(&mut self, action: Action) -> Vec<Task> {
         match action {
             Action::Enable(email) => {
                 self.state.enable(&email, true);
-                let task = Task::ReplyAndSave(Response::new(email, "Got it! Happy reviewing!"));
-                Some(task)
+                vec![
+                    Task::Save,
+                    Task::Reply(Response::new(email, "Got it! Happy reviewing!")),
+                ]
             }
             Action::Disable(email) => {
                 self.state.enable(&email, false);
-                let task = Task::ReplyAndSave(Response::new(email, "Got it! I will stay silent."));
-                Some(task)
+                vec![
+                    Task::Save,
+                    Task::Reply(Response::new(email, "Got it! I will stay silent.")),
+                ]
             }
-            Action::UpdateApprovals(event) => {
-                self.get_approvals_msg(event)
-                    .map(|(user, message, _is_human)| {
-                        Task::Reply(Response::new(user.email.clone(), message))
-                    })
-            }
-            Action::Help(email) => Some(Task::Reply(Response::new(email, HELP_MSG))),
-            Action::Version(email) => Some(Task::Reply(Response::new(email, VERSION_MSG))),
-            Action::Unknown(email) => Some(Task::Reply(Response::new(email, GREETINGS_MSG))),
+            Action::UpdateApprovals(event) => self
+                .get_approvals_msg(event)
+                .map(|(user, message, _is_human)| {
+                    Task::Reply(Response::new(user.email.clone(), message))
+                })
+                .into_iter()
+                .collect(),
+            Action::Help(email) => vec![Task::Reply(Response::new(email, HELP_MSG))],
+            Action::Version(email) => vec![Task::Reply(Response::new(email, VERSION_MSG))],
+            Action::Unknown(email) => vec![Task::Reply(Response::new(email, GREETINGS_MSG))],
             Action::Status(email) => {
                 let status = self.status_for(&email);
-                Some(Task::Reply(Response::new(email, status)))
+                vec![Task::Reply(Response::new(email, status))]
             }
             Action::FilterStatus(email) => {
                 let resp = if let Some((filter_str, filter_enabled)) = self.state.get_filter(&email)
@@ -247,7 +254,7 @@ where
                     "No filter is configured for you.".to_string()
                 };
 
-                Some(Task::Reply(Response::new(email, resp)))
+                vec![Task::Reply(Response::new(email, resp))]
             }
             Action::FilterAdd(email, filter) => {
                 let resp = self.state.add_filter(&email, &filter).map(
@@ -255,7 +262,7 @@ where
                 "Filter successfully added and enabled."
             ).unwrap_or(
                 "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax");
-                Some(Task::Reply(Response::new(email, resp.to_string())))
+                vec![Task::Reply(Response::new(email, resp.to_string()))]
             }
             Action::FilterEnable(email, enable) => {
                 let resp = self.state.enable_and_get_filter(&email, enable).map(
@@ -276,11 +283,13 @@ where
                              }
                 );
 
-                Some(Task::ReplyAndSave(Response::new(email, resp)))
+                vec![Task::Save, Task::Reply(Response::new(email, resp))]
             }
             Action::ReviewerAdded(event) => self
                 .get_reviewer_added_msg(&event)
-                .map(|(user, message)| Task::Reply(Response::new(user.email.clone(), message))),
+                .map(|(user, message)| Task::Reply(Response::new(user.email.clone(), message)))
+                .into_iter()
+                .collect(),
         }
     }
 
@@ -288,13 +297,13 @@ where
         debug!("New task {:#?}", task);
         let response = match task {
             Task::Reply(response) => Some(response),
-            Task::ReplyAndSave(response) => {
+            Task::Save => {
                 self.save("state.json")
                     .map_err(|err| {
                         error!("Could not save state: {:?}", err);
                     })
                     .ok();
-                Some(response)
+                None
             }
         };
         return response;
@@ -428,7 +437,7 @@ impl Response {
 #[derive(Debug)]
 pub enum Task {
     Reply(Response),
-    ReplyAndSave(Response),
+    Save,
 }
 
 const GREETINGS_MSG: &str =
