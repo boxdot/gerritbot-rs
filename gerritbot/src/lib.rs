@@ -368,7 +368,11 @@ where
             return None;
         }
 
-        let message = self.formatter.format_reviewer_added(event).ok()?;
+        let message = self
+            .formatter
+            .format_reviewer_added(event)
+            .map_err(|e| error!("formatting reviewer added failed: {}", e))
+            .ok()?;
 
         Some((user, message))
     }
