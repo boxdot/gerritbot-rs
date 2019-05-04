@@ -8,6 +8,8 @@ use serde_json::Value as JsonValue;
 
 use gerritbot_gerrit as gerrit;
 
+use crate::state::User;
+
 pub const DEFAULT_FORMAT_SCRIPT: &str = include_str!("../../scripts/format.lua");
 const LUA_FORMAT_COMMENT_ADDED: &str = "format_comment_added";
 const LUA_FORMAT_REVIEWER_ADDED: &str = "format_reviewer_added";
@@ -150,6 +152,28 @@ impl Formatter {
         self.lua.context(|context| {
             Formatter::format_lua(context, LUA_FORMAT_REVIEWER_ADDED, event, identity)
         })
+    }
+
+    pub fn format_status(
+        &self,
+        user: Option<&User>,
+        enabled_user_count: usize,
+    ) -> Result<String, String> {
+        let enabled = user.map(User::is_enabled).unwrap_or(false);
+        let enabled_user_count = enabled_user_count - (enabled as usize);
+
+        Ok(format!(
+            "Notifications for you are **{}**. I am notifying {}.",
+            if enabled { "enabled" } else { "disabled" },
+            match (enabled, enabled_user_count) {
+                (false, 0) => format!("no users"),
+                (true, 0) => format!("no other users"),
+                (false, 1) => format!("one user"),
+                (true, 1) => format!("another user"),
+                (false, _) => format!("{} users", enabled_user_count),
+                (true, _) => format!("another {} users", enabled_user_count),
+            }
+        ))
     }
 }
 

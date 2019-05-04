@@ -234,10 +234,11 @@ where
             Action::Help(email) => vec![Task::Reply(Response::new(email, HELP_MSG))],
             Action::Version(email) => vec![Task::Reply(Response::new(email, VERSION_MSG))],
             Action::Unknown(email) => vec![Task::Reply(Response::new(email, GREETINGS_MSG))],
-            Action::Status(email) => {
-                let status = self.status_for(&email);
-                vec![Task::Reply(Response::new(email, status))]
-            }
+            Action::Status(email) => self
+                .status_for(&email)
+                .map(|status| Task::Reply(Response::new(email, status)))
+                .into_iter()
+                .collect(),
             Action::FilterStatus(email) => {
                 let resp = if let Some((filter_str, filter_enabled)) = self.state.get_filter(&email)
                 {
@@ -381,23 +382,13 @@ where
         Ok(())
     }
 
-    pub fn status_for(&self, email: &spark::EmailRef) -> String {
+    pub fn status_for(&self, email: &spark::EmailRef) -> Option<String> {
         let user = self.state.find_user(email);
-        let enabled = user.map_or(false, |u| u.is_enabled());
-        let enabled_user_count =
-            self.state.users().filter(|u| u.is_enabled()).count() - if enabled { 1 } else { 0 };
-        format!(
-            "Notifications for you are **{}**. I am notifying {}.",
-            if enabled { "enabled" } else { "disabled" },
-            match (enabled, enabled_user_count) {
-                (false, 0) => format!("no users"),
-                (true, 0) => format!("no other users"),
-                (false, 1) => format!("one user"),
-                (true, 1) => format!("another user"),
-                (false, _) => format!("{} users", enabled_user_count),
-                (true, _) => format!("another {} users", enabled_user_count),
-            }
-        )
+        let enabled_user_count = self.state.users().filter(|u| u.is_enabled()).count();
+        self.formatter
+            .format_status(user, enabled_user_count)
+            .map_err(|e| error!("formatting status failed: {}", e))
+            .ok()
     }
 }
 
@@ -622,13 +613,13 @@ mod test {
 
             test "enabled status response" {
                 let resp = bot.status_for(EmailRef::new("some@example.com"));
-                assert_that!(resp).contains("enabled");
+                assert_that!(resp).is_some().contains("enabled");
             }
 
             test "disabled status response" {
                 bot.enable("some@example.com", false);
                 let resp = bot.status_for(EmailRef::new("some@example.com"));
-                assert_that!(resp).contains("disabled");
+                assert_that!(resp).is_some().contains("disabled");
             }
 
             test "existing user can be enabled" {
@@ -679,7 +670,7 @@ mod test {
 
         test "unknown user gets disabled status response" {
             let resp = bot.status_for(EmailRef::new("some_non_existent_id"));
-            assert!(resp.contains("disabled"));
+            assert_that!(resp).is_some().contains("disabled");
         }
     }
 
