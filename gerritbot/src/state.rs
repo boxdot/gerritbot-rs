@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
@@ -20,6 +21,41 @@ struct FilterForSerialize<'a> {
     regex: &'a str,
     enabled: bool,
 }
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UserFlag {
+    /// User wants notification messages for reviews with approvals.
+    NotifyReviewApprovals,
+    /// User wants notification messages for review comments without approvals.
+    NotifyReviewComments,
+    /// User wants notification messages for reviews with inline comments.
+    NotifyReviewInlineComments,
+    /// User wants notification messages when added as reviewer to a change.
+    NotifyReviewerAdded,
+}
+
+/// Default flags for users that haven't enabled or disabled anything specific.
+const _DEFAULT_FLAGS: &[UserFlag] = &[
+    UserFlag::NotifyReviewApprovals,
+    UserFlag::NotifyReviewInlineComments,
+    UserFlag::NotifyReviewerAdded,
+];
+
+/// All flags that deal with review comments.
+pub const REVIEW_COMMENT_FLAGS: &[UserFlag] = &[
+    UserFlag::NotifyReviewApprovals,
+    UserFlag::NotifyReviewComments,
+    UserFlag::NotifyReviewInlineComments,
+];
+
+/// All flags that deal with notifications.
+pub const NOTIFICATION_FLAGS: &[UserFlag] = &[
+    UserFlag::NotifyReviewApprovals,
+    UserFlag::NotifyReviewComments,
+    UserFlag::NotifyReviewInlineComments,
+    UserFlag::NotifyReviewerAdded,
+];
 
 /// Serialize the filter by storing the regex as a string.
 fn serialize_filter<S>(filter: &Option<Filter>, serializer: S) -> Result<S::Ok, S::Error>
@@ -88,11 +124,19 @@ impl User {
         &self.email
     }
 
-    pub fn is_enabled(&self) -> bool {
+    pub fn has_any_flag<I, F>(&self, flags: I) -> bool
+    where
+        I: IntoIterator<Item = F>,
+        F: Borrow<UserFlag>,
+    {
+        let _ = flags;
         self.enabled
     }
-}
 
+    pub fn has_flag(&self, flag: UserFlag) -> bool {
+        self.has_any_flag(&[flag])
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct State {
     users: Vec<User>,

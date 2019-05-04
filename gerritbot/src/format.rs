@@ -8,7 +8,7 @@ use serde_json::Value as JsonValue;
 
 use gerritbot_gerrit as gerrit;
 
-use crate::state::User;
+use crate::state::{User, NOTIFICATION_FLAGS};
 
 pub const DEFAULT_FORMAT_SCRIPT: &str = include_str!("../../scripts/format.lua");
 const LUA_FORMAT_COMMENT_ADDED: &str = "format_comment_added";
@@ -159,7 +159,9 @@ impl Formatter {
         user: Option<&User>,
         enabled_user_count: usize,
     ) -> Result<String, String> {
-        let enabled = user.map(User::is_enabled).unwrap_or(false);
+        let enabled = user
+            .map(|u| u.has_any_flag(NOTIFICATION_FLAGS))
+            .unwrap_or(false);
         let enabled_user_count = enabled_user_count - (enabled as usize);
 
         Ok(format!(

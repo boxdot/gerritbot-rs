@@ -22,7 +22,7 @@ use format::Formatter;
 pub use format::DEFAULT_FORMAT_SCRIPT;
 use rate_limit::RateLimiter;
 pub use state::State;
-use state::User;
+use state::{User, UserFlag, NOTIFICATION_FLAGS, REVIEW_COMMENT_FLAGS};
 
 pub trait GerritCommandRunner {}
 
@@ -329,7 +329,7 @@ where
         let user = self
             .state
             .find_user_by_email(owner_email)
-            .filter(|user| user.is_enabled())?;
+            .filter(|user| user.has_any_flag(REVIEW_COMMENT_FLAGS))?;
 
         let is_human = !approver.to_lowercase().contains("bot");
 
@@ -360,7 +360,7 @@ where
         let user = self
             .state
             .find_user_by_email(reviewer_email)
-            .filter(|user| user.is_enabled())?;
+            .filter(|user| user.has_flag(UserFlag::NotifyReviewerAdded))?;
 
         // filter all messages that were already sent to the user recently
         if self.rate_limiter.limit(user, event) {
@@ -388,7 +388,11 @@ where
 
     pub fn status_for(&self, email: &spark::EmailRef) -> Option<String> {
         let user = self.state.find_user(email);
-        let enabled_user_count = self.state.users().filter(|u| u.is_enabled()).count();
+        let enabled_user_count = self
+            .state
+            .users()
+            .filter(|u| u.has_any_flag(NOTIFICATION_FLAGS))
+            .count();
         self.formatter
             .format_status(user, enabled_user_count)
             .map_err(|e| error!("formatting status failed: {}", e))
@@ -482,6 +486,8 @@ fn maybe_has_inline_comments(event: &gerrit::CommentAddedEvent) -> bool {
 
 #[cfg(test)]
 mod test {
+    use std::borrow::Borrow;
+    use std::fmt::Debug;
     use std::thread;
     use std::time::Duration;
 
@@ -530,8 +536,14 @@ mod test {
 
     trait UserAssertions {
         fn has_email(&mut self, expected: &str);
-        fn is_enabled(&mut self);
-        fn is_not_enabled(&mut self);
+        fn has_any_flag<I, F>(&self, flags: I)
+        where
+            I: IntoIterator<Item = F> + Debug + Clone,
+            F: Borrow<UserFlag>;
+        fn has_no_flag<I, F>(&self, flags: I)
+        where
+            I: IntoIterator<Item = F> + Debug + Clone,
+            F: Borrow<UserFlag>;
     }
 
     impl<'s> UserAssertions for spectral::Spec<'s, &User> {
@@ -546,20 +558,28 @@ mod test {
             }
         }
 
-        fn is_enabled(&mut self) {
-            if !self.subject.is_enabled() {
+        fn has_any_flag<I, F>(&self, flags: I)
+        where
+            I: IntoIterator<Item = F> + Debug + Clone,
+            F: Borrow<UserFlag>,
+        {
+            if !self.subject.has_any_flag(flags.clone()) {
                 spectral::AssertionFailure::from_spec(self)
-                    .with_expected("user is enabled".to_string())
-                    .with_actual("it is not".to_string())
+                    .with_expected(format!("user has at least one of the flags {:?}", flags))
+                    .with_actual("it has none of the given flags".to_string())
                     .fail();
             }
         }
 
-        fn is_not_enabled(&mut self) {
-            if self.subject.is_enabled() {
+        fn has_no_flag<I, F>(&self, flags: I)
+        where
+            I: IntoIterator<Item = F> + Debug + Clone,
+            F: Borrow<UserFlag>,
+        {
+            if self.subject.has_any_flag(flags.clone()) {
                 spectral::AssertionFailure::from_spec(self)
-                    .with_expected("user is not enabled".to_string())
-                    .with_actual("it is".to_string())
+                    .with_expected(format!("user has none of the flags {:?}", flags))
+                    .with_actual("it has at least one of the given flags".to_string())
                     .fail();
             }
         }
@@ -612,7 +632,7 @@ mod test {
                 let user = bot.state.users().nth(0).unwrap();
                 assert_that!(user).has_email("some@example.com");
                 assert_that!(user).has_email("some@example.com");
-                assert_that!(user).is_enabled();
+                assert_that!(user).has_any_flag(NOTIFICATION_FLAGS);
             }
 
             test "enabled status response" {
@@ -632,7 +652,7 @@ mod test {
                 assert_that!(users)
                     .has_item_matching(
                         |u| u.email() == EmailRef::new("some@example.com")
-                            && u.is_enabled());
+                            && u.has_any_flag(NOTIFICATION_FLAGS));
                 assert_that!(bot.state.users().count()).is_equal_to(1);
             }
 
@@ -642,7 +662,7 @@ mod test {
                 assert_that!(users)
                     .has_item_matching(
                         |u| u.email() == EmailRef::new("some@example.com")
-                            && !u.is_enabled());
+                            && !u.has_any_flag(NOTIFICATION_FLAGS));
                 assert_that!(bot.state.users().count()).is_equal_to(1);
             }
         }
@@ -656,7 +676,7 @@ mod test {
                 .has_item_matching(
                     |u| u.email() == EmailRef::new("some@example.com")
 
-                        && u.is_enabled());
+                        && u.has_any_flag(NOTIFICATION_FLAGS));
             assert_that!(bot.state.users().count()).is_equal_to(1);
         }
 
@@ -668,7 +688,7 @@ mod test {
             assert_that!(users)
                 .has_item_matching(
                     |u| u.email() == EmailRef::new("some@example.com")
-                        && !u.is_enabled());
+                        && !u.has_any_flag(NOTIFICATION_FLAGS));
             assert_that!(bot.state.users().count()).is_equal_to(1);
         }
 
