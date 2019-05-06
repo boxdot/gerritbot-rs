@@ -1,7 +1,6 @@
-use std::convert::identity;
-
 use rlua::{
-    FromLua, Function as LuaFunction, Lua, StdLib as LuaStdLib, ToLuaMulti, Value as LuaValue,
+    FromLua, Function as LuaFunction, Lua, MultiValue as LuaMultiValue, StdLib as LuaStdLib,
+    Value as LuaValue,
 };
 use serde::Serialize;
 use serde_json::Value as JsonValue;
@@ -99,6 +98,22 @@ fn to_lua_via_json<'lua, T: Serialize>(
     Ok(lua_value)
 }
 
+fn get_flags_table<'lua>(user: &User, lua: rlua::Context<'lua>) -> rlua::Result<rlua::Table<'lua>> {
+    lua.create_table_from(NOTIFICATION_FLAGS.iter().cloned().filter_map(|flag| {
+        if user.has_flag(flag) {
+            let flag_string =
+                match serde_json::to_value(flag).expect("failed to encode flag to string") {
+                    JsonValue::String(s) => s,
+                    _ => panic!("flag did not encode to string"),
+                };
+
+            Some((flag_string, true))
+        } else {
+            None
+        }
+    }))
+}
+
 impl Formatter {
     pub fn new(format_script: &str) -> Result<Self, String> {
         Ok(Self {
@@ -106,26 +121,38 @@ impl Formatter {
         })
     }
 
-    fn format_lua<'lua, T, E, F, A>(
+    fn format_lua<'lua, T, E>(
         lua: rlua::Context<'lua>,
         function_name: &str,
+        user: &User,
         event: E,
-        prepare_args: F,
+        extra_args: Vec<LuaValue<'lua>>,
     ) -> Result<T, String>
     where
         T: FromLua<'lua>,
         E: Serialize,
-        F: FnOnce(LuaValue<'lua>) -> A,
-        A: ToLuaMulti<'lua>,
     {
         let globals = lua.globals();
 
         let format_function: LuaFunction = globals
             .get(function_name)
             .map_err(|_| format!("{} function missing", function_name))?;
+
         let event =
             to_lua_via_json(event, lua).map_err(|e| format!("failed to serialize event: {}", e))?;
-        let args = prepare_args(event);
+        let flags = get_flags_table(user, lua)
+            .map(LuaValue::Table)
+            .map_err(|err| format!("failed to create flags table: {}", err))?;
+
+        let args = {
+            let mut v = Vec::with_capacity(2 + extra_args.len());
+            v.push(event);
+            v.push(flags);
+            let mut extra_args = extra_args;
+            v.append(&mut extra_args);
+            LuaMultiValue::from_vec(v)
+        };
+
         let result = format_function
             .call::<_, LuaValue>(args)
             .map_err(|err| format!("lua formatting function failed: {}", err))?;
@@ -135,22 +162,28 @@ impl Formatter {
 
     pub fn format_comment_added(
         &self,
+        user: &User,
         event: &gerrit::CommentAddedEvent,
         is_human: bool,
     ) -> Result<Option<String>, String> {
         self.lua.context(|context| {
-            Formatter::format_lua(context, LUA_FORMAT_COMMENT_ADDED, event, |event| {
-                (event, is_human)
-            })
+            Formatter::format_lua(
+                context,
+                LUA_FORMAT_COMMENT_ADDED,
+                user,
+                event,
+                vec![LuaValue::Boolean(is_human)],
+            )
         })
     }
 
     pub fn format_reviewer_added(
         &self,
+        user: &User,
         event: &gerrit::ReviewerAddedEvent,
     ) -> Result<String, String> {
         self.lua.context(|context| {
-            Formatter::format_lua(context, LUA_FORMAT_REVIEWER_ADDED, event, identity)
+            Formatter::format_lua(context, LUA_FORMAT_REVIEWER_ADDED, user, event, vec![])
         })
     }
 
@@ -181,6 +214,12 @@ impl Formatter {
 
 #[cfg(test)]
 mod test {
+    use lazy_static::lazy_static;
+
+    use gerritbot_spark as spark;
+
+    use crate::state::State;
+
     use super::*;
 
     const EVENT_JSON : &'static str = r#"
@@ -208,10 +247,21 @@ mod test {
         (change.unwrap(), patchset.unwrap())
     }
 
+    lazy_static! {
+        static ref FORMAT_TEST_STATE: State = {
+            let mut state = State::new();
+            state.add_user(spark::EmailRef::new("some@example.com"));
+            state
+        };
+        static ref FORMAT_TEST_USER: &'static User = FORMAT_TEST_STATE
+            .find_user(spark::EmailRef::new("some@example.com"))
+            .unwrap();
+    }
+
     #[test]
     fn test_format_approval() {
         let event = get_event();
-        let res = Formatter::default().format_comment_added(&event, true);
+        let res = Formatter::default().format_comment_added(&FORMAT_TEST_USER, &event, true);
         // Result<Option<String>, _> -> Result<Option<&str>, _>
         let res = res.as_ref().map(|o| o.as_ref().map(String::as_str));
         assert_eq!(
@@ -224,7 +274,7 @@ mod test {
     fn format_approval_unknown_labels() {
         let mut event = get_event();
         event.approvals[0].approval_type = String::from("Some-New-Type");
-        let res = Formatter::default().format_comment_added(&event, true);
+        let res = Formatter::default().format_comment_added(&FORMAT_TEST_USER, &event, true);
         // Result<Option<String>, _> -> Result<Option<&str>, _>
         let res = res.as_ref().map(|o| o.as_ref().map(String::as_str));
         assert_eq!(
@@ -242,7 +292,7 @@ mod test {
             value: "1".to_string(),
             old_value: None,
         });
-        let res = Formatter::default().format_comment_added(&event, true);
+        let res = Formatter::default().format_comment_added(&FORMAT_TEST_USER, &event, true);
         // Result<Option<String>, _> -> Result<Option<&str>, _>
         let res = res.as_ref().map(|o| o.as_ref().map(String::as_str));
         assert_eq!(
@@ -255,7 +305,7 @@ mod test {
     fn format_approval_no_approvals() {
         let mut event = get_event();
         event.approvals.clear();
-        let res = Formatter::default().format_comment_added(&event, true);
+        let res = Formatter::default().format_comment_added(&FORMAT_TEST_USER, &event, true);
         // Result<Option<String>, _> -> Result<Option<&str>, _>
         let res = res.as_ref().map(|o| o.as_ref().map(String::as_str));
         assert_eq!(res, Ok(None));
@@ -270,7 +320,7 @@ mod test {
         event.patchset = patchset;
 
         let res = Formatter::default()
-            .format_comment_added(&event, true)
+            .format_comment_added(&FORMAT_TEST_USER, &event, true)
             .expect("format failed")
             .expect("no comments");
 

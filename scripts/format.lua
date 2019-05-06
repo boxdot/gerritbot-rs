@@ -187,52 +187,62 @@ local function format_inline_comments(base_url, change, patchset)
     end
 end
 
+-- Format approvals.
+-- Note: sorts given approval list.
+local function format_approvals(approvals)
+    local formatted_approvals = {}
+
+      table.sort(approvals, function(a1, a2) return a1.type < a2.type end)
+
+      for _i, approval in ipairs(approvals) do
+          local formatted_approval = format_approval(approval)
+
+          if formatted_approval then
+              table.insert(formatted_approvals, formatted_approval)
+          end
+      end
+
+    if #formatted_approvals > 0 then
+        return " " .. table.concat(formatted_approvals, ", ")
+    end
+end
+
+-- Format submittable message
+local function format_submittable(submit_records)
+    for _i, submit_record in ipairs(submit_records or {}) do
+        if submit_record.status == "OK" then
+            return ", 🏁 Submittable"
+        end
+    end
+end
+
 -- Filter and format messages
 -- return nil to filter the message
-function format_comment_added(event, is_human)
+function format_comment_added(event, flags, is_human)
     local change = event.change
     local patchset = event.patchSet
     local base_url = get_gerrit_base_url(change.url)
+    local formatted_approvals = flags["notify_review_approvals"] and format_approvals(event.approvals)
+    local formatted_submittable_message = flags["notify_review_approvals"] and format_submittable(change.submitRecords)
+    local formatted_comment = flags["notify_review_comments"] and format_comment(event.comment, is_human)
+    local formatted_inline_comments = flags["notify_review_inline_comments"] and format_inline_comments(base_url, change, patchset)
 
-    local msg = format_change_subject(change) .. " (" .. format_change_project(base_url, change) .. ")"
-
-    local formatted_approvals = {}
-
-    table.sort(event.approvals, function(a1, a2) return a1.type < a2.type end)
-
-    for _i, approval in ipairs(event.approvals) do
-        local formatted_approval = format_approval(approval)
-
-        if formatted_approval then
-            table.insert(formatted_approvals, formatted_approval)
-        end
+    if formatted_approvals
+        or formatted_comments
+        or formatted_inline_comments
+        or formatted_submittable_message
+    then
+        local msg = format_change_subject(change) .. " (" .. format_change_project(base_url, change) .. ")"
+        msg = msg .. (formatted_approvals or " comments")
+        msg = msg .. " from " .. format_user(base_url, event.author, "reviewer")
+        msg = msg .. (formatted_submittable_message or "")
+        msg = msg .. (formatted_comment or "")
+        msg = msg .. (formatted_inline_comments or "")
+        return msg
     end
-
-    if #formatted_approvals > 0 then
-        msg = msg .. " " .. table.concat(formatted_approvals, ", ")
-    elseif not (is_human and patchset.comments and #patchset.comments > 0) then
-        -- TODO: messages without approvals should still be formatted since they
-        -- can be comment responses. This should be handled at a higher level.
-        -- Keep this here for now to prevent spamming.
-        return
-    end
-
-    msg = msg .. " from " .. format_user(base_url, event.author, "reviewer")
-
-    for _i, submit_record in ipairs(change.submitRecords or {}) do
-        if submit_record.status == "OK" then
-            msg = msg .. ", 🏁 Submittable"
-            break
-        end
-    end
-
-    msg = msg .. (format_comment(event.comment, is_human) or "")
-    msg = msg .. (format_inline_comments(base_url, change, patchset) or "")
-
-    return msg
 end
 
-function format_reviewer_added(event)
+function format_reviewer_added(event, flags)
     local change = event.change
     local base_url = get_gerrit_base_url(change.url)
 

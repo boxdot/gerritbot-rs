@@ -325,7 +325,7 @@ where
         }
         let owner_email = spark::EmailRef::new(change.owner.email.as_ref()?);
 
-        // try to find the use and check it is enabled
+        // try to find the user and check it is enabled
         let user = self
             .state
             .find_user_by_email(owner_email)
@@ -340,7 +340,7 @@ where
         }
 
         self.formatter
-            .format_comment_added(&event, is_human)
+            .format_comment_added(user, &event, is_human)
             .unwrap_or_else(|e| {
                 error!("message formatting failed: {}", e);
                 None
@@ -370,7 +370,7 @@ where
 
         let message = self
             .formatter
-            .format_reviewer_added(event)
+            .format_reviewer_added(user, event)
             .map_err(|e| error!("formatting reviewer added failed: {}", e))
             .ok()?;
 
