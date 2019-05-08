@@ -1,5 +1,6 @@
 use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs::File;
 use std::path::Path;
 
@@ -22,7 +23,7 @@ struct FilterForSerialize<'a> {
     enabled: bool,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum UserFlag {
     /// User wants notification messages for reviews with approvals.
@@ -36,7 +37,7 @@ pub enum UserFlag {
 }
 
 /// Default flags for users that haven't enabled or disabled anything specific.
-const _DEFAULT_FLAGS: &[UserFlag] = &[
+const DEFAULT_FLAGS: &[UserFlag] = &[
     UserFlag::NotifyReviewApprovals,
     UserFlag::NotifyReviewInlineComments,
     UserFlag::NotifyReviewerAdded,
@@ -56,6 +57,62 @@ pub const NOTIFICATION_FLAGS: &[UserFlag] = &[
     UserFlag::NotifyReviewInlineComments,
     UserFlag::NotifyReviewerAdded,
 ];
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum UserFlags {
+    Default,
+    // Note: this could be optimized into bitflags to make it faster and avoid
+    // allocation.
+    Custom(HashSet<UserFlag>),
+}
+
+impl Default for UserFlags {
+    fn default() -> Self {
+        UserFlags::Default
+    }
+}
+
+impl UserFlags {
+    fn contains(&self, flag: UserFlag) -> bool {
+        match self {
+            UserFlags::Default => DEFAULT_FLAGS
+                .iter()
+                .any(|default_flag| default_flag == &flag),
+            UserFlags::Custom(set) => set.contains(&flag),
+        }
+    }
+
+    fn is_default(&self) -> bool {
+        if let UserFlags::Default = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    fn reset(&mut self) {
+        std::mem::replace(self, UserFlags::Default);
+    }
+
+    fn set(&mut self, flag: UserFlag, value: bool) {
+        let set_flag = |set: &mut HashSet<UserFlag>| {
+            if value {
+                set.insert(flag);
+            } else {
+                set.remove(&flag);
+            }
+        };
+
+        match self {
+            UserFlags::Default => {
+                let mut set = DEFAULT_FLAGS.iter().cloned().collect();
+                set_flag(&mut set);
+                std::mem::replace(self, UserFlags::Custom(set));
+            }
+            UserFlags::Custom(ref mut set) => set_flag(set),
+        }
+    }
+}
 
 /// Serialize the filter by storing the regex as a string.
 fn serialize_filter<S>(filter: &Option<Filter>, serializer: S) -> Result<S::Ok, S::Error>
@@ -100,6 +157,8 @@ pub struct User {
     spark_person_id: Option<String>,
     /// email of the user; assumed to be the same in Spark and Gerrit
     email: spark::Email,
+    #[serde(skip_serializing_if = "UserFlags::is_default", default)]
+    flags: UserFlags,
     enabled: bool,
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -117,6 +176,7 @@ impl User {
             email: email,
             filter: None,
             enabled: true,
+            flags: UserFlags::Default,
         }
     }
 
@@ -129,14 +189,17 @@ impl User {
         I: IntoIterator<Item = F>,
         F: Borrow<UserFlag>,
     {
-        let _ = flags;
         self.enabled
+            && flags
+                .into_iter()
+                .any(|flag| self.flags.contains(*flag.borrow()))
     }
 
     pub fn has_flag(&self, flag: UserFlag) -> bool {
         self.has_any_flag(&[flag])
     }
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct State {
     users: Vec<User>,
@@ -219,6 +282,18 @@ impl State {
         E: std::hash::Hash + Eq,
     {
         self.email_index.get(email).map(|pos| &self.users[*pos])
+    }
+
+    pub fn reset_flags(&mut self, email: &spark::EmailRef) -> &User {
+        let user = self.find_or_add_user_by_email(email);
+        user.flags.reset();
+        user
+    }
+
+    pub fn set_flag(&mut self, email: &spark::EmailRef, flag: UserFlag, value: bool) -> &User {
+        let user = self.find_or_add_user_by_email(email);
+        user.flags.set(flag, value);
+        user
     }
 
     pub fn enable<'a>(&'a mut self, email: &spark::EmailRef, enabled: bool) -> &'a User {

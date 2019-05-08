@@ -224,8 +224,12 @@ function format_comment_added(event, flags, is_human)
     local base_url = get_gerrit_base_url(change.url)
     local formatted_approvals = flags["notify_review_approvals"] and format_approvals(event.approvals)
     local formatted_submittable_message = flags["notify_review_approvals"] and format_submittable(change.submitRecords)
-    local formatted_comment = flags["notify_review_comments"] and format_comment(event.comment, is_human)
     local formatted_inline_comments = flags["notify_review_inline_comments"] and format_inline_comments(base_url, change, patchset)
+    local formatted_comment = (
+        flags["notify_review_comments"]
+        or formatted_approvals
+        or (is_human and formatted_inline_comments)
+    ) and format_comment(event.comment, is_human)
 
     if formatted_approvals
         or formatted_comments
