@@ -1,6 +1,7 @@
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::fs::File;
 use std::path::Path;
 
@@ -34,6 +35,16 @@ pub enum UserFlag {
     NotifyReviewInlineComments,
     /// User wants notification messages when added as reviewer to a change.
     NotifyReviewerAdded,
+}
+
+impl Display for UserFlag {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        if let Ok(serde_json::Value::String(s)) = serde_json::to_value(self) {
+            write!(f, "{}", s)
+        } else {
+            panic!("failed to encode flag")
+        }
+    }
 }
 
 /// Default flags for users that haven't enabled or disabled anything specific.

@@ -101,13 +101,7 @@ fn to_lua_via_json<'lua, T: Serialize>(
 fn get_flags_table<'lua>(user: &User, lua: rlua::Context<'lua>) -> rlua::Result<rlua::Table<'lua>> {
     lua.create_table_from(NOTIFICATION_FLAGS.iter().cloned().filter_map(|flag| {
         if user.has_flag(flag) {
-            let flag_string =
-                match serde_json::to_value(flag).expect("failed to encode flag to string") {
-                    JsonValue::String(s) => s,
-                    _ => panic!("flag did not encode to string"),
-                };
-
-            Some((flag_string, true))
+            Some((flag.to_string(), true))
         } else {
             None
         }
