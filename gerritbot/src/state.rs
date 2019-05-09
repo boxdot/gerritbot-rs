@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::fs::File;
 use std::path::Path;
+use std::str::FromStr;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -44,6 +45,14 @@ impl Display for UserFlag {
         } else {
             panic!("failed to encode flag")
         }
+    }
+}
+
+impl FromStr for UserFlag {
+    type Err = serde_json::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        serde_json::from_slice(s.as_bytes())
     }
 }
 
