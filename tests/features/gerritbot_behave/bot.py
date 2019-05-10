@@ -18,10 +18,7 @@ class BotHandler:
     def send_message(self, sender, message):
         log = logging.getLogger("bot-messages")
         serialized_message = json.dumps(
-            {
-                "email": sender.email,
-                "text": message,
-            }
+            {"email": sender.email, "text": message}
         ).encode("utf-8")
         log.debug("sending message to bot: %r", serialized_message)
         self.process.stdin.write(serialized_message)
@@ -45,11 +42,7 @@ class BotHandler:
         return messages
 
     def get_messages_for_person(self, person):
-        return [
-            m
-            for m in self.current_messages
-            if m["email"] == person.email
-        ]
+        return [m for m in self.current_messages if m["email"] == person.email]
 
     def _read_messages(self):
         log = logging.getLogger("bot-messages")
