@@ -1,0 +1,67 @@
+image: ekidd/rust-musl-builder:stable-openssl11
+
+stages:
+  - test
+  - build
+  - acceptance-test
+
+test:
+  cache:
+    key: ${CI_COMMIT_REF_SLUG}
+    paths:
+      - target/
+      - cargo-home/
+
+  stage: test
+  script:
+    - cp -r $HOME/.cargo cargo-home
+    - export CARGO_HOME=$PWD/cargo-home
+    - rustc --version && cargo --version
+    - cargo build --all
+    - cargo test --all --verbose
+
+build-x86_64-unknown-linux-musl:
+  cache:
+    key: ${CI_COMMIT_REF_SLUG}
+    paths:
+      - target/
+      - cargo-home/
+
+  stage: build
+
+  artifacts:
+    name: "gerritbot-$CI_JOB_NAME"
+    paths:
+      - target/x86_64-unknown-linux-musl/release/gerritbot
+      - target/x86_64-unknown-linux-musl/release/examples/gerritbot-console
+
+  script:
+    - cp -r $HOME/.cargo cargo-home
+    - export CARGO_HOME=$PWD/cargo-home
+    - |
+      cargo build \
+        --release \
+        --target x86_64-unknown-linux-musl \
+        --package gerritbot \
+        --bin gerritbot \
+        --example gerritbot-console
+
+acceptance-test:x86_64-unknown-linux-musl:
+  stage: acceptance-test
+
+  dependencies:
+    - build-x86_64-unknown-linux-musl
+
+  before_script:
+    - sudo apt-get update
+    - sudo apt-get install -y openjdk-8-jre-headless python3 python3-pip
+    - sudo pip3 install -r requirements.txt
+  script:
+    - ./testing/run-gerrit.sh &
+    - |
+      env PYTHONIOENCODING=utf-8 \
+      behave -v \
+        --color \
+        -D gerrit_start_timeout=60 \
+        -D gerritbot_message_timeout=1 \
+        -D gerritbot_executable=target/x86_64-unknown-linux-musl/release/examples/gerritbot-console
