@@ -75,13 +75,19 @@ class BotHandler:
 
 
 @fixture
-def setup_bot(context, *, user, hostname, port, message_timeout):
+def setup_bot(context, *, user, hostname, port, message_timeout, executable=None):
     with tempfile.TemporaryDirectory() as bot_directory:
         user.ssh_key.write_private_key_file(os.path.join(bot_directory, "id_rsa"))
         with open(os.path.join(bot_directory, "id_rsa.pub"), "w") as f:
             f.write(f"{user.ssh_key.get_name()} {user.ssh_key.get_base64()}")
 
-        bot_args = "cargo run --example gerritbot-console --".split() + [
+        bot_executable = (
+            [executable]
+            if executable is not None
+            else "cargo run --example gerritbot-console --".split()
+        )
+
+        bot_args = bot_executable + [
             "-C",
             bot_directory,
             "--identity-file",

@@ -27,6 +27,7 @@ def before_all(context):
     context.gerritbot_message_timeout = float(
         userdata.get("gerritbot_message_timeout", "0.2")
     )
+    context.gerritbot_executable = userdata.get("gerritbot_executable")
 
     # set up gerrit
     use_fixture(
@@ -54,6 +55,7 @@ def before_scenario(context, scenario):
         hostname=context.gerrit_ssh_hostname,
         port=context.gerrit_ssh_port,
         message_timeout=context.gerritbot_message_timeout,
+        executable=context.gerritbot_executable,
     )
 
     context.persons = Persons()
