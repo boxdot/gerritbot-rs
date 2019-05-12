@@ -46,6 +46,65 @@ build-x86_64-unknown-linux-musl:
         --bin gerritbot \
         --example gerritbot-console
 
+build-armv7-unknown-linux-gnueabihf:
+  image: japaric/armv7-unknown-linux-gnueabihf
+
+  cache:
+    key: ${CI_COMMIT_REF_SLUG}
+    paths:
+      - cargo-home/
+
+  stage: build
+
+  artifacts:
+    name: "gerritbot-$CI_JOB_NAME"
+    paths:
+      - target/armv7-unknown-linux-gnueabihf/release/gerritbot
+
+  before_script:
+    - apt-get install -y curl strace
+    - useradd -s /bin/bash rust
+    - mkdir -p /home/rust
+    - "chown rust: /home/rust"
+    - |
+      su - rust <<RUST
+      set -ex
+      curl -o rustup-init https://sh.rustup.rs
+      sh rustup-init -y
+      source ~/.cargo/env
+      rustup target add armv7-unknown-linux-gnueabihf
+      RUST
+
+  script:
+    - |
+      su - rust <<RUST
+      set -ex
+      source ~/.cargo/env
+      cd $CI_PROJECT_DIR
+      cp -r ~/.cargo cargo-home
+
+      export \
+        CARGO_HOME=$PWD/cargo-home \
+        CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=$CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER \
+        CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_RUNNER=$CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_RUNNER \
+        CC_armv7_unknown_linux_gnueabihf=$CC_armv7_unknown_linux_gnueabihf \
+        OPENSSL_DIR=$OPENSSL_DIR \
+        OPENSSL_INCLUDE_DIR=$OPENSSL_INCLUDE_DIR \
+        OPENSSL_LIB_DIR=$OPENSSL_LIB_DIR \
+        QEMU_LD_PREFIX=$QEMU_LD_PREFIX
+        RUST_TEST_THREADS=1
+
+      env
+
+      rm -rf target
+
+      cargo build \
+        --release \
+        --target armv7-unknown-linux-gnueabihf \
+        --package gerritbot \
+        --bin gerritbot
+      RUST
+
 acceptance-test:x86_64-unknown-linux-musl:
   stage: acceptance-test
 
