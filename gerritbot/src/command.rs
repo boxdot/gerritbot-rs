@@ -3,10 +3,13 @@ use std::str::FromStr;
 use lazy_static::lazy_static;
 use regex::Regex;
 
+use crate::state::UserFlag;
+
 #[derive(Debug)]
 pub enum Command {
     Enable,
     Disable,
+    SetFlag(UserFlag, bool),
     Status,
     Help,
     Version,
@@ -21,6 +24,7 @@ impl FromStr for Command {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         lazy_static! {
             static ref FILTER_REGEX: Regex = Regex::new(r"(?i)^filter (.*)$").unwrap();
+            static ref FLAG_REGEX: Regex = Regex::new(r"(?i)^(enable|disable) (.*)$").unwrap();
         };
 
         Ok(match &s.trim().to_lowercase()[..] {
@@ -32,10 +36,24 @@ impl FromStr for Command {
             "filter" => Command::FilterStatus,
             "filter enable" => Command::FilterEnable(true),
             "filter disable" => Command::FilterEnable(false),
-            _ => FILTER_REGEX
-                .captures(&s.trim()[..])
-                .and_then(|cap| cap.get(1))
-                .map(|m| Command::FilterAdd(m.as_str().to_string()))
+            _ => None
+                .or_else(|| {
+                    FILTER_REGEX
+                        .captures(&s.trim()[..])
+                        .and_then(|cap| cap.get(1))
+                        .map(|m| Command::FilterAdd(m.as_str().to_string()))
+                })
+                .or_else(|| {
+                    FLAG_REGEX
+                        .captures(&s.trim()[..])
+                        .and_then(|cap| cap.get(1).and_then(|m1| cap.get(2).map(|m2| (m1, m2))))
+                        .and_then(|(m1, m2)| {
+                            m2.as_str()
+                                .parse()
+                                .ok()
+                                .map(|flag| Command::SetFlag(flag, m1.as_str() == "enable"))
+                        })
+                })
                 .ok_or(())?,
         })
     }

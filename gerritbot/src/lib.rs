@@ -288,6 +288,20 @@ where
 
                 vec![Task::Save, Task::Reply(Response::new(sender, resp))]
             }
+            Command::SetFlag(flag, enable) => {
+                self.state.set_flag(&sender, flag, enable);
+                vec![
+                    Task::Save,
+                    Task::Reply(Response::new(
+                        sender,
+                        format!(
+                            "Flag {} **{}**",
+                            flag,
+                            if enable { "enabled" } else { "disabled" }
+                        ),
+                    )),
+                ]
+            }
         }
     }
 
