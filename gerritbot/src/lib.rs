@@ -235,7 +235,7 @@ where
                 ]
             }
             Command::Help => vec![Task::Reply(Response::new(sender, HELP_MSG))],
-            Command::Version => vec![Task::Reply(Response::new(sender, VERSION_MSG))],
+            Command::Version => vec![Task::Reply(Response::new(sender, VERSION_MSG.to_string()))],
             Command::Status => self
                 .status_for(&sender)
                 .map(|status| Task::Reply(Response::new(sender, status)))
@@ -475,14 +475,14 @@ const HELP_MSG: &str = r#"Commands:
 This project is open source, feel free to help us at: https://github.com/boxdot/gerritbot-rs
 "#;
 
-const VERSION_MSG: &str = concat!(
-    env!("CARGO_PKG_NAME"),
-    " ",
-    env!("CARGO_PKG_VERSION"),
-    " (commit id ",
-    env!("VERGEN_SHA"),
-    ")"
-);
+lazy_static! {
+    static ref VERSION_MSG: String = format!(
+        "{} {} (commit id {})",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION"),
+        option_env!("CI_COMMIT_SHA").unwrap_or(env!("VERGEN_SHA")),
+    );
+}
 
 /// Guess if the change might have comments by looking for a specially formatted
 /// comment.
