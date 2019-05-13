@@ -3,6 +3,7 @@ use std::convert;
 use std::fs::File;
 use std::io;
 use std::path::Path;
+use std::str::FromStr;
 use std::time::Duration;
 
 use futures::{future::Future, stream, stream::Stream};
@@ -104,26 +105,51 @@ impl Builder {
     }
 }
 
-fn spark_message_to_action(message: spark::Message) -> Action {
-    lazy_static! {
-        static ref FILTER_REGEX: Regex = Regex::new(r"(?i)^filter (.*)$").unwrap();
-    };
+#[derive(Debug)]
+pub enum Command {
+    Enable,
+    Disable,
+    Status,
+    Help,
+    Version,
+    FilterStatus,
+    FilterEnable(bool),
+    FilterAdd(String),
+}
 
-    let sender_email = message.person_email;
-    match &message.text.trim().to_lowercase()[..] {
-        "enable" => Action::Enable(sender_email),
-        "disable" => Action::Disable(sender_email),
-        "status" => Action::Status(sender_email),
-        "help" => Action::Help(sender_email),
-        "version" => Action::Version(sender_email),
-        "filter" => Action::FilterStatus(sender_email),
-        "filter enable" => Action::FilterEnable(sender_email, true),
-        "filter disable" => Action::FilterEnable(sender_email, false),
-        _ => FILTER_REGEX
-            .captures(&message.text.trim()[..])
-            .and_then(|cap| cap.get(1))
-            .map(|m| Action::FilterAdd(sender_email.clone(), m.as_str().to_string()))
-            .unwrap_or_else(|| Action::Unknown(sender_email.clone())),
+impl FromStr for Command {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        lazy_static! {
+            static ref FILTER_REGEX: Regex = Regex::new(r"(?i)^filter (.*)$").unwrap();
+        };
+
+        Ok(match &s.trim().to_lowercase()[..] {
+            "enable" => Command::Enable,
+            "disable" => Command::Disable,
+            "status" => Command::Status,
+            "help" => Command::Help,
+            "version" => Command::Version,
+            "filter" => Command::FilterStatus,
+            "filter enable" => Command::FilterEnable(true),
+            "filter disable" => Command::FilterEnable(false),
+            _ => FILTER_REGEX
+                .captures(&s.trim()[..])
+                .and_then(|cap| cap.get(1))
+                .map(|m| Command::FilterAdd(m.as_str().to_string()))
+                .ok_or(())?,
+        })
+    }
+}
+
+fn spark_message_to_action(message: spark::Message) -> Action {
+    let sender = message.person_email;
+    let text = message.text;
+
+    match text.parse() {
+        Ok(command) => Action::RunCommand { sender, command },
+        Err(()) => Action::UnknownCommand { sender },
     }
 }
 
@@ -210,19 +236,9 @@ where
     /// Return an optional message to send to the user
     fn update(&mut self, action: Action) -> Vec<Task> {
         match action {
-            Action::Enable(email) => {
-                self.state.enable(&email, true);
-                vec![
-                    Task::Save,
-                    Task::Reply(Response::new(email, "Got it! Happy reviewing!")),
-                ]
-            }
-            Action::Disable(email) => {
-                self.state.enable(&email, false);
-                vec![
-                    Task::Save,
-                    Task::Reply(Response::new(email, "Got it! I will stay silent.")),
-                ]
+            Action::RunCommand { sender, command } => self.run_command(sender, command),
+            Action::UnknownCommand { sender } => {
+                vec![Task::Reply(Response::new(sender, GREETINGS_MSG))]
             }
             Action::UpdateApprovals(event) => self
                 .get_approvals_msg(event)
@@ -231,42 +247,65 @@ where
                 })
                 .into_iter()
                 .collect(),
-            Action::Help(email) => vec![Task::Reply(Response::new(email, HELP_MSG))],
-            Action::Version(email) => vec![Task::Reply(Response::new(email, VERSION_MSG))],
-            Action::Unknown(email) => vec![Task::Reply(Response::new(email, GREETINGS_MSG))],
-            Action::Status(email) => self
-                .status_for(&email)
-                .map(|status| Task::Reply(Response::new(email, status)))
+            Action::ReviewerAdded(event) => self
+                .get_reviewer_added_msg(&event)
+                .map(|(user, message)| Task::Reply(Response::new(user.email().to_owned(), message)))
                 .into_iter()
                 .collect(),
-            Action::FilterStatus(email) => {
-                let resp = if let Some((filter_str, filter_enabled)) = self.state.get_filter(&email)
-                {
-                    format!(
-                        "The following filter is configured for you: `{}`. It is **{}**.",
-                        filter_str,
-                        if filter_enabled {
-                            "enabled"
-                        } else {
-                            "disabled"
-                        }
-                    )
-                } else {
-                    "No filter is configured for you.".to_string()
-                };
+        }
+    }
 
-                vec![Task::Reply(Response::new(email, resp))]
+    fn run_command(&mut self, sender: spark::Email, command: Command) -> Vec<Task> {
+        match command {
+            Command::Enable => {
+                self.state.enable(&sender, true);
+                vec![
+                    Task::Save,
+                    Task::Reply(Response::new(sender, "Got it! Happy reviewing!")),
+                ]
             }
-            Action::FilterAdd(email, filter) => {
-                let resp = self.state.add_filter(&email, &filter).map(
+            Command::Disable => {
+                self.state.enable(&sender, false);
+                vec![
+                    Task::Save,
+                    Task::Reply(Response::new(sender, "Got it! I will stay silent.")),
+                ]
+            }
+            Command::Help => vec![Task::Reply(Response::new(sender, HELP_MSG))],
+            Command::Version => vec![Task::Reply(Response::new(sender, VERSION_MSG))],
+            Command::Status => self
+                .status_for(&sender)
+                .map(|status| Task::Reply(Response::new(sender, status)))
+                .into_iter()
+                .collect(),
+            Command::FilterStatus => {
+                let resp =
+                    if let Some((filter_str, filter_enabled)) = self.state.get_filter(&sender) {
+                        format!(
+                            "The following filter is configured for you: `{}`. It is **{}**.",
+                            filter_str,
+                            if filter_enabled {
+                                "enabled"
+                            } else {
+                                "disabled"
+                            }
+                        )
+                    } else {
+                        "No filter is configured for you.".to_string()
+                    };
+
+                vec![Task::Reply(Response::new(sender, resp))]
+            }
+            Command::FilterAdd(filter) => {
+                let resp = self.state.add_filter(&sender, &filter).map(
                 |()|
                 "Filter successfully added and enabled."
             ).unwrap_or(
                 "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax");
-                vec![Task::Reply(Response::new(email, resp.to_string()))]
+                vec![Task::Reply(Response::new(sender, resp.to_string()))]
             }
-            Action::FilterEnable(email, enable) => {
-                let resp = self.state.enable_and_get_filter(&email, enable).map(
+            Command::FilterEnable(enable) => {
+                let resp = self.state.enable_and_get_filter(&sender, enable).map(
                 |filter|
                 if enable {
                 format!(
@@ -284,13 +323,8 @@ where
                              }
                 );
 
-                vec![Task::Save, Task::Reply(Response::new(email, resp))]
+                vec![Task::Save, Task::Reply(Response::new(sender, resp))]
             }
-            Action::ReviewerAdded(event) => self
-                .get_reviewer_added_msg(&event)
-                .map(|(user, message)| Task::Reply(Response::new(user.email().to_owned(), message)))
-                .into_iter()
-                .collect(),
         }
     }
 
@@ -402,16 +436,14 @@ where
 
 #[derive(Debug)]
 pub enum Action {
-    Enable(spark::Email),
-    Disable(spark::Email),
+    RunCommand {
+        sender: spark::Email,
+        command: Command,
+    },
+    UnknownCommand {
+        sender: spark::Email,
+    },
     UpdateApprovals(Box<gerrit::CommentAddedEvent>),
-    Help(spark::Email),
-    Unknown(spark::Email),
-    Status(spark::Email),
-    Version(spark::Email),
-    FilterStatus(spark::Email),
-    FilterAdd(spark::Email, String /* filter */),
-    FilterEnable(spark::Email, bool),
     ReviewerAdded(Box<gerrit::ReviewerAddedEvent>),
 }
 
