@@ -31,8 +31,56 @@ impl FromStr for UserFlag {
     type Err = serde_json::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        serde_json::from_slice(s.as_bytes())
+        serde_json::from_slice(format!("\"{}\"", s).as_bytes())
     }
+}
+
+#[cfg(test)]
+mod test_flag {
+    use super::UserFlag;
+
+    macro_rules! test_from_to_string {
+        ($name:ident, $s:expr, $f:expr $( , )?) => {
+            #[test]
+            fn $name() {
+                assert_eq!($s.parse::<UserFlag>().expect("parse failed"), $f);
+                assert_eq!($f.to_string(), $s);
+            }
+        };
+    }
+    macro_rules! test_parse_fail {
+        ($name:ident, $s:expr) => {
+            #[test]
+            fn $name() {
+                $s.parse::<UserFlag>().expect_err("did not fail");
+            }
+        };
+    }
+
+    test_from_to_string!(
+        notify_review_approvals,
+        "notify_review_approvals",
+        UserFlag::NotifyReviewApprovals,
+    );
+    test_from_to_string!(
+        notify_review_comments,
+        "notify_review_comments",
+        UserFlag::NotifyReviewComments,
+    );
+    test_from_to_string!(
+        notify_review_inline_comments,
+        "notify_review_inline_comments",
+        UserFlag::NotifyReviewInlineComments,
+    );
+    test_from_to_string!(
+        notify_reviewer_added,
+        "notify_reviewer_added",
+        UserFlag::NotifyReviewerAdded,
+    );
+
+    test_parse_fail!(unknown_flag, "unknown_flag");
+    test_parse_fail!(integer, "123");
+    test_parse_fail!(quotation_mark, "\"");
 }
 
 /// Default flags for users that haven't enabled or disabled anything specific.
