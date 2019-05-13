@@ -106,7 +106,7 @@ impl Builder {
 }
 
 #[derive(Debug)]
-pub enum Command {
+enum Command {
     Enable,
     Disable,
     Status,
@@ -154,7 +154,7 @@ fn spark_message_to_action(message: spark::Message) -> Action {
 }
 
 /// Transform a gerrit event into a bot action.
-pub fn gerrit_event_to_action(event: gerrit::Event) -> Option<Action> {
+fn gerrit_event_to_action(event: gerrit::Event) -> Option<Action> {
     match event {
         gerrit::Event::CommentAdded(event) => Some(Action::UpdateApprovals(Box::new(event))),
         gerrit::Event::ReviewerAdded(event) => Some(Action::ReviewerAdded(Box::new(event))),
@@ -435,7 +435,7 @@ where
 }
 
 #[derive(Debug)]
-pub enum Action {
+enum Action {
     RunCommand {
         sender: spark::Email,
         command: Command,
@@ -448,7 +448,7 @@ pub enum Action {
 }
 
 #[derive(Debug)]
-pub struct Response {
+struct Response {
     pub email: spark::Email,
     pub message: String,
 }
@@ -466,7 +466,7 @@ impl Response {
 }
 
 #[derive(Debug)]
-pub enum Task {
+enum Task {
     Reply(Response),
     Save,
 }
