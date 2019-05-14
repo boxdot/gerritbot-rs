@@ -68,3 +68,16 @@ Feature: review comments
        And this message includes the text "README"
        And this message includes the text "You shouldn't be adding this file in the first place."
        And this message includes the text "Who even is Mauris?"
+
+  Scenario: comment without approval is not sent by default
+     Given Bob uploads a new change to the tools project
+       And Alice replies to Bob's change with the comment "I don't care."
+      When we check for messages by the bot
+      Then there is no message for Bob which includes the text "I don't care."
+
+  Scenario: comment without approval can be enabled
+     Given Bob sends the enable notify_review_comments command to the bot
+       And Bob uploads a new change to the tools project
+       And Alice replies to Bob's change with the comment "I don't care."
+      When we check for messages by the bot
+      Then there is a message for Bob which includes the text "I don't care."

@@ -232,7 +232,7 @@ function format_comment_added(event, flags, is_human)
     ) and format_comment(event.comment, is_human)
 
     if formatted_approvals
-        or formatted_comments
+        or formatted_comment
         or formatted_inline_comments
         or formatted_submittable_message
     then

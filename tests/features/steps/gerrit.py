@@ -40,9 +40,11 @@ use_step_matcher("re")
 
 @given(
     "(?P<reviewer>.*) replies to (?P<uploader>.*)'s change with "
-    "(?P<label_name>[^ ]*)(?P<label_value>[+-]\d+)"
-    '(?: and the comment "(?P<comment>.*)")?'
-    "(?P<has_inline_comments> and the following inline comments)?"
+    "(?:(?P<label_name>[^ ]*)(?P<label_value>[+-]\d+))?"
+    "(?: and )?"
+    '(?:the comment "(?P<comment>.*)")?'
+    "(?: and )?"
+    "(?P<has_inline_comments>the following inline comments)?"
 )
 def step_impl(
     context, reviewer, uploader, label_name, label_value, comment, has_inline_comments
@@ -50,7 +52,11 @@ def step_impl(
     reviewer = context.persons.get(reviewer)
     uploader = context.persons.get(uploader)
     change = context.gerrit.get_last_change_by(uploader)
-    label_value = int(label_value)
+
+    if label_value is not None:
+        labels = {label_name: label_value}
+    else:
+        labels = None
 
     if has_inline_comments:
         inline_comments = {}
@@ -76,9 +82,5 @@ def step_impl(
         inline_comments = None
 
     context.gerrit.reply(
-        change,
-        reviewer,
-        labels={label_name: label_value},
-        message=comment,
-        comments=inline_comments,
+        change, reviewer, labels=labels, message=comment, comments=inline_comments
     )
