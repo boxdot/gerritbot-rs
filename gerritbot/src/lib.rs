@@ -164,7 +164,6 @@ where
 {
     pub fn run(
         self,
-        // TODO: gerrit event stream probably shouldn't produce errors
         gerrit_events: impl Stream<Item = gerrit::Event, Error = ()> + Send,
         spark_messages: impl Stream<Item = spark::Message, Error = ()> + Send,
     ) -> impl Future<Item = (), Error = ()> {
