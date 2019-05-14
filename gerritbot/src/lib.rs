@@ -397,7 +397,7 @@ where
         Ok(())
     }
 
-    pub fn status_for(&self, email: &spark::EmailRef) -> Option<String> {
+    fn status_for(&self, email: &spark::EmailRef) -> Option<String> {
         let user = self.state.find_user(email);
         let enabled_user_count = self
             .state
