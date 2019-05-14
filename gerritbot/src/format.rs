@@ -3,7 +3,6 @@ use rlua::{
     Value as LuaValue,
 };
 use serde::Serialize;
-use serde_json::Value as JsonValue;
 
 use gerritbot_gerrit as gerrit;
 
@@ -48,56 +47,6 @@ fn load_format_script(script_source: &str) -> Result<Lua, String> {
     Ok(lua)
 }
 
-fn json_to_lua<'lua>(json: &JsonValue, lua: rlua::Context<'lua>) -> rlua::Result<LuaValue<'lua>> {
-    Ok(match json {
-        JsonValue::Null => LuaValue::Nil,
-        JsonValue::Bool(b) => LuaValue::Boolean(*b),
-        JsonValue::Number(n) => {
-            if let Some(n) = n.as_i64() {
-                LuaValue::Integer(n)
-            } else if let Some(n) = n.as_f64() {
-                LuaValue::Number(n)
-            } else {
-                Err(rlua::Error::ToLuaConversionError {
-                    from: "serde_json::Number",
-                    to: "Integer",
-                    message: Some(format!("value {} too large", n)),
-                })?
-            }
-        }
-        JsonValue::String(s) => lua.create_string(s).map(LuaValue::String)?,
-        JsonValue::Array(values) => {
-            let table = lua.create_table()?;
-
-            for (i, value) in values.iter().enumerate() {
-                table.set(LuaValue::Integer(i as i64 + 1), json_to_lua(value, lua)?)?;
-            }
-
-            LuaValue::Table(table)
-        }
-        JsonValue::Object(items) => {
-            let table = lua.create_table()?;
-
-            for (key, value) in items {
-                let key = lua.create_string(key)?;
-                let value = json_to_lua(value, lua)?;
-                table.set(key, value)?;
-            }
-
-            LuaValue::Table(table)
-        }
-    })
-}
-
-fn to_lua_via_json<'lua, T: Serialize>(
-    value: T,
-    lua: rlua::Context<'lua>,
-) -> Result<LuaValue<'lua>, Box<dyn std::error::Error>> {
-    let json_value = serde_json::to_value(value)?;
-    let lua_value = json_to_lua(&json_value, lua)?;
-    Ok(lua_value)
-}
-
 fn get_flags_table<'lua>(user: &User, lua: rlua::Context<'lua>) -> rlua::Result<rlua::Table<'lua>> {
     lua.create_table_from(NOTIFICATION_FLAGS.iter().cloned().filter_map(|flag| {
         if user.has_flag(flag) {
@@ -132,8 +81,8 @@ impl Formatter {
             .get(function_name)
             .map_err(|_| format!("{} function missing", function_name))?;
 
-        let event =
-            to_lua_via_json(event, lua).map_err(|e| format!("failed to serialize event: {}", e))?;
+        let event = rlua_serde::to_value(lua, event)
+            .map_err(|e| format!("failed to serialize event: {}", e))?;
         let flags = get_flags_table(user, lua)
             .map(LuaValue::Table)
             .map_err(|err| format!("failed to create flags table: {}", err))?;
