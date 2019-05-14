@@ -9,7 +9,7 @@ use gerritbot_gerrit as gerrit;
 
 use crate::state::{User, NOTIFICATION_FLAGS};
 
-pub const DEFAULT_FORMAT_SCRIPT: &str = include_str!("../../scripts/format.lua");
+pub const DEFAULT_FORMAT_SCRIPT: &str = include_str!("format.lua");
 const LUA_FORMAT_COMMENT_ADDED: &str = "format_comment_added";
 const LUA_FORMAT_REVIEWER_ADDED: &str = "format_reviewer_added";
 const LUA_FORMAT_FUNCTIONS: &[&str] = &[LUA_FORMAT_COMMENT_ADDED, LUA_FORMAT_REVIEWER_ADDED];
