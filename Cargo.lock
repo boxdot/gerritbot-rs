@@ -472,7 +472,7 @@ dependencies = [
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "lru_time_cache 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "regex 1.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
- "rlua 0.16.3-alpha.0 (git+https://github.com/kyren/rlua.git)",
+ "rlua 0.16.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "rusoto_core 0.36.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.90 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_json 1.0.39 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1196,8 +1196,8 @@ dependencies = [
 
 [[package]]
 name = "rlua"
-version = "0.16.3-alpha.0"
-source = "git+https://github.com/kyren/rlua.git#5c93a8407302289475ee5de44a2f2fceccfda7f2"
+version = "0.16.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "bitflags 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "cc 1.0.35 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2083,7 +2083,7 @@ dependencies = [
 "checksum regex-syntax 0.6.6 (registry+https://github.com/rust-lang/crates.io-index)" = "dcfd8681eebe297b81d98498869d4aae052137651ad7b96822f09ceb690d0a96"
 "checksum remove_dir_all 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)" = "3488ba1b9a2084d38645c4c08276a1752dcbf2c7130d74f1569681ad5d2799c5"
 "checksum reqwest 0.9.15 (registry+https://github.com/rust-lang/crates.io-index)" = "943b9f85622f53bcf71721e0996f23688e3942e51fc33766c2e24a959316767b"
-"checksum rlua 0.16.3-alpha.0 (git+https://github.com/kyren/rlua.git)" = "<none>"
+"checksum rlua 0.16.3 (registry+https://github.com/rust-lang/crates.io-index)" = "62fc0e980c94fe9ef795b1bb3874649c8c6e9bb67d3b90d48380ba24c69c23ea"
 "checksum rusoto_core 0.36.0 (registry+https://github.com/rust-lang/crates.io-index)" = "18a699355ef3189e3bbf34b64ff5a31f06456b689b09d05cdb4a901dcf4406a8"
 "checksum rusoto_credential 0.15.0 (registry+https://github.com/rust-lang/crates.io-index)" = "bcc8dd0f0a7e8b62f31aa23fa12fa0a7ac0e1eb52f6f4d4279d8a2ae51d8f099"
 "checksum rusoto_sqs 0.36.0 (registry+https://github.com/rust-lang/crates.io-index)" = "d1aeb4ec0009ef8604461a1a0aedba425c8c7fd0de0ca1f8ef961c8cfc86845b"
