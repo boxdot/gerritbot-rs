@@ -42,6 +42,7 @@ pub struct Patchset {
     pub uploader: User,
     pub created_on: u32,
     pub author: User,
+    #[serde(default)]
     pub is_draft: bool,
     pub kind: String,
     pub size_insertions: i32,
