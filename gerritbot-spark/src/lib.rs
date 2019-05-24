@@ -102,7 +102,6 @@ macro_rules! newtype_string {
     };
 }
 
-/// Spark id of the user
 newtype_string!(PersonId, PersonIdRef);
 newtype_string!(ResourceId, ResourceIdRef);
 newtype_string!(Email, EmailRef);
