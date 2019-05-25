@@ -69,6 +69,21 @@ Feature: review comments
        And this message includes the text "You shouldn't be adding this file in the first place."
        And this message includes the text "Who even is Mauris?"
 
+  Scenario: inline comments without approval
+     Given Bob uploads a new change to the tools project
+       And Bob creates the file "README" with the following content in the change:
+       """
+       We should have a README.
+       """
+       And Alice replies to Bob's change with the following inline comments:
+       """
+       File: README
+       Line 1: Yes, but please write something useful at least.
+       """
+      When we check for messages by the bot
+      Then there is no message for Bob which includes the text "Code-Review"
+       And there is a message for Bob which includes the text "Yes, but please write something useful at least."
+
   Scenario: comment without approval is not sent by default
      Given Bob uploads a new change to the tools project
        And Alice replies to Bob's change with the comment "I don't care."
