@@ -27,7 +27,7 @@ class UserURL:
         self.role = role
 
     def __str__(self):
-        email = self.context.persons.get(self.username).email
+        email = self.context.accounts.get_person(self.username).email
         return f"{self.context.gerrit_http_url}/q/{self.role}:{email}+status:open"
 
     def __getattr__(self, role):

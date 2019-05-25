@@ -10,7 +10,7 @@ def step_impl(context, project_name):
 
 @given("{uploader} uploads a new change to the {project_name} project")
 def step_impl(context, uploader, project_name):
-    uploader = context.persons.get(uploader)
+    uploader = context.accounts.get_person(uploader)
     context.last_created_change = context.gerrit.create_new_change(
         uploader, project_name
     )
@@ -20,7 +20,7 @@ def step_impl(context, uploader, project_name):
     '{uploader} creates the file "{filename}" with the following content in the change'
 )
 def step_impl(context, uploader, filename):
-    uploader = context.persons.get(uploader)
+    uploader = context.accounts.get_person(uploader)
     context.gerrit.add_file_to_change(
         uploader, context.last_created_change, filename, context.text
     )
@@ -28,9 +28,9 @@ def step_impl(context, uploader, filename):
 
 @given("{actor} adds {reviewer} as reviewer to {owner}'s change")
 def step_impl(context, actor, reviewer, owner):
-    actor = context.persons.get(actor)
-    reviewer = context.persons.get(reviewer)
-    owner = context.persons.get(owner)
+    actor = context.accounts.get_person(actor)
+    reviewer = context.accounts.get_person(reviewer)
+    owner = context.accounts.get_person(owner)
     change = context.gerrit.get_last_change_by(owner)
     context.gerrit.add_reviewer(change, reviewer=reviewer, user=actor)
 
@@ -49,8 +49,8 @@ use_step_matcher("re")
 def step_impl(
     context, reviewer, uploader, label_name, label_value, comment, has_inline_comments
 ):
-    reviewer = context.persons.get(reviewer)
-    uploader = context.persons.get(uploader)
+    reviewer = context.accounts.get_person(reviewer)
+    uploader = context.accounts.get_person(uploader)
     change = context.gerrit.get_last_change_by(uploader)
 
     if label_value is not None:

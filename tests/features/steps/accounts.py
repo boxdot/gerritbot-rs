@@ -1,13 +1,13 @@
-class Person(object):
-    fullname = None
-    firstname = None
-    email = None
-
-
 @given("a person named {name} with email address {email}")
 def step_impl(context, name, email):
-    person = context.persons.create(name, email)
-    context.gerrit.create_user(person)
+    account = context.accounts.create_person(name, email)
+    context.gerrit.create_account(account)
+
+
+@given("a bot named {name}")
+def step_impl(context, name):
+    account = context.accounts.create_bot(name)
+    context.gerrit.create_account(account)
 
 
 @given("the following persons")

@@ -4,7 +4,7 @@ from behave import use_fixture
 
 from gerritbot_behave.gerrit import setup_gerrit
 from gerritbot_behave.bot import setup_bot
-from gerritbot_behave.persons import Persons, Person
+from gerritbot_behave.accounts import Accounts, Bot
 from gerritbot_behave.format import URLs
 
 
@@ -41,8 +41,8 @@ def before_all(context):
         gerrit_start_timeout=userdata.getfloat("gerrit_start_timeout"),
     )
 
-    context.bot_user = Person("gerritbot", "gerritbot@gerritbot.rs")
-    context.gerrit.create_user(context.bot_user)
+    context.bot_user = Bot("gerritbot")
+    context.gerrit.create_account(context.bot_user)
     context.gerrit.add_user_to_group(context.bot_user, "Non-Interactive+Users")
     context.urls = URLs(context)
 
@@ -58,4 +58,4 @@ def before_scenario(context, scenario):
         executable=context.gerritbot_executable,
     )
 
-    context.persons = Persons()
+    context.accounts = Accounts()

@@ -95,39 +95,43 @@ class GerritHandler:
         for (person, created) in self.users:
             self.add_user_to_group(person, project_group)
 
-    def create_user(self, person):
+    def create_account(self, account):
         created = False
 
         try:
+            account_input = {
+                "name": account.fullname,
+                "ssh_key": f"{account.ssh_key.get_name()} {account.ssh_key.get_base64()}",
+                "http_password": account.http_password,
+            }
+
+            try:
+                account_input["email"] = account.email
+            except AttributeError:
+                pass
+
             self.http_put(
-                f"/accounts/{person.username}",
-                user="admin",
-                json={
-                    "name": person.fullname,
-                    "email": person.email,
-                    "ssh_key": f"{person.ssh_key.get_name()} {person.ssh_key.get_base64()}",
-                    "http_password": person.http_password,
-                },
+                f"/accounts/{account.username}", user="admin", json=account_input
             )
         except AlreadyExistsError:
             self.http_put(
-                f"/accounts/{person.username}/password.http",
+                f"/accounts/{account.username}/password.http",
                 user="admin",
-                json={"http_password": person.http_password},
+                json={"http_password": account.http_password},
             )
             self.http_post(
-                f"/accounts/{person.username}/sshkeys",
+                f"/accounts/{account.username}/sshkeys",
                 user="admin",
                 headers={"content_type": "text/plain"},
-                data=f"{person.ssh_key.get_name()} {person.ssh_key.get_base64()}",
+                data=f"{account.ssh_key.get_name()} {account.ssh_key.get_base64()}",
             )
         else:
             created = True
 
-        self.users.append((person, created))
+        self.users.append((account, created))
 
         for (project_name, project_group, created) in self.projects:
-            self.add_user_to_group(person, project_group)
+            self.add_user_to_group(account, project_group)
 
     def create_new_change(self, uploader, project_name):
         change_info = self.http_post(
