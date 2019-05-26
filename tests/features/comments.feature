@@ -117,3 +117,25 @@ Feature: review comments
       When we check for messages by the bot
       Then there is no message for Bob which includes the text "Reviewbot"
        And there is no message for Bob which includes the text "Yeah, it's good."
+
+  Scenario: review on submitted change get's special flag
+     Given a person named Eve Harris with email address eve@jones.com
+       And Bob uploads a new change to the tools project
+       And Alice replies to Bob's change with Code-Review+2
+       And Bob submits the change
+       And Eve replies to Bob's change with Code-Review+1 and the comment "I liked it, too."
+      When we check for messages by the bot
+      Then there is a message for Bob which includes the text "I liked it, too."
+       And this message includes the text "Code-Review"
+       And this message includes the text "+1"
+       And this message includes the text "Merged"
+       And this message does not include the text "Submittable"
+
+  Scenario: review on abandoned change get's special flag
+     Given Bob sends the enable notify_review_comments command to the bot
+       And Bob uploads a new change to the tools project
+       And Bob abandons the change
+       And Alice replies to Bob's change with the comment "Why??????"
+      When we check for messages by the bot
+      Then there is a message for Bob which includes the text "Why??????"
+       And this message includes the text "Abandoned"

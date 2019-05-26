@@ -45,6 +45,13 @@ def step_impl(context, actor):
 use_step_matcher("re")
 
 
+@given('(?P<actor>.*) abandons the change(?: with the comment "(?P<comment>.*)")?')
+def step_impl(context, actor, comment):
+    actor = context.accounts.get_person(actor)
+    change = context.gerrit.get_last_change_by(actor)
+    context.gerrit.abandon_change(change, comment=comment, user=actor)
+
+
 def parse_inline_comments(s):
     inline_comments = {}
     filename = None

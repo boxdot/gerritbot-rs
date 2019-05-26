@@ -119,7 +119,7 @@ pub struct CommentAddedEvent {
     #[serde(rename = "patchSet")]
     pub patchset: Patchset,
     pub author: User,
-    pub approvals: Vec<Approval>,
+    pub approvals: Option<Vec<Approval>>,
     pub comment: String,
     #[serde(rename = "eventCreatedOn")]
     pub created_on: u32,

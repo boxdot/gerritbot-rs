@@ -326,7 +326,11 @@ where
     ) -> Option<(&User, String, bool)> {
         debug!("Incoming approvals: {:#?}", event);
 
-        let approvals = &event.approvals;
+        let approvals = event
+            .approvals
+            .as_ref()
+            .map(Vec::as_slice)
+            .unwrap_or(&[][..]);
         let change = &event.change;
         let approver = event.author.username.as_ref()?;
         if Some(approver) == change.owner.username.as_ref() {

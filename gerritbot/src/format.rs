@@ -216,7 +216,10 @@ mod test {
     #[test]
     fn format_approval_unknown_labels() {
         let mut event = get_event();
-        event.approvals[0].approval_type = String::from("Some-New-Type");
+        event
+            .approvals
+            .as_mut()
+            .map(|approvals| approvals[0].approval_type = String::from("Some-New-Type"));
         let res = Formatter::default().format_comment_added(&FORMAT_TEST_USER, &event, true);
         // Result<Option<String>, _> -> Result<Option<&str>, _>
         let res = res.as_ref().map(|o| o.as_ref().map(String::as_str));
@@ -229,11 +232,13 @@ mod test {
     #[test]
     fn format_approval_multiple_labels() {
         let mut event = get_event();
-        event.approvals.push(gerrit::Approval {
-            approval_type: "Verified".to_string(),
-            description: "Verified".to_string(),
-            value: "1".to_string(),
-            old_value: None,
+        event.approvals.as_mut().map(|approvals| {
+            approvals.push(gerrit::Approval {
+                approval_type: "Verified".to_string(),
+                description: "Verified".to_string(),
+                value: "1".to_string(),
+                old_value: None,
+            })
         });
         let res = Formatter::default().format_comment_added(&FORMAT_TEST_USER, &event, true);
         // Result<Option<String>, _> -> Result<Option<&str>, _>
@@ -247,7 +252,7 @@ mod test {
     #[test]
     fn format_approval_no_approvals() {
         let mut event = get_event();
-        event.approvals.clear();
+        event.approvals = None;
         let res = Formatter::default().format_comment_added(&FORMAT_TEST_USER, &event, true);
         // Result<Option<String>, _> -> Result<Option<&str>, _>
         let res = res.as_ref().map(|o| o.as_ref().map(String::as_str));

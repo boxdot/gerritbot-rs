@@ -207,12 +207,18 @@ local function format_approvals(approvals)
     end
 end
 
--- Format submittable message
-local function format_submittable(submit_records)
-    for _i, submit_record in ipairs(submit_records or {}) do
-        if submit_record.status == "OK" then
-            return ", 🏁 Submittable"
+-- Format change status
+local function format_change_status(change)
+    if change.status == "NEW" then
+        for _i, submit_record in ipairs(change.submitRecords or {}) do
+            if submit_record.status == "OK" then
+                return ", 🏁 Submittable"
+            end
         end
+    elseif change.status == "MERGED" then
+        return ", 📦 Merged"
+    elseif change.status == "ABANDONED" then
+        return ", ☠  Abandoned"
     end
 end
 
@@ -227,8 +233,8 @@ function format_comment_added(event, flags, is_human)
 
     local patchset = event.patchSet
     local base_url = get_gerrit_base_url(change.url)
-    local formatted_approvals = flags["notify_review_approvals"] and format_approvals(event.approvals)
-    local formatted_submittable_message = flags["notify_review_approvals"] and format_submittable(change.submitRecords)
+    local formatted_approvals = flags["notify_review_approvals"] and format_approvals(event.approvals or {})
+    local formatted_status_message = flags["notify_review_approvals"] and format_change_status(change)
     local formatted_inline_comments = flags["notify_review_inline_comments"] and format_inline_comments(base_url, change, patchset)
     local formatted_comment = (
         flags["notify_review_comments"]
@@ -239,12 +245,12 @@ function format_comment_added(event, flags, is_human)
     if formatted_approvals
         or formatted_comment
         or formatted_inline_comments
-        or formatted_submittable_message
+        or formatted_status_message
     then
         local msg = format_change_subject(change) .. " (" .. format_change_project(base_url, change) .. ")"
         msg = msg .. (formatted_approvals or " comments")
         msg = msg .. " from " .. format_user(base_url, event.author, "reviewer")
-        msg = msg .. (formatted_submittable_message or "")
+        msg = msg .. (formatted_status_message or "")
         msg = msg .. (formatted_comment or "")
         msg = msg .. (formatted_inline_comments or "")
         return msg

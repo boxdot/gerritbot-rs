@@ -193,6 +193,16 @@ class GerritHandler:
     def submit_change(self, change, *, user):
         self.http_post(f"/changes/{change['_number']}/submit", user=user)
 
+    def abandon_change(self, change, *, user, comment=None):
+        if comment is not None:
+            abandon_input = {"comment": comment}
+        else:
+            abandon_input = None
+
+        self.http_post(
+            f"/changes/{change['_number']}/abandon", user=user, json=abandon_input
+        )
+
 
 @fixture
 def setup_gerrit(
