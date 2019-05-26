@@ -5,6 +5,7 @@ Feature: review comments
   Background:
     Given a person named Alice Smith with email address alice@bloom.com
       And a person named Bob Jones with email address bob@jones.com
+      And a bot named Reviewbot
       And everybody sends the enable command to the bot
       And a Gerrit project named tools
   
@@ -96,3 +97,14 @@ Feature: review comments
        And Alice replies to Bob's change with the comment "I don't care."
       When we check for messages by the bot
       Then there is a message for Bob which includes the text "I don't care."
+
+  Scenario: comment from a bot gets special formatting
+     Given Bob uploads a new change to the tools project
+       And Reviewbot replies to Bob's change with Code-Review-2 and the following comment:
+       """
+       Acquiring the funds: SUCCESS
+       Executing the plans: FAILURE
+       """
+      When we check for messages by the bot
+      Then there is a message for Bob which includes the text "plans"
+       And this message does not include the text "funds"

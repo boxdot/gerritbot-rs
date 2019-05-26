@@ -32,16 +32,21 @@ class Accounts:
             account for account in self.accounts.values() if isinstance(account, Person)
         ]
 
-    def get_person(self, name):
+    def get_account(self, name, *, expected_type=None):
         try:
             account = self.accounts[name.lower()]
         except LookupError:
             raise ValueError(f"account named {name} doesn't exist")
 
-        if isinstance(account, Person):
+        if expected_type is None or isinstance(account, expected_type):
             return account
         else:
-            raise ValueError(f"account named {name} is not a person")
+            raise ValueError(
+                f"account named {name} is not an instance of {expected_type.__name__}"
+            )
+
+    def get_person(self, name):
+        return self.get_account(name, expected_type=Person)
 
     def add_account(self, account):
         if account.username in self.accounts:

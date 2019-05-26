@@ -38,18 +38,52 @@ def step_impl(context, actor, reviewer, owner):
 use_step_matcher("re")
 
 
+def parse_inline_comments(s):
+    inline_comments = {}
+    filename = None
+    for m in re.finditer(
+        r"(^Line (?P<line>\d+): (?P<comment>.*)|File: (?P<filename>.*))$",
+        s,
+        re.MULTILINE,
+    ):
+        next_filename, line_number_str, line_comment = m.group(
+            "filename", "line", "comment"
+        )
+
+        if next_filename is not None:
+            filename = next_filename
+        else:
+            line_number = int(line_number_str)
+            inline_comments.setdefault(filename, []).append(
+                {"line": line_number, "message": line_comment}
+            )
+
+    return inline_comments
+
+
 @given(
     "(?P<reviewer>.*) replies to (?P<uploader>.*)'s change with "
     "(?:(?P<label_name>[^ ]*)(?P<label_value>[+-]\d+))?"
     "(?: and )?"
     '(?:the comment "(?P<comment>.*)")?'
     "(?: and )?"
-    "(?P<has_inline_comments>the following inline comments)?"
+    "(?:"
+    "(?P<has_inline_comments>the following inline comments)"
+    "|"
+    "(?P<has_multiline_comment>the following comment)"
+    ")?"
 )
 def step_impl(
-    context, reviewer, uploader, label_name, label_value, comment, has_inline_comments
+    context,
+    reviewer,
+    uploader,
+    label_name,
+    label_value,
+    comment,
+    has_inline_comments,
+    has_multiline_comment,
 ):
-    reviewer = context.accounts.get_person(reviewer)
+    reviewer = context.accounts.get_account(reviewer)
     uploader = context.accounts.get_person(uploader)
     change = context.gerrit.get_last_change_by(uploader)
 
@@ -59,27 +93,15 @@ def step_impl(
         labels = None
 
     if has_inline_comments:
-        inline_comments = {}
-        filename = None
-        for m in re.finditer(
-            r"(^Line (?P<line>\d+): (?P<comment>.*)|File: (?P<filename>.*))$",
-            context.text,
-            re.MULTILINE,
-        ):
-            next_filename, line_number_str, line_comment = m.group(
-                "filename", "line", "comment"
-            )
-
-            if next_filename is not None:
-                filename = next_filename
-            else:
-                line_number = int(line_number_str)
-                inline_comments.setdefault(filename, []).append(
-                    {"line": line_number, "message": line_comment}
-                )
-
+        inline_comments = parse_inline_comments(context.text)
     else:
         inline_comments = None
+
+    if has_multiline_comment:
+        if comment is not None:
+            comment += "\n" + context.text
+        else:
+            comment = context.text
 
     context.gerrit.reply(
         change, reviewer, labels=labels, message=comment, comments=inline_comments
