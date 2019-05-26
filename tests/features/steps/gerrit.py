@@ -35,6 +35,13 @@ def step_impl(context, actor, reviewer, owner):
     context.gerrit.add_reviewer(change, reviewer=reviewer, user=actor)
 
 
+@given("{actor} submits the change")
+def step_impl(context, actor):
+    actor = context.accounts.get_person(actor)
+    change = context.gerrit.get_last_change_by(actor)
+    context.gerrit.submit_change(change, user=actor)
+
+
 use_step_matcher("re")
 
 

@@ -190,6 +190,9 @@ class GerritHandler:
             user=user,
         )
 
+    def submit_change(self, change, *, user):
+        self.http_post(f"/changes/{change['_number']}/submit", user=user)
+
 
 @fixture
 def setup_gerrit(

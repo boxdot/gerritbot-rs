@@ -108,3 +108,12 @@ Feature: review comments
       When we check for messages by the bot
       Then there is a message for Bob which includes the text "plans"
        And this message does not include the text "funds"
+
+  Scenario: bot comment on a merged change is suppressed
+     Given Bob uploads a new change to the tools project
+       And Alice replies to Bob's change with Code-Review+2
+       And Bob submits the change
+       And Reviewbot replies to Bob's change with Code-Review+1 and the comment "Yeah, it's good."
+      When we check for messages by the bot
+      Then there is no message for Bob which includes the text "Reviewbot"
+       And there is no message for Bob which includes the text "Yeah, it's good."

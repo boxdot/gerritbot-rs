@@ -220,6 +220,11 @@ end
 -- return nil to filter the message
 function format_comment_added(event, flags, is_human)
     local change = event.change
+
+    if not is_human and change.status ~= "NEW" then
+        return
+    end
+
     local patchset = event.patchSet
     local base_url = get_gerrit_base_url(change.url)
     local formatted_approvals = flags["notify_review_approvals"] and format_approvals(event.approvals)
