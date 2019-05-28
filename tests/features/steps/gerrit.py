@@ -76,7 +76,7 @@ def parse_inline_comments(s):
 
 
 @given(
-    "(?P<reviewer>.*) replies to (?P<uploader>.*)'s change with "
+    "(?P<reviewer>.*) replies to (?:(?P<uploader>.*)'s|the) change with "
     "(?:(?P<label_name>[^ ]*)(?P<label_value>[+-]\d+))?"
     "(?: and )?"
     '(?:the comment "(?P<comment>.*)")?'
@@ -98,7 +98,12 @@ def step_impl(
     has_multiline_comment,
 ):
     reviewer = context.accounts.get_account(reviewer)
-    uploader = context.accounts.get_person(uploader)
+
+    if uploader is not None:
+        uploader = context.accounts.get_person(uploader)
+    else:
+        uploader = reviewer
+
     change = context.gerrit.get_last_change_by(uploader)
 
     if label_value is not None:

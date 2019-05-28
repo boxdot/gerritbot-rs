@@ -240,6 +240,7 @@ function format_comment_added(event, flags, is_human)
         flags["notify_review_comments"]
         or formatted_approvals
         or (is_human and formatted_inline_comments)
+        or (event.author.email == change.owner.email and flags["notify_review_responses"])
     ) and format_comment(event.comment, is_human)
 
     if formatted_approvals

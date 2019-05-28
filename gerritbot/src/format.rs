@@ -238,6 +238,7 @@ mod test {
                 description: "Verified".to_string(),
                 value: "1".to_string(),
                 old_value: None,
+                by: None,
             })
         });
         let res = Formatter::default().format_comment_added(&FORMAT_TEST_USER, &event, true);

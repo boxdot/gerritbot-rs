@@ -119,8 +119,33 @@ fn spark_message_to_action(message: spark::Message) -> Action {
 /// Transform a gerrit event into a bot action.
 fn gerrit_event_to_action(event: gerrit::Event) -> Option<Action> {
     match event {
-        gerrit::Event::CommentAdded(event) => Some(Action::UpdateApprovals(Box::new(event))),
+        gerrit::Event::CommentAdded(event) => Some(Action::CommentAdded(Box::new(event))),
         gerrit::Event::ReviewerAdded(event) => Some(Action::ReviewerAdded(Box::new(event))),
+    }
+}
+
+trait IsHuman {
+    fn is_human(&self) -> bool;
+}
+
+impl IsHuman for gerrit::User {
+    fn is_human(&self) -> bool {
+        // XXX: Maybe this should be sophisticated to avoid matching humans
+        // whose name contains "bot"?
+        match self.username {
+            Some(ref username) if username.contains("bot") => false,
+            _ => true,
+        }
+    }
+}
+
+trait SparkEmail {
+    fn spark_email(&self) -> Option<&spark::EmailRef>;
+}
+
+impl SparkEmail for gerrit::User {
+    fn spark_email(&self) -> Option<&spark::EmailRef> {
+        self.email.as_ref().map(|s| spark::EmailRef::new(s))
     }
 }
 
@@ -131,12 +156,15 @@ pub fn request_extended_gerrit_info(event: &gerrit::Event) -> Cow<'static, [gerr
         gerrit::Event::CommentAdded(event) => {
             let owner_name = event.change.owner.username.as_ref();
             let approver_name = event.author.username.as_ref();
-            let is_human = approver_name
-                .map(|name| !name.to_lowercase().contains("bot"))
-                .unwrap_or(false);
 
-            if owner_name != approver_name && is_human && maybe_has_inline_comments(event) {
+            if event.author.is_human() && maybe_has_inline_comments(event) {
                 extended_info.push(gerrit::ExtendedInfo::InlineComments);
+            }
+
+            // Fetch existing reviewers, so they can be updated when the author
+            // comments.
+            if owner_name == approver_name {
+                extended_info.push(gerrit::ExtendedInfo::AllApprovals);
             }
 
             // Could be smarter here by checking for old_value and if the value
@@ -202,12 +230,10 @@ where
             Action::UnknownCommand { sender } => {
                 vec![Task::Reply(Response::new(sender, GREETINGS_MSG))]
             }
-            Action::UpdateApprovals(event) => self
-                .get_approvals_msg(event)
-                .map(|(user, message, _is_human)| {
-                    Task::Reply(Response::new(user.email().to_owned(), message))
-                })
+            Action::CommentAdded(event) => self
+                .get_comment_messages(event)
                 .into_iter()
+                .map(|(email, message)| Task::Reply(Response::new(email, message)))
                 .collect(),
             Action::ReviewerAdded(event) => self
                 .get_reviewer_added_msg(&event)
@@ -320,32 +346,47 @@ where
         return response;
     }
 
+    fn get_comment_response_messages(
+        &self,
+        event: Box<gerrit::CommentAddedEvent>,
+    ) -> Vec<(spark::Email, String)> {
+        event
+            .patchset
+            .approvals
+            .iter()
+            .flatten()
+            .filter_map(|approval| approval.by.as_ref())
+            .filter(|user| user.is_human())
+            .filter_map(|user| user.spark_email())
+            .filter_map(|email| self.state.find_user_by_email(email))
+            .filter(|user| user.has_flag(UserFlag::NotifyReviewResponses))
+            .filter_map(|user| {
+                self.formatter
+                    .format_comment_added(user, &event, event.author.is_human())
+                    .map_err(|e| error!("message formatting failed: {}", e))
+                    .unwrap_or(None)
+                    .filter(|message| !self.state.is_filtered(user, &message))
+                    .map(|message| (user.email().to_owned(), message))
+            })
+            .collect()
+    }
+
     fn get_approvals_msg(
         &mut self,
         event: Box<gerrit::CommentAddedEvent>,
-    ) -> Option<(&User, String, bool)> {
-        debug!("Incoming approvals: {:#?}", event);
-
+    ) -> Option<(spark::Email, String)> {
         let approvals = event
             .approvals
             .as_ref()
             .map(Vec::as_slice)
             .unwrap_or(&[][..]);
-        let change = &event.change;
-        let approver = event.author.username.as_ref()?;
-        if Some(approver) == change.owner.username.as_ref() {
-            // No need to notify about user's own approvals.
-            return None;
-        }
-        let owner_email = spark::EmailRef::new(change.owner.email.as_ref()?);
+        let owner_email = event.change.owner.spark_email()?;
 
         // try to find the user and check it is enabled
         let user = self
             .state
             .find_user_by_email(owner_email)
             .filter(|user| user.has_any_flag(REVIEW_COMMENT_FLAGS))?;
-
-        let is_human = !approver.to_lowercase().contains("bot");
 
         // filter all messages that were already sent to the user recently
         if !approvals.is_empty() && self.rate_limiter.limit(user, &*event) {
@@ -354,7 +395,7 @@ where
         }
 
         self.formatter
-            .format_comment_added(user, &event, is_human)
+            .format_comment_added(user, &event, event.author.is_human())
             .unwrap_or_else(|e| {
                 error!("message formatting failed: {}", e);
                 None
@@ -363,7 +404,22 @@ where
                 // if user has configured and enabled a filter try to apply it
                 !self.state.is_filtered(user, &msg)
             })
-            .map(|m| (user, m, is_human))
+            .map(|m| (owner_email.to_owned(), m))
+    }
+
+    fn get_comment_messages(
+        &mut self,
+        event: Box<gerrit::CommentAddedEvent>,
+    ) -> Vec<(spark::Email, String)> {
+        debug!("Incoming approvals: {:#?}", event);
+        let owner_email = event.change.owner.spark_email();
+        let approver_email = event.author.spark_email();
+
+        if owner_email == approver_email {
+            self.get_comment_response_messages(event)
+        } else {
+            self.get_approvals_msg(event).into_iter().collect()
+        }
     }
 
     fn get_reviewer_added_msg(
@@ -423,7 +479,7 @@ enum Action {
     UnknownCommand {
         sender: spark::Email,
     },
-    UpdateApprovals(Box<gerrit::CommentAddedEvent>),
+    CommentAdded(Box<gerrit::CommentAddedEvent>),
     ReviewerAdded(Box<gerrit::ReviewerAddedEvent>),
 }
 
@@ -759,10 +815,9 @@ mod test {
         bot.state.add_user(EmailRef::new("author@example.com"));
         let res = bot.get_approvals_msg(Box::new(get_event()));
         assert!(res.is_some());
-        let (user, msg, is_human) = res.unwrap();
-        assert_eq!(user.email(), EmailRef::new("author@example.com"));
+        let (email, msg) = res.unwrap();
+        assert_eq!(email, EmailRef::new("author@example.com"));
         assert!(msg.contains("Some review."));
-        assert!(is_human);
     }
 
     #[test]
@@ -787,10 +842,9 @@ mod test {
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
-            let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.email(), EmailRef::new("author@example.com"));
+            let (user, msg) = res.unwrap();
+            assert_eq!(user, EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
-            assert!(is_human);
         }
         {
             let res = bot
@@ -804,10 +858,9 @@ mod test {
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
-            let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.email(), EmailRef::new("author@example.com"));
+            let (email, msg) = res.unwrap();
+            assert_eq!(email, EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
-            assert!(is_human);
         }
     }
 
@@ -820,10 +873,9 @@ mod test {
         {
             let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
-            let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.email(), EmailRef::new("author@example.com"));
+            let (email, msg) = res.unwrap();
+            assert_eq!(email, EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
-            assert!(is_human);
         }
         {
             let res = bot.get_approvals_msg(Box::new(get_event()));
@@ -840,19 +892,17 @@ mod test {
         {
             let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
-            let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.email(), EmailRef::new("author@example.com"));
+            let (email, msg) = res.unwrap();
+            assert_eq!(email, EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
-            assert!(is_human);
         }
         thread::sleep(Duration::from_millis(200));
         {
             let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
-            let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.email(), EmailRef::new("author@example.com"));
+            let (email, msg) = res.unwrap();
+            assert_eq!(email, EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
-            assert!(is_human);
         }
     }
 

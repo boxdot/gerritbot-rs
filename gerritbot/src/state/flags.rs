@@ -15,6 +15,8 @@ pub enum UserFlag {
     NotifyReviewInlineComments,
     /// User wants notification messages when added as reviewer to a change.
     NotifyReviewerAdded,
+    /// User wants notification messages for review comments without approvals.
+    NotifyReviewResponses,
 }
 
 impl Display for UserFlag {
@@ -103,6 +105,7 @@ pub const NOTIFICATION_FLAGS: &[UserFlag] = &[
     UserFlag::NotifyReviewComments,
     UserFlag::NotifyReviewInlineComments,
     UserFlag::NotifyReviewerAdded,
+    UserFlag::NotifyReviewResponses,
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
