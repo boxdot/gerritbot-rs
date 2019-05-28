@@ -29,6 +29,7 @@ pub struct Approval {
     pub description: String,
     pub value: String,
     pub old_value: Option<String>,
+    pub by: Option<User>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -48,6 +49,7 @@ pub struct Patchset {
     pub size_insertions: i32,
     pub size_deletions: i32,
     pub comments: Option<Vec<InlineComment>>,
+    pub approvals: Option<Vec<Approval>>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -401,6 +403,7 @@ pub fn event_stream(connection: Connection) -> impl Stream<Item = Event, Error =
 pub enum ExtendedInfo {
     SubmitRecords,
     InlineComments,
+    AllApprovals,
 }
 
 /// Fetch extended event info. On error the original event and an error message
@@ -422,6 +425,10 @@ fn fetch_extended_info(
 
     if extended_info.contains(&ExtendedInfo::InlineComments) {
         query += " --patch-sets --comments";
+    }
+
+    if extended_info.contains(&ExtendedInfo::AllApprovals) {
+        query += " --all-approvals";
     }
 
     let change_id = match &event {
