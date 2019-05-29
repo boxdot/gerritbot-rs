@@ -13,3 +13,11 @@ Feature: responses to review comments
        And Bob replies to the change with the comment "Please reconsider."
       When we check for messages by the bot
       Then there is a message for Alice which includes the text "Please reconsider"
+
+  Scenario: comment response not self
+     Given Bob uploads a new change to the tools project
+       And Bob replies to the change with Code-Review+2 and the comment "I like it."
+       And Alice replies to Bob's change with Code-Review-2 and the comment "I don't like it."
+       And Bob replies to the change with the comment "Please reconsider."
+      When we check for messages by the bot
+      Then there is no message for Bob which includes the text "Please reconsider"

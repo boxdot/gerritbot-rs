@@ -356,6 +356,7 @@ where
             .iter()
             .flatten()
             .filter_map(|approval| approval.by.as_ref())
+            .filter(|user| user.email != event.author.email)
             .filter(|user| user.is_human())
             .filter_map(|user| user.spark_email())
             .filter_map(|email| self.state.find_user_by_email(email))
