@@ -1,18 +1,17 @@
 image: ekidd/rust-musl-builder:stable-openssl11
 
 stages:
-  - test
-  - build
+  - build-and-test
   - acceptance-test
 
-test:
+test-x86_64-unknown-linux-musl-debug:
   cache:
     key: ${CI_COMMIT_REF_SLUG}
     paths:
       - target/
       - cargo-home/
 
-  stage: test
+  stage: build-and-test
   script:
     - cp -r $HOME/.cargo cargo-home
     - export CARGO_HOME=$PWD/cargo-home
@@ -20,14 +19,14 @@ test:
     - cargo build --all
     - cargo test --all --verbose
 
-build-x86_64-unknown-linux-musl:
+build-x86_64-unknown-linux-musl-release:
   cache:
     key: ${CI_COMMIT_REF_SLUG}
     paths:
       - target/
       - cargo-home/
 
-  stage: build
+  stage: build-and-test
 
   artifacts:
     name: "gerritbot-$CI_JOB_NAME"
@@ -46,7 +45,7 @@ build-x86_64-unknown-linux-musl:
         --bin gerritbot \
         --example gerritbot-console
 
-build-armv7-unknown-linux-gnueabihf:
+build-armv7-unknown-linux-gnueabihf-release:
   image: japaric/armv7-unknown-linux-gnueabihf
 
   cache:
@@ -54,7 +53,7 @@ build-armv7-unknown-linux-gnueabihf:
     paths:
       - cargo-home/
 
-  stage: build
+  stage: build-and-test
 
   artifacts:
     name: "gerritbot-$CI_JOB_NAME"
@@ -106,11 +105,11 @@ build-armv7-unknown-linux-gnueabihf:
         --bin gerritbot
       RUST
 
-acceptance-test:x86_64-unknown-linux-musl:
+acceptance-test-x86_64-unknown-linux-musl-release:
   stage: acceptance-test
 
   dependencies:
-    - build-x86_64-unknown-linux-musl
+    - build-x86_64-unknown-linux-musl-release
 
   before_script:
     - sudo apt-get update
