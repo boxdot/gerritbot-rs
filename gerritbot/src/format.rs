@@ -235,7 +235,7 @@ mod test {
         event.approvals.as_mut().map(|approvals| {
             approvals.push(gerrit::Approval {
                 approval_type: "Verified".to_string(),
-                description: "Verified".to_string(),
+                description: Some("Verified".to_string()),
                 value: "1".to_string(),
                 old_value: None,
                 by: None,
