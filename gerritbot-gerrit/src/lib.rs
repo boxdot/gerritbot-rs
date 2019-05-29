@@ -26,7 +26,7 @@ pub struct User {
 pub struct Approval {
     #[serde(rename = "type")]
     pub approval_type: String,
-    pub description: String,
+    pub description: Option<String>,
     pub value: String,
     pub old_value: Option<String>,
     pub by: Option<User>,
