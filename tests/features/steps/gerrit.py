@@ -35,20 +35,35 @@ def step_impl(context, actor, reviewer, owner):
     context.gerrit.add_reviewer(change, reviewer=reviewer, user=actor)
 
 
-@given("{actor} submits the change")
-def step_impl(context, actor):
-    actor = context.accounts.get_person(actor)
-    change = context.gerrit.get_last_change_by(actor)
-    context.gerrit.submit_change(change, user=actor)
-
-
 use_step_matcher("re")
 
 
-@given('(?P<actor>.*) abandons the change(?: with the comment "(?P<comment>.*)")?')
-def step_impl(context, actor, comment):
+@given("(?P<actor>.*) submits (?:(?P<owner>.*)'s|the) change")
+def step_impl(context, actor, owner):
     actor = context.accounts.get_person(actor)
-    change = context.gerrit.get_last_change_by(actor)
+
+    if owner is not None:
+        owner = context.accounts.get_person(owner)
+    else:
+        owner = actor
+
+    change = context.gerrit.get_last_change_by(owner)
+    context.gerrit.submit_change(change, user=actor)
+
+
+@given(
+    "(?P<actor>.*) abandons (?:(?P<owner>.*)'s|the) change"
+    '(?: with the comment "(?P<comment>.*)")?'
+)
+def step_impl(context, actor, owner, comment):
+    actor = context.accounts.get_person(actor)
+
+    if owner is not None:
+        owner = context.accounts.get_person(owner)
+    else:
+        owner = actor
+
+    change = context.gerrit.get_last_change_by(owner)
     context.gerrit.abandon_change(change, comment=comment, user=actor)
 
 

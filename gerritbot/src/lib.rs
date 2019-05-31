@@ -121,6 +121,8 @@ fn gerrit_event_to_action(event: gerrit::Event) -> Option<Action> {
     match event {
         gerrit::Event::CommentAdded(event) => Some(Action::CommentAdded(Box::new(event))),
         gerrit::Event::ReviewerAdded(event) => Some(Action::ReviewerAdded(Box::new(event))),
+        gerrit::Event::ChangeMerged(event) => Some(Action::ChangeMerged(Box::new(event))),
+        gerrit::Event::ChangeAbandoned(event) => Some(Action::ChangeAbandoned(Box::new(event))),
     }
 }
 
@@ -170,6 +172,9 @@ pub fn request_extended_gerrit_info(event: &gerrit::Event) -> Cow<'static, [gerr
             // Could be smarter here by checking for old_value and if the value
             // is positive.
             extended_info.push(gerrit::ExtendedInfo::SubmitRecords);
+        }
+        gerrit::Event::ChangeMerged(_) | gerrit::Event::ChangeAbandoned(_) => {
+            extended_info.push(gerrit::ExtendedInfo::AllApprovals);
         }
         _ => (),
     }
@@ -238,6 +243,18 @@ where
             Action::ReviewerAdded(event) => self
                 .get_reviewer_added_msg(&event)
                 .map(|(user, message)| Task::Reply(Response::new(user.email().to_owned(), message)))
+                .into_iter()
+                .collect(),
+            Action::ChangeMerged(event) => self
+                .get_change_merged_messages(&event)
+                .into_iter()
+                .map(|(email, message)| Task::Reply(Response::new(email, message)))
+                .into_iter()
+                .collect(),
+            Action::ChangeAbandoned(event) => self
+                .get_change_abandoned_messages(&event)
+                .into_iter()
+                .map(|(email, message)| Task::Reply(Response::new(email, message)))
                 .into_iter()
                 .collect(),
         }
@@ -346,20 +363,43 @@ where
         return response;
     }
 
-    fn get_comment_response_messages(
-        &self,
-        event: Box<gerrit::CommentAddedEvent>,
-    ) -> Vec<(spark::Email, String)> {
-        event
-            .patchset
+    /// Return iterator of users which might be interested in an event.
+    fn interested_users<'bot, 'event, 'result>(
+        &'bot self,
+        change: &'event gerrit::Change,
+        patchset: &'event gerrit::Patchset,
+    ) -> impl Iterator<Item = &'bot User> + 'result
+    where
+        'bot: 'result,
+        'event: 'result,
+    {
+        // TODO: this function currently only considers users that added an
+        // approval on the patchset in question. Ideally, users that approved
+        // (or event commented) on any patchset might be considered interested.
+        // For that to work with the current model for each event we'd have to
+        // query gerrit with the --all-reviewers flag to get all reviewers of a
+        // change (or even --patch-sets to get all patchsets) as well. This
+        // might create quite some load on the gerrit server. We can already get
+        // almost all of that information by subscribing to events. This would
+        // holding more state and tracking changes, reviewers etc.
+        let _ = change;
+        patchset
             .approvals
             .iter()
             .flatten()
             .filter_map(|approval| approval.by.as_ref())
-            .filter(|user| user.email != event.author.email)
+            .chain(std::iter::once(&change.owner))
             .filter(|user| user.is_human())
             .filter_map(|user| user.spark_email())
-            .filter_map(|email| self.state.find_user_by_email(email))
+            .filter_map(move |email| self.state.find_user_by_email(email))
+    }
+
+    fn get_comment_response_messages(
+        &self,
+        event: Box<gerrit::CommentAddedEvent>,
+    ) -> Vec<(spark::Email, String)> {
+        self.interested_users(&event.change, &event.patchset)
+            .filter(|user| Some(user.email()) != event.author.spark_email())
             .filter(|user| user.has_flag(UserFlag::NotifyReviewResponses))
             .filter_map(|user| {
                 self.formatter
@@ -448,6 +488,42 @@ where
         Some((user, message))
     }
 
+    fn get_change_merged_messages(
+        &mut self,
+        event: &gerrit::ChangeMergedEvent,
+    ) -> Vec<(spark::Email, String)> {
+        self.interested_users(&event.change, &event.patchset)
+            .filter(|user| event.submitter.spark_email() != Some(user.email()))
+            .filter(|user| user.has_flag(UserFlag::NotifyChangeMerged))
+            .filter_map(|user| {
+                self.formatter
+                    .format_change_merged(user, &event)
+                    .map_err(|e| error!("message formatting failed: {}", e))
+                    .ok()
+                    .filter(|message| !self.state.is_filtered(user, &message))
+                    .map(|message| (user.email().to_owned(), message))
+            })
+            .collect()
+    }
+
+    fn get_change_abandoned_messages(
+        &mut self,
+        event: &gerrit::ChangeAbandonedEvent,
+    ) -> Vec<(spark::Email, String)> {
+        self.interested_users(&event.change, &event.patchset)
+            .filter(|user| event.abandoner.spark_email() != Some(user.email()))
+            .filter(|user| dbg!(user).has_flag(UserFlag::NotifyChangeAbandoned))
+            .filter_map(|user| {
+                self.formatter
+                    .format_change_abandoned(user, &event)
+                    .map_err(|e| error!("message formatting failed: {}", e))
+                    .ok()
+                    .filter(|message| !self.state.is_filtered(user, &message))
+                    .map(|message| (user.email().to_owned(), message))
+            })
+            .collect()
+    }
+
     pub fn save<P>(&self, filename: P) -> Result<(), BotError>
     where
         P: AsRef<Path>,
@@ -482,6 +558,8 @@ enum Action {
     },
     CommentAdded(Box<gerrit::CommentAddedEvent>),
     ReviewerAdded(Box<gerrit::ReviewerAddedEvent>),
+    ChangeMerged(Box<gerrit::ChangeMergedEvent>),
+    ChangeAbandoned(Box<gerrit::ChangeAbandonedEvent>),
 }
 
 #[derive(Debug)]

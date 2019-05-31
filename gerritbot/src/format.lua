@@ -269,3 +269,27 @@ function format_reviewer_added(event, flags)
         format_user(base_url, change.owner, "owner")
     )
 end
+
+function format_change_merged(event, flags)
+    local change = event.change
+    local base_url = get_gerrit_base_url(change.url)
+
+    return string.format(
+        "%s (%s) 📦 Submitted by %s",
+        format_change_subject(change),
+        format_change_project(base_url, change),
+        format_user(base_url, event.submitter, "owner")
+    )
+end
+
+function format_change_abandoned(event, flags)
+    local change = event.change
+    local base_url = get_gerrit_base_url(change.url)
+
+    return string.format(
+        "%s (%s) ☠  Abandoned by %s",
+        format_change_subject(change),
+        format_change_project(base_url, change),
+        format_user(base_url, event.abandoner, "owner")
+    )
+end

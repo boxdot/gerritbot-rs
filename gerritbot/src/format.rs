@@ -11,7 +11,14 @@ use crate::state::{User, NOTIFICATION_FLAGS};
 pub const DEFAULT_FORMAT_SCRIPT: &str = include_str!("format.lua");
 const LUA_FORMAT_COMMENT_ADDED: &str = "format_comment_added";
 const LUA_FORMAT_REVIEWER_ADDED: &str = "format_reviewer_added";
-const LUA_FORMAT_FUNCTIONS: &[&str] = &[LUA_FORMAT_COMMENT_ADDED, LUA_FORMAT_REVIEWER_ADDED];
+const LUA_FORMAT_CHANGE_MERGED: &str = "format_change_merged";
+const LUA_FORMAT_CHANGE_ABANDONED: &str = "format_change_abandoned";
+const LUA_FORMAT_FUNCTIONS: &[&str] = &[
+    LUA_FORMAT_COMMENT_ADDED,
+    LUA_FORMAT_REVIEWER_ADDED,
+    LUA_FORMAT_CHANGE_MERGED,
+    LUA_FORMAT_CHANGE_ABANDONED,
+];
 
 pub struct Formatter {
     lua: Lua,
@@ -152,6 +159,26 @@ impl Formatter {
                 (true, _) => format!("another {} users", enabled_user_count),
             }
         ))
+    }
+
+    pub fn format_change_merged(
+        &self,
+        user: &User,
+        event: &gerrit::ChangeMergedEvent,
+    ) -> Result<String, String> {
+        self.lua.context(|context| {
+            Formatter::format_lua(context, LUA_FORMAT_CHANGE_MERGED, user, event, vec![])
+        })
+    }
+
+    pub fn format_change_abandoned(
+        &self,
+        user: &User,
+        event: &gerrit::ChangeAbandonedEvent,
+    ) -> Result<String, String> {
+        self.lua.context(|context| {
+            Formatter::format_lua(context, LUA_FORMAT_CHANGE_ABANDONED, user, event, vec![])
+        })
     }
 }
 

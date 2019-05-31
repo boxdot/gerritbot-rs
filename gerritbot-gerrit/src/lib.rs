@@ -138,12 +138,50 @@ pub struct ReviewerAddedEvent {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct ChangeMergedEvent {
+    pub change: Change,
+    #[serde(rename = "patchSet")]
+    pub patchset: Patchset,
+    pub submitter: User,
+    #[serde(rename = "newRev")]
+    pub new_revision: String,
+    #[serde(rename = "eventCreatedOn")]
+    pub created_on: u32,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct ChangeAbandonedEvent {
+    pub change: Change,
+    #[serde(rename = "patchSet")]
+    pub patchset: Patchset,
+    pub abandoner: User,
+    pub reason: Option<String>,
+    #[serde(rename = "eventCreatedOn")]
+    pub created_on: u32,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub enum Event {
     #[serde(rename = "comment-added")]
     CommentAdded(CommentAddedEvent),
     #[serde(rename = "reviewer-added")]
     ReviewerAdded(ReviewerAddedEvent),
+    #[serde(rename = "change-merged")]
+    ChangeMerged(ChangeMergedEvent),
+    #[serde(rename = "change-abandoned")]
+    ChangeAbandoned(ChangeAbandonedEvent),
+}
+
+impl Event {
+    fn change_and_patchset_mut(&mut self) -> Option<(&mut Change, &mut Patchset)> {
+        Some(match self {
+            Event::CommentAdded(event) => (&mut event.change, &mut event.patchset),
+            Event::ReviewerAdded(event) => (&mut event.change, &mut event.patchset),
+            Event::ChangeMerged(event) => (&mut event.change, &mut event.patchset),
+            Event::ChangeAbandoned(event) => (&mut event.change, &mut event.patchset),
+        })
+    }
 }
 
 fn get_pub_key_path(priv_key_path: &PathBuf) -> PathBuf {
@@ -345,12 +383,18 @@ impl CommandRunner {
 
 fn receiver_into_event_stream(rx: Receiver<String>) -> impl Stream<Item = Event, Error = ()> {
     rx.filter_map(|event_data| {
-        let event_result = serde_json::from_str(&event_data);
-        debug!("Incoming Gerrit event: {:#?}", event_result);
-        // Ignore JSON decoding errors.
-        event_result.ok()
+        serde_json::from_str(&event_data)
+            .map_err(|e| error!("failed to decode gerrit event: {}", e))
+            .ok()
     })
+    .inspect(|event| debug!("Incoming Gerrit event: {:#?}", event))
 }
+
+const GERRIT_STREAM_EVENTS_COMMAND: &str = "gerrit stream-events \
+                                            -s comment-added \
+                                            -s reviewer-added \
+                                            -s change-abandoned \
+                                            -s change-merged";
 
 pub fn event_stream(connection: Connection) -> impl Stream<Item = Event, Error = ()> {
     let (main_tx, rx) = channel(1);
@@ -361,7 +405,7 @@ pub fn event_stream(connection: Connection) -> impl Stream<Item = Event, Error =
             .channel_session()
             .map_err(|err| error!("Could not open SSH channel: {:?}", err))?;
         ssh_channel
-            .exec("gerrit stream-events -s comment-added -s reviewer-added")
+            .exec(GERRIT_STREAM_EVENTS_COMMAND)
             .map_err(|err| {
                 error!(
                     "Could not execute gerrit stream-event command over ssh: {:?}",
@@ -417,6 +461,7 @@ fn fetch_extended_info(
         return future::Either::A(future::ok(event));
     }
 
+    let mut event = event;
     let mut query = "gerrit query --format=JSON".to_string();
 
     if extended_info.contains(&ExtendedInfo::SubmitRecords) {
@@ -431,9 +476,10 @@ fn fetch_extended_info(
         query += " --all-approvals";
     }
 
-    let change_id = match &event {
-        Event::CommentAdded(event) => &event.change.id,
-        Event::ReviewerAdded(event) => &event.change.id,
+    let change_id = if let Some((change, _)) = event.change_and_patchset_mut() {
+        &change.id
+    } else {
+        return future::Either::A(future::ok(event));
     };
 
     query += &format!(" change:{}", change_id);
@@ -446,11 +492,10 @@ fn fetch_extended_info(
             };
             let line = result.lines().next().unwrap_or("");
 
-            let mut event = event;
-            let (change, patchset): (&mut Change, &mut Patchset) = match &mut event {
-                Event::CommentAdded(event) => (&mut event.change, &mut event.patchset),
-                Event::ReviewerAdded(event) => (&mut event.change, &mut event.patchset),
-            };
+            // Need to borrow here again to prevent overlapping borrows.
+            // change_and_patchset_mut cannot return None here if it didn't
+            // above.
+            let (change, patchset) = event.change_and_patchset_mut().unwrap();
 
             let mut new_change: Change = match serde_json::from_str(line) {
                 Ok(change) => change,
