@@ -18,6 +18,7 @@ mod command;
 mod format;
 mod rate_limit;
 mod state;
+mod version;
 
 use command::Command;
 use format::Formatter;
@@ -25,6 +26,7 @@ pub use format::DEFAULT_FORMAT_SCRIPT;
 use rate_limit::RateLimiter;
 pub use state::State;
 use state::{User, UserFlag, NOTIFICATION_FLAGS, REVIEW_COMMENT_FLAGS};
+use version::VERSION_INFO;
 
 pub trait GerritCommandRunner {}
 
@@ -277,7 +279,14 @@ where
                 ]
             }
             Command::Help => vec![Task::Reply(Response::new(sender, HELP_MSG))],
-            Command::Version => vec![Task::Reply(Response::new(sender, VERSION_MSG.to_string()))],
+            Command::Version => self
+                .formatter
+                .format_version_info(&VERSION_INFO)
+                .map(|version_message| Task::Reply(Response::new(sender, version_message)))
+                .map_err(|e| error!("failed to format version: {}", e))
+                .ok()
+                .into_iter()
+                .collect(),
             Command::Status => self
                 .status_for(&sender)
                 .map(|status| Task::Reply(Response::new(sender, status)))
@@ -612,18 +621,6 @@ const HELP_MSG: &str = r#"Commands:
 
 This project is open source, feel free to help us at: https://github.com/boxdot/gerritbot-rs
 "#;
-
-lazy_static! {
-    static ref VERSION_MSG: String = format!(
-        "{} {} (commit id {}, built with Rust {} for {} on {})",
-        env!("CARGO_PKG_NAME"),
-        env!("CARGO_PKG_VERSION"),
-        option_env!("CI_COMMIT_SHA").unwrap_or(env!("VERGEN_SHA")),
-        env!("GERRITBOT_RUSTC_VERSION"),
-        env!("VERGEN_TARGET_TRIPLE"),
-        env!("VERGEN_BUILD_DATE"),
-    );
-}
 
 /// Guess if the change might have comments by looking for a specially formatted
 /// comment.

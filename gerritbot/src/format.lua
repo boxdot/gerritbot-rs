@@ -293,3 +293,15 @@ function format_change_abandoned(event, flags)
         format_user(base_url, event.abandoner, "owner")
     )
 end
+
+function format_version_info(version_info)
+    return string.format(
+        "%s %s (commit id: %s, built with Rust %s for %s on %s)",
+        version_info.package_name,
+        version_info.package_version,
+        version_info.ci_commit_id or version_info.git_commit_id,
+        version_info.rustc_version,
+        version_info.target_triple,
+        version_info.build_date
+    )
+end

@@ -1,23 +1,23 @@
-use rlua::{
-    FromLua, Function as LuaFunction, Lua, MultiValue as LuaMultiValue, StdLib as LuaStdLib,
-    Value as LuaValue,
-};
+use rlua::{prelude::*, StdLib as LuaStdLib};
 use serde::Serialize;
 
 use gerritbot_gerrit as gerrit;
 
 use crate::state::{User, NOTIFICATION_FLAGS};
+use crate::version::VersionInfo;
 
 pub const DEFAULT_FORMAT_SCRIPT: &str = include_str!("format.lua");
 const LUA_FORMAT_COMMENT_ADDED: &str = "format_comment_added";
 const LUA_FORMAT_REVIEWER_ADDED: &str = "format_reviewer_added";
 const LUA_FORMAT_CHANGE_MERGED: &str = "format_change_merged";
 const LUA_FORMAT_CHANGE_ABANDONED: &str = "format_change_abandoned";
+const LUA_FORMAT_VERSION_INFO: &str = "format_version_info";
 const LUA_FORMAT_FUNCTIONS: &[&str] = &[
     LUA_FORMAT_COMMENT_ADDED,
     LUA_FORMAT_REVIEWER_ADDED,
     LUA_FORMAT_CHANGE_MERGED,
     LUA_FORMAT_CHANGE_ABANDONED,
+    LUA_FORMAT_VERSION_INFO,
 ];
 
 pub struct Formatter {
@@ -74,7 +74,7 @@ impl Formatter {
     fn format_lua<'lua, T, E>(
         lua: rlua::Context<'lua>,
         function_name: &str,
-        user: &User,
+        user: Option<&User>,
         event: E,
         extra_args: Vec<LuaValue<'lua>>,
     ) -> Result<T, String>
@@ -90,9 +90,13 @@ impl Formatter {
 
         let event = rlua_serde::to_value(lua, event)
             .map_err(|e| format!("failed to serialize event: {}", e))?;
-        let flags = get_flags_table(user, lua)
-            .map(LuaValue::Table)
-            .map_err(|err| format!("failed to create flags table: {}", err))?;
+        let flags = if let Some(user) = user {
+            get_flags_table(user, lua)
+                .map(LuaValue::Table)
+                .map_err(|err| format!("failed to create flags table: {}", err))?
+        } else {
+            LuaNil
+        };
 
         let args = {
             let mut v = Vec::with_capacity(2 + extra_args.len());
@@ -120,7 +124,7 @@ impl Formatter {
             Formatter::format_lua(
                 context,
                 LUA_FORMAT_COMMENT_ADDED,
-                user,
+                Some(user),
                 event,
                 vec![LuaValue::Boolean(is_human)],
             )
@@ -133,7 +137,7 @@ impl Formatter {
         event: &gerrit::ReviewerAddedEvent,
     ) -> Result<String, String> {
         self.lua.context(|context| {
-            Formatter::format_lua(context, LUA_FORMAT_REVIEWER_ADDED, user, event, vec![])
+            Formatter::format_lua(context, LUA_FORMAT_REVIEWER_ADDED, Some(user), event, vec![])
         })
     }
 
@@ -167,7 +171,7 @@ impl Formatter {
         event: &gerrit::ChangeMergedEvent,
     ) -> Result<String, String> {
         self.lua.context(|context| {
-            Formatter::format_lua(context, LUA_FORMAT_CHANGE_MERGED, user, event, vec![])
+            Formatter::format_lua(context, LUA_FORMAT_CHANGE_MERGED, Some(user), event, vec![])
         })
     }
 
@@ -177,7 +181,13 @@ impl Formatter {
         event: &gerrit::ChangeAbandonedEvent,
     ) -> Result<String, String> {
         self.lua.context(|context| {
-            Formatter::format_lua(context, LUA_FORMAT_CHANGE_ABANDONED, user, event, vec![])
+            Formatter::format_lua(context, LUA_FORMAT_CHANGE_ABANDONED, Some(user), event, vec![])
+        })
+    }
+
+    pub fn format_version_info(&self, version_info: &VersionInfo) -> Result<String, String> {
+        self.lua.context(|context| {
+            Formatter::format_lua(context, LUA_FORMAT_VERSION_INFO, None, version_info, vec![])
         })
     }
 }
