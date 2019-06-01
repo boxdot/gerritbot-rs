@@ -234,9 +234,14 @@ where
     fn update(&mut self, action: Action) -> Vec<Task> {
         match action {
             Action::RunCommand { sender, command } => self.run_command(sender, command),
-            Action::UnknownCommand { sender } => {
-                vec![Task::Reply(Response::new(sender, GREETINGS_MSG))]
-            }
+            Action::UnknownCommand { sender } => self
+                .formatter
+                .format_unknown_command()
+                .map(|message| Task::Reply(Response::new(sender, message)))
+                .map_err(|e| error!("failed to format message: {}", e))
+                .ok()
+                .into_iter()
+                .collect(),
             Action::CommentAdded(event) => self
                 .get_comment_messages(event)
                 .into_iter()
@@ -278,7 +283,14 @@ where
                     Task::Reply(Response::new(sender, "Got it! I will stay silent.")),
                 ]
             }
-            Command::Help => vec![Task::Reply(Response::new(sender, HELP_MSG))],
+            Command::Help => self
+                .formatter
+                .format_help()
+                .map(|message| Task::Reply(Response::new(sender, message)))
+                .map_err(|e| error!("failed to format help: {}", e))
+                .ok()
+                .into_iter()
+                .collect(),
             Command::Version => self
                 .formatter
                 .format_version_info(&VERSION_INFO)
@@ -594,33 +606,6 @@ enum Task {
     Reply(Response),
     Save,
 }
-
-const GREETINGS_MSG: &str =
-r#"Hi. I am GerritBot. I can watch Gerrit reviews for you, and notify you about new +1/-1's.
-
-To enable notifications, just type in **enable**. A small note: your email in Spark and in Gerrit has to be the same. Otherwise, I can't match your accounts.
-
-For more information, type in **help**.
-"#;
-
-const HELP_MSG: &str = r#"Commands:
-
-`enable` -- I will start notifying you.
-
-`disable` -- I will stop notifying you.
-
-`filter <regex>` -- Filter all messages by applying the specified regex pattern. If the pattern matches, the message is filtered. The pattern is applied to the full text I send to you. Be aware, to send this command **not** in markdown mode, otherwise, Spark would eat some special characters in the pattern. For regex specification, cf. https://docs.rs/regex/0.2.10/regex/#syntax.
-
-`filter enable` -- Enable the filtering of messages with the configured filter.
-
-`filter disable` -- Disable the filtering of messages with the configured filter.
-
-`status` -- Show if I am notifying you, and a little bit more information. 😉
-
-`help` -- This message
-
-This project is open source, feel free to help us at: https://github.com/boxdot/gerritbot-rs
-"#;
 
 /// Guess if the change might have comments by looking for a specially formatted
 /// comment.

@@ -64,6 +64,33 @@ fn get_flags_table<'lua>(user: &User, lua: rlua::Context<'lua>) -> rlua::Result<
     }))
 }
 
+const GREETINGS_MSG: &str =
+    r#"Hi. I am GerritBot. I can watch Gerrit reviews for you, and notify you about new +1/-1's.
+
+To enable notifications, just type in **enable**. A small note: your email in Spark and in Gerrit has to be the same. Otherwise, I can't match your accounts.
+
+For more information, type in **help**.
+"#;
+
+const HELP_MSG: &str = r#"Commands:
+
+`enable` -- I will start notifying you.
+
+`disable` -- I will stop notifying you.
+
+`filter <regex>` -- Filter all messages by applying the specified regex pattern. If the pattern matches, the message is filtered. The pattern is applied to the full text I send to you. Be aware, to send this command **not** in markdown mode, otherwise, Spark would eat some special characters in the pattern. For regex specification, cf. https://docs.rs/regex/0.2.10/regex/#syntax.
+
+`filter enable` -- Enable the filtering of messages with the configured filter.
+
+`filter disable` -- Disable the filtering of messages with the configured filter.
+
+`status` -- Show if I am notifying you, and a little bit more information. 😉
+
+`help` -- This message
+
+This project is open source, feel free to help us at: https://github.com/boxdot/gerritbot-rs
+"#;
+
 impl Formatter {
     pub fn new(format_script: &str) -> Result<Self, String> {
         Ok(Self {
@@ -137,7 +164,13 @@ impl Formatter {
         event: &gerrit::ReviewerAddedEvent,
     ) -> Result<String, String> {
         self.lua.context(|context| {
-            Formatter::format_lua(context, LUA_FORMAT_REVIEWER_ADDED, Some(user), event, vec![])
+            Formatter::format_lua(
+                context,
+                LUA_FORMAT_REVIEWER_ADDED,
+                Some(user),
+                event,
+                vec![],
+            )
         })
     }
 
@@ -181,7 +214,13 @@ impl Formatter {
         event: &gerrit::ChangeAbandonedEvent,
     ) -> Result<String, String> {
         self.lua.context(|context| {
-            Formatter::format_lua(context, LUA_FORMAT_CHANGE_ABANDONED, Some(user), event, vec![])
+            Formatter::format_lua(
+                context,
+                LUA_FORMAT_CHANGE_ABANDONED,
+                Some(user),
+                event,
+                vec![],
+            )
         })
     }
 
@@ -189,6 +228,14 @@ impl Formatter {
         self.lua.context(|context| {
             Formatter::format_lua(context, LUA_FORMAT_VERSION_INFO, None, version_info, vec![])
         })
+    }
+
+    pub fn format_unknown_command(&self) -> Result<String, String> {
+        Ok(GREETINGS_MSG.to_string())
+    }
+
+    pub fn format_help(&self) -> Result<String, String> {
+        Ok(HELP_MSG.to_string())
     }
 }
 
