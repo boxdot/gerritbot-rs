@@ -615,10 +615,11 @@ This project is open source, feel free to help us at: https://github.com/boxdot/
 
 lazy_static! {
     static ref VERSION_MSG: String = format!(
-        "{} {} (commit id {}, built for {} on {})",
+        "{} {} (commit id {}, built with Rust {} for {} on {})",
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION"),
         option_env!("CI_COMMIT_SHA").unwrap_or(env!("VERGEN_SHA")),
+        env!("GERRITBOT_RUSTC_VERSION"),
         env!("VERGEN_TARGET_TRIPLE"),
         env!("VERGEN_BUILD_DATE"),
     );
