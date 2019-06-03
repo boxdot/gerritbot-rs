@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::convert;
+use std::convert::{self, identity};
 use std::fs::File;
 use std::io;
 use std::path::Path;
@@ -128,7 +128,7 @@ fn gerrit_event_to_action(event: gerrit::Event) -> Option<Action> {
     }
 }
 
-trait IsHuman {
+pub trait IsHuman {
     fn is_human(&self) -> bool;
 }
 
@@ -293,10 +293,11 @@ where
                 .collect(),
             Command::Version => self
                 .formatter
-                .format_version_info(&VERSION_INFO)
-                .map(|version_message| Task::Reply(Response::new(sender, version_message)))
+                .format_message(None, &VERSION_INFO)
                 .map_err(|e| error!("failed to format version: {}", e))
                 .ok()
+                .and_then(identity)
+                .map(|version_message| Task::Reply(Response::new(sender, version_message)))
                 .into_iter()
                 .collect(),
             Command::Status => self
@@ -424,7 +425,7 @@ where
             .filter(|user| user.has_flag(UserFlag::NotifyReviewResponses))
             .filter_map(|user| {
                 self.formatter
-                    .format_comment_added(user, &event, event.author.is_human())
+                    .format_message(Some(user), &*event)
                     .map_err(|e| error!("message formatting failed: {}", e))
                     .unwrap_or(None)
                     .filter(|message| !self.state.is_filtered(user, &message))
@@ -457,7 +458,7 @@ where
         }
 
         self.formatter
-            .format_comment_added(user, &event, event.author.is_human())
+            .format_message(Some(user), &*event)
             .unwrap_or_else(|e| {
                 error!("message formatting failed: {}", e);
                 None
@@ -502,9 +503,9 @@ where
 
         let message = self
             .formatter
-            .format_reviewer_added(user, event)
+            .format_message(Some(user), event)
             .map_err(|e| error!("formatting reviewer added failed: {}", e))
-            .ok()?;
+            .ok()??;
 
         Some((user, message))
     }
@@ -518,9 +519,10 @@ where
             .filter(|user| user.has_flag(UserFlag::NotifyChangeMerged))
             .filter_map(|user| {
                 self.formatter
-                    .format_change_merged(user, &event)
+                    .format_message(Some(user), event)
                     .map_err(|e| error!("message formatting failed: {}", e))
                     .ok()
+                    .and_then(identity)
                     .filter(|message| !self.state.is_filtered(user, &message))
                     .map(|message| (user.email().to_owned(), message))
             })
@@ -536,9 +538,10 @@ where
             .filter(|user| dbg!(user).has_flag(UserFlag::NotifyChangeAbandoned))
             .filter_map(|user| {
                 self.formatter
-                    .format_change_abandoned(user, &event)
+                    .format_message(Some(user), event)
                     .map_err(|e| error!("message formatting failed: {}", e))
                     .ok()
+                    .and_then(identity)
                     .filter(|message| !self.state.is_filtered(user, &message))
                     .map(|message| (user.email().to_owned(), message))
             })

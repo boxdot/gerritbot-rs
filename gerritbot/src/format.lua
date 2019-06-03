@@ -224,7 +224,8 @@ end
 
 -- Filter and format messages
 -- return nil to filter the message
-function format_comment_added(event, flags, is_human)
+function format_comment_added(event, flags)
+    local is_human = is_human(event.author)
     local change = event.change
 
     if not is_human and change.status ~= "NEW" then

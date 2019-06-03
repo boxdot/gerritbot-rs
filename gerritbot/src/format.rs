@@ -5,20 +5,33 @@ use gerritbot_gerrit as gerrit;
 
 use crate::state::{User, NOTIFICATION_FLAGS};
 use crate::version::VersionInfo;
+use crate::IsHuman;
 
 pub const DEFAULT_FORMAT_SCRIPT: &str = include_str!("format.lua");
-const LUA_FORMAT_COMMENT_ADDED: &str = "format_comment_added";
-const LUA_FORMAT_REVIEWER_ADDED: &str = "format_reviewer_added";
-const LUA_FORMAT_CHANGE_MERGED: &str = "format_change_merged";
-const LUA_FORMAT_CHANGE_ABANDONED: &str = "format_change_abandoned";
-const LUA_FORMAT_VERSION_INFO: &str = "format_version_info";
-const LUA_FORMAT_FUNCTIONS: &[&str] = &[
-    LUA_FORMAT_COMMENT_ADDED,
-    LUA_FORMAT_REVIEWER_ADDED,
-    LUA_FORMAT_CHANGE_MERGED,
-    LUA_FORMAT_CHANGE_ABANDONED,
-    LUA_FORMAT_VERSION_INFO,
-];
+
+pub trait MessageInput: Serialize {
+    const FORMAT_FUNCTION: &'static str;
+}
+
+impl<'a> MessageInput for &'a gerrit::CommentAddedEvent {
+    const FORMAT_FUNCTION: &'static str = "format_comment_added";
+}
+
+impl<'a> MessageInput for &'a gerrit::ReviewerAddedEvent {
+    const FORMAT_FUNCTION: &'static str = "format_reviewer_added";
+}
+
+impl<'a> MessageInput for &'a gerrit::ChangeMergedEvent {
+    const FORMAT_FUNCTION: &'static str = "format_change_merged";
+}
+
+impl<'a> MessageInput for &'a gerrit::ChangeAbandonedEvent {
+    const FORMAT_FUNCTION: &'static str = "format_change_abandoned";
+}
+
+impl<'a> MessageInput for &'a VersionInfo {
+    const FORMAT_FUNCTION: &'static str = "format_version_info";
+}
 
 pub struct Formatter {
     lua: Lua,
@@ -37,17 +50,24 @@ fn load_format_script(script_source: &str) -> Result<Lua, String> {
     let lua = Lua::new_with(lua_std_lib);
     lua.context(|context| -> Result<(), String> {
         let globals = context.globals();
+
+        let is_human = context
+            .create_function(|_, user| {
+                let user: gerrit::User = rlua_serde::from_value(user)?;
+                Ok(user.is_human())
+            })
+            .map_err(|e| format!("failed to create is_human function: {}", e))?;
+
+        globals
+            .set("is_human", is_human)
+            .map_err(|e| format!("failed to set is_human function: {}", e))?;
+
         context
             .load(script_source)
+            .set_name("format.lua")
+            .map_err(|e| format!("failed to set chunk name: {}", e))?
             .exec()
             .map_err(|err| format!("syntax error: {}", err))?;
-
-        // check that the required functions are present
-        for function_name in LUA_FORMAT_FUNCTIONS {
-            let _: LuaFunction = globals
-                .get(*function_name)
-                .map_err(|_| format!("{} function missing", function_name))?;
-        }
 
         Ok(())
     })?;
@@ -98,80 +118,48 @@ impl Formatter {
         })
     }
 
-    fn format_lua<'lua, T, E>(
+    fn format_lua<'lua, I>(
         lua: rlua::Context<'lua>,
-        function_name: &str,
         user: Option<&User>,
-        event: E,
-        extra_args: Vec<LuaValue<'lua>>,
-    ) -> Result<T, String>
+        input: I,
+    ) -> Result<Option<String>, String>
     where
-        T: FromLua<'lua>,
-        E: Serialize,
+        I: MessageInput,
     {
         let globals = lua.globals();
+        let function_name = I::FORMAT_FUNCTION;
 
         let format_function: LuaFunction = globals
             .get(function_name)
             .map_err(|_| format!("{} function missing", function_name))?;
 
-        let event = rlua_serde::to_value(lua, event)
-            .map_err(|e| format!("failed to serialize event: {}", e))?;
-        let flags = if let Some(user) = user {
-            get_flags_table(user, lua)
-                .map(LuaValue::Table)
-                .map_err(|err| format!("failed to create flags table: {}", err))?
-        } else {
-            LuaNil
-        };
-
-        let args = {
-            let mut v = Vec::with_capacity(2 + extra_args.len());
-            v.push(event);
-            v.push(flags);
-            let mut extra_args = extra_args;
-            v.append(&mut extra_args);
-            LuaMultiValue::from_vec(v)
-        };
+        let format_args = (
+            rlua_serde::to_value(lua, input)
+                .map_err(|e| format!("failed to serialize event: {}", e))?,
+            if let Some(user) = user {
+                get_flags_table(user, lua)
+                    .map(LuaValue::Table)
+                    .map_err(|err| format!("failed to create flags table: {}", err))?
+            } else {
+                LuaNil
+            },
+        );
 
         let result = format_function
-            .call::<_, LuaValue>(args)
+            .call::<_, LuaValue>(format_args)
             .map_err(|err| format!("lua formatting function failed: {}", err))?;
 
-        T::from_lua(result, lua).map_err(|e| format!("failed to convert formatting result: {}", e))
+        FromLua::from_lua(result, lua)
+            .map_err(|e| format!("failed to convert formatting result: {}", e))
     }
 
-    pub fn format_comment_added(
+    pub fn format_message<I: MessageInput>(
         &self,
-        user: &User,
-        event: &gerrit::CommentAddedEvent,
-        is_human: bool,
+        user: Option<&User>,
+        input: I,
     ) -> Result<Option<String>, String> {
-        self.lua.context(|context| {
-            Formatter::format_lua(
-                context,
-                LUA_FORMAT_COMMENT_ADDED,
-                Some(user),
-                event,
-                vec![LuaValue::Boolean(is_human)],
-            )
-        })
-    }
-
-    pub fn format_reviewer_added(
-        &self,
-        user: &User,
-        event: &gerrit::ReviewerAddedEvent,
-    ) -> Result<String, String> {
-        self.lua.context(|context| {
-            Formatter::format_lua(
-                context,
-                LUA_FORMAT_REVIEWER_ADDED,
-                Some(user),
-                event,
-                vec![],
-            )
-        })
+        self.lua
+            .context(move |lua| Formatter::format_lua(lua, user, input))
     }
 
     pub fn format_status(
@@ -196,38 +184,6 @@ impl Formatter {
                 (true, _) => format!("another {} users", enabled_user_count),
             }
         ))
-    }
-
-    pub fn format_change_merged(
-        &self,
-        user: &User,
-        event: &gerrit::ChangeMergedEvent,
-    ) -> Result<String, String> {
-        self.lua.context(|context| {
-            Formatter::format_lua(context, LUA_FORMAT_CHANGE_MERGED, Some(user), event, vec![])
-        })
-    }
-
-    pub fn format_change_abandoned(
-        &self,
-        user: &User,
-        event: &gerrit::ChangeAbandonedEvent,
-    ) -> Result<String, String> {
-        self.lua.context(|context| {
-            Formatter::format_lua(
-                context,
-                LUA_FORMAT_CHANGE_ABANDONED,
-                Some(user),
-                event,
-                vec![],
-            )
-        })
-    }
-
-    pub fn format_version_info(&self, version_info: &VersionInfo) -> Result<String, String> {
-        self.lua.context(|context| {
-            Formatter::format_lua(context, LUA_FORMAT_VERSION_INFO, None, version_info, vec![])
-        })
     }
 
     pub fn format_unknown_command(&self) -> Result<String, String> {
@@ -288,7 +244,7 @@ mod test {
     #[test]
     fn test_format_approval() {
         let event = get_event();
-        let res = Formatter::default().format_comment_added(&FORMAT_TEST_USER, &event, true);
+        let res = Formatter::default().format_message(Some(&FORMAT_TEST_USER), &event);
         // Result<Option<String>, _> -> Result<Option<&str>, _>
         let res = res.as_ref().map(|o| o.as_ref().map(String::as_str));
         assert_eq!(
@@ -304,7 +260,7 @@ mod test {
             .approvals
             .as_mut()
             .map(|approvals| approvals[0].approval_type = String::from("Some-New-Type"));
-        let res = Formatter::default().format_comment_added(&FORMAT_TEST_USER, &event, true);
+        let res = Formatter::default().format_message(Some(&FORMAT_TEST_USER), &event);
         // Result<Option<String>, _> -> Result<Option<&str>, _>
         let res = res.as_ref().map(|o| o.as_ref().map(String::as_str));
         assert_eq!(
@@ -325,7 +281,7 @@ mod test {
                 by: None,
             })
         });
-        let res = Formatter::default().format_comment_added(&FORMAT_TEST_USER, &event, true);
+        let res = Formatter::default().format_message(Some(&FORMAT_TEST_USER), &event);
         // Result<Option<String>, _> -> Result<Option<&str>, _>
         let res = res.as_ref().map(|o| o.as_ref().map(String::as_str));
         assert_eq!(
@@ -338,7 +294,7 @@ mod test {
     fn format_approval_no_approvals() {
         let mut event = get_event();
         event.approvals = None;
-        let res = Formatter::default().format_comment_added(&FORMAT_TEST_USER, &event, true);
+        let res = Formatter::default().format_message(Some(&FORMAT_TEST_USER), &event);
         // Result<Option<String>, _> -> Result<Option<&str>, _>
         let res = res.as_ref().map(|o| o.as_ref().map(String::as_str));
         assert_eq!(res, Ok(None));
@@ -353,7 +309,7 @@ mod test {
         event.patchset = patchset;
 
         let res = Formatter::default()
-            .format_comment_added(&FORMAT_TEST_USER, &event, true)
+            .format_message(Some(&FORMAT_TEST_USER), &event)
             .expect("format failed")
             .expect("no comments");
 
