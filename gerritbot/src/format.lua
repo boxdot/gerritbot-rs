@@ -306,3 +306,35 @@ function format_version_info(version_info)
         version_info.build_date
     )
 end
+
+function format_greeting()
+    return [=[
+Hi. I am GerritBot. I can watch Gerrit reviews for you, and notify you about new +1/-1's.
+
+To enable notifications, just type in **enable**. A small note: your email in Spark and in Gerrit has to be the same. Otherwise, I can't match your accounts.
+
+For more information, type in **help**.
+]=]
+end
+
+function format_help()
+    return [=[
+Commands:
+
+`enable` -- I will start notifying you.
+
+`disable` -- I will stop notifying you.
+
+`filter <regex>` -- Filter all messages by applying the specified regex pattern. If the pattern matches, the message is filtered. The pattern is applied to the full text I send to you. Be aware, to send this command **not** in markdown mode, otherwise, Spark would eat some special characters in the pattern. For regex specification, cf. https://docs.rs/regex/0.2.10/regex/#syntax.
+
+`filter enable` -- Enable the filtering of messages with the configured filter.
+
+`filter disable` -- Disable the filtering of messages with the configured filter.
+
+`status` -- Show if I am notifying you, and a little bit more information. 😉
+
+`help` -- This message
+
+This project is open source, feel free to help us at: https://github.com/boxdot/gerritbot-rs
+]=]
+end

@@ -236,11 +236,12 @@ where
             Action::RunCommand { sender, command } => self.run_command(sender, command),
             Action::UnknownCommand { sender } => self
                 .formatter
-                .format_unknown_command()
-                .map(|message| Task::Reply(Response::new(sender, message)))
+                .format_greeting()
                 .map_err(|e| error!("failed to format message: {}", e))
                 .ok()
                 .into_iter()
+                .flatten()
+                .map(|message| Task::Reply(Response::new(sender.clone(), message)))
                 .collect(),
             Action::CommentAdded(event) => self
                 .get_comment_messages(event)
@@ -286,10 +287,11 @@ where
             Command::Help => self
                 .formatter
                 .format_help()
-                .map(|message| Task::Reply(Response::new(sender, message)))
                 .map_err(|e| error!("failed to format help: {}", e))
                 .ok()
                 .into_iter()
+                .flatten()
+                .map(|message| Task::Reply(Response::new(sender.clone(), message)))
                 .collect(),
             Command::Version => self
                 .formatter
