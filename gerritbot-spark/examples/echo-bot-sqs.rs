@@ -32,15 +32,15 @@ struct Args {
 }
 
 fn main() {
+    env_logger::init_from_env(
+        env_logger::Env::default()
+            .filter_or(
+                "GERRITBOT_LOG",
+                concat!(module_path!(), "=info,gerritbot_spark=info"),
+            )
+    );
     let args = Args::from_args();
     let debug = args.debug;
-    stderrlog::new()
-        .module(module_path!())
-        .module("gerritbot_spark")
-        .timestamp(stderrlog::Timestamp::Second)
-        .verbosity(if args.verbose { 5 } else { 2 })
-        .init()
-        .unwrap();
     let spark_config: SparkConfig = std::fs::read(args.config_file)
         .map_err(|e| e.to_string())
         .and_then(|data| toml::from_slice(&data).map_err(|e| e.to_string()))

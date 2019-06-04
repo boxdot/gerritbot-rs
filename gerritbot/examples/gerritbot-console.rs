@@ -42,12 +42,6 @@ struct Args {
     /// Path to SSH private key
     #[structopt(short, long, parse(from_os_str))]
     identity_file: PathBuf,
-    /// Enable verbose output
-    #[structopt(short, long)]
-    verbose: bool,
-    /// Log only errors
-    #[structopt(short, long, conflicts_with = "verbose")]
-    quiet: bool,
     /// User email address
     ///
     /// If given input messages will be treated as if coming from this user.
@@ -130,19 +124,14 @@ impl bot::SparkClient for ConsoleSparkClient {
 }
 
 fn main() {
+    env_logger::init_from_env(
+        env_logger::Env::default()
+            .filter_or(
+                "GERRITBOT_LOG",
+                concat!(module_path!(), "=info,gerritbot=info,gerritbot_gerrit=info"),
+            )
+    );
     let args = Args::from_args();
-    stderrlog::new()
-        .module(module_path!())
-        .module("gerritbot")
-        .module("gerritbot_gerrit")
-        .timestamp(stderrlog::Timestamp::Second)
-        .verbosity(match (args.quiet, args.verbose) {
-            (true, _) => 0,      // ERROR
-            (false, false) => 2, // INFO
-            (_, true) => 4,      // TRACE
-        })
-        .init()
-        .unwrap();
 
     if let Some(working_directory) = args.working_directory.as_ref() {
         info!("Changing current directory to {:?}", working_directory);

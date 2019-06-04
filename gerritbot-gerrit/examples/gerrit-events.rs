@@ -19,20 +19,17 @@ struct Args {
     /// Path to SSH private key
     #[structopt(short = "i", parse(from_os_str))]
     private_key_path: PathBuf,
-    /// Enable verbose output
-    #[structopt(short = "v")]
-    verbose: bool,
 }
 
 fn main() {
+    env_logger::init_from_env(
+        env_logger::Env::default()
+            .filter_or(
+                "GERRITBOT_LOG",
+                concat!(module_path!(), "=info,gerritbot_gerrit=info"),
+            )
+    );
     let args = Args::from_args();
-    stderrlog::new()
-        .module(module_path!())
-        .module("gerritbot_gerrit")
-        .timestamp(stderrlog::Timestamp::Second)
-        .verbosity(if args.verbose { 5 } else { 2 })
-        .init()
-        .unwrap();
 
     let connection = gerrit::Connection::connect(
         format!("{}:{}", args.hostname, args.port),
@@ -46,11 +43,8 @@ fn main() {
 
     let gerrit_stream = gerrit::event_stream(connection);
 
-    tokio::run(
-        gerrit_stream
-            .for_each(|event| {
-                println!("{:#?}", event);
-                Ok(())
-            }),
-    );
+    tokio::run(gerrit_stream.for_each(|event| {
+        println!("{:#?}", event);
+        Ok(())
+    }));
 }

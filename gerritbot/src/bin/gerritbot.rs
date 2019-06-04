@@ -40,6 +40,13 @@ fn create_spark_message_stream(
 }
 
 fn main() {
+    env_logger::init_from_env(
+        env_logger::Env::default()
+            .filter_or(
+                "GERRITBOT_LOG",
+                concat!(module_path!(), "=info,gerritbot=info,gerritbot_gerrit=info"),
+            )
+    );
     let args = args::parse_args();
 
     if args.dump_format_script {
@@ -47,18 +54,6 @@ fn main() {
         return;
     }
 
-    stderrlog::new()
-        .module(module_path!())
-        .module("gerritbot_gerrit")
-        .module("gerritbot_spark")
-        .timestamp(stderrlog::Timestamp::Second)
-        .verbosity(match (args.quiet, args.verbose) {
-            (true, _) => 0,      // ERROR
-            (false, false) => 2, // INFO
-            (_, true) => 4,      // TRACE
-        })
-        .init()
-        .unwrap();
     let args::Config {
         gerrit: gerrit_config,
         bot: bot_config,

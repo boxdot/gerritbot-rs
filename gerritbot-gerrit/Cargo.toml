@@ -15,7 +15,7 @@ serde_json = "1.0"
 ssh2 = "0.3"
 
 [dev-dependencies]
+env_logger = "0.6"
 spectral = { version = "0.6", default-features = false }
-stderrlog = "0.4"
 structopt = "0.2"
 tokio = "0.1"

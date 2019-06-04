@@ -6,6 +6,7 @@ license = "MIT/Apache-2.0"
 edition = "2018"
 
 [dependencies]
+env_logger = "0.6"
 futures = "0.1"
 gerritbot-gerrit = { path = "../gerritbot-gerrit" }
 gerritbot-spark = { path = "../gerritbot-spark" }
@@ -20,7 +21,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.8"
 shellexpand = "0.1"
-stderrlog = "0.4"
 structopt = "0.2"
 tokio = "0.1"
 
