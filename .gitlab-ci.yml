@@ -16,7 +16,7 @@ test-x86_64-unknown-linux-musl-debug:
     - cp -r $HOME/.cargo cargo-home
     - export CARGO_HOME=$PWD/cargo-home
     - rustc --version && cargo --version
-    - cargo build --all
+    - cargo build --all --all-targets
     - cargo test --all --verbose
 
 build-x86_64-unknown-linux-musl-release:
