@@ -67,20 +67,27 @@ class BotHandler:
             log.info("%s", line.decode("utf-8").rstrip("\n"))
 
 
+def build_bot():
+    subprocess.check_call(["cargo", "build", "--example", "gerritbot-console"])
+    metadata = json.loads(
+        subprocess.check_output(
+            ["cargo", "metadata", "--no-deps", "--format-version=1"]
+        ).decode("utf-8")
+    )
+    target_directory = metadata["target_directory"]
+
+    return os.path.join(target_directory, "debug", "examples", "gerritbot-console")
+
+
 @fixture
-def setup_bot(context, *, user, hostname, port, message_timeout, executable=None):
+def setup_bot(context, *, user, hostname, port, message_timeout, executable):
     with tempfile.TemporaryDirectory() as bot_directory:
         user.ssh_key.write_private_key_file(os.path.join(bot_directory, "id_rsa"))
         with open(os.path.join(bot_directory, "id_rsa.pub"), "w") as f:
             f.write(f"{user.ssh_key.get_name()} {user.ssh_key.get_base64()}")
 
-        bot_executable = (
-            [executable]
-            if executable is not None
-            else "cargo run --example gerritbot-console --".split()
-        )
-
-        bot_args = bot_executable + [
+        bot_args = [
+            executable,
             "-C",
             bot_directory,
             "--identity-file",

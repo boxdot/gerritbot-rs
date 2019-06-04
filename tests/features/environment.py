@@ -3,7 +3,7 @@ import os
 from behave import use_fixture
 
 from gerritbot_behave.gerrit import setup_gerrit
-from gerritbot_behave.bot import setup_bot
+from gerritbot_behave.bot import build_bot, setup_bot
 from gerritbot_behave.accounts import Accounts, Bot
 from gerritbot_behave.format import URLs
 
@@ -27,7 +27,13 @@ def before_all(context):
     context.gerritbot_message_timeout = float(
         userdata.get("gerritbot_message_timeout", "0.2")
     )
-    context.gerritbot_executable = userdata.get("gerritbot_executable")
+
+    gerritbot_executable = userdata.get("gerritbot_executable")
+
+    if gerritbot_executable is None:
+        context.gerritbot_executable = build_bot()
+    else:
+        context.gerritbot_executable = gerritbot_executable
 
     # set up gerrit
     use_fixture(
