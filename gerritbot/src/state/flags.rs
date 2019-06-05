@@ -115,6 +115,7 @@ pub const NOTIFICATION_FLAGS: &[UserFlag] = &[
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
 pub(super) enum UserFlags {
     Default,
     // Note: this could be optimized into bitflags to make it faster and avoid
