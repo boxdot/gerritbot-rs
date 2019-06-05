@@ -14,17 +14,17 @@ pub struct User {
     #[serde(skip_serializing_if = "Option::is_none")]
     spark_person_id: Option<String>,
     /// email of the user; assumed to be the same in Spark and Gerrit
-    pub(super) email: spark::Email,
+    email: spark::Email,
     #[serde(skip_serializing_if = "UserFlags::is_default", default)]
-    pub(super) flags: UserFlags,
-    pub(super) enabled: bool,
+    flags: UserFlags,
+    enabled: bool,
     #[serde(
         skip_serializing_if = "Option::is_none",
         serialize_with = "serialize_filter",
         deserialize_with = "deserialize_filter",
         default
     )]
-    pub(super) filter: Option<Filter>,
+    filter: Option<Filter>,
 }
 
 impl User {
@@ -55,5 +55,29 @@ impl User {
 
     pub fn has_flag(&self, flag: UserFlag) -> bool {
         self.has_any_flag(&[flag])
+    }
+
+    pub fn reset_flags(&mut self) {
+        self.flags.reset();
+    }
+
+    pub fn set_flag(&mut self, flag: UserFlag, value: bool) {
+        self.flags.set(flag, value);
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    pub fn filter(&self) -> Option<&Filter> {
+        self.filter.as_ref()
+    }
+
+    pub fn set_filter_enabled(&mut self, enabled: bool) {
+        self.filter.as_mut().map(|f| f.enabled = enabled);
+    }
+
+    pub fn set_filter(&mut self, filter: Filter) {
+        self.filter = Some(filter);
     }
 }

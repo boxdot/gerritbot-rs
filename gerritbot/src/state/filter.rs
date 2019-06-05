@@ -2,7 +2,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
-pub(super) struct Filter {
+pub struct Filter {
     pub regex: Regex,
     pub enabled: bool,
 }

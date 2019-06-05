@@ -45,7 +45,7 @@ impl State {
 
     fn index_users(&mut self) {
         for (user_pos, user) in self.users.iter().enumerate() {
-            self.email_index.insert(user.email.clone(), user_pos);
+            self.email_index.insert(user.email().to_owned(), user_pos);
         }
     }
 
@@ -63,7 +63,7 @@ impl State {
     }
 
     fn find_or_add_user_by_email<'a>(&'a mut self, email: &spark::EmailRef) -> &'a mut User {
-        let pos = self.users.iter().position(|u| u.email == email);
+        let pos = self.users.iter().position(|u| u.email() == email);
         let user: &'a mut User = match pos {
             Some(pos) => &mut self.users[pos],
             None => self.add_user(email),
@@ -103,19 +103,19 @@ impl State {
 
     pub fn reset_flags(&mut self, email: &spark::EmailRef) -> &User {
         let user = self.find_or_add_user_by_email(email);
-        user.flags.reset();
+        user.reset_flags();
         user
     }
 
     pub fn set_flag(&mut self, email: &spark::EmailRef, flag: UserFlag, value: bool) -> &User {
         let user = self.find_or_add_user_by_email(email);
-        user.flags.set(flag, value);
+        user.set_flag(flag, value);
         user
     }
 
     pub fn enable<'a>(&'a mut self, email: &spark::EmailRef, enabled: bool) -> &'a User {
         let user: &'a mut User = self.find_or_add_user_by_email(email);
-        user.enabled = enabled;
+        user.set_enabled(enabled);
         user
     }
 
@@ -125,7 +125,7 @@ impl State {
         filter: &str,
     ) -> Result<(), regex::Error> {
         let user = self.find_or_add_user_by_email(email);
-        user.filter = Some(Filter {
+        user.set_filter(Filter {
             regex: Regex::new(filter)?,
             enabled: true,
         });
@@ -136,7 +136,7 @@ impl State {
     /// configured.
     pub fn get_filter(&self, email: &spark::EmailRef) -> Option<(&str, bool)> {
         self.find_user(email)
-            .and_then(|u| u.filter.as_ref())
+            .and_then(|u| u.filter())
             .map(|f| (f.regex.as_str(), f.enabled))
     }
 
@@ -149,11 +149,11 @@ impl State {
         enabled: bool,
     ) -> Result<&str, ()> {
         self.find_user_mut(email)
-            .and_then(|u| u.filter.as_mut())
-            .map(|f| {
-                f.enabled = enabled;
-                f.regex.as_str()
+            .and_then(|u| {
+                u.set_filter_enabled(enabled);
+                u.filter()
             })
+            .map(|f| f.regex.as_str())
             .ok_or(())
     }
 
@@ -162,8 +162,7 @@ impl State {
     }
 
     pub fn is_filtered(&self, user: &User, msg: &str) -> bool {
-        user.filter
-            .as_ref()
+        user.filter()
             .map(|f| f.enabled && f.regex.is_match(msg))
             .unwrap_or(false)
     }
@@ -181,7 +180,7 @@ mod test {
         state.add_user(EmailRef::new("some@example.com"));
         assert_eq!(state.users.len(), 1);
         assert_eq!(state.email_index.len(), 1);
-        assert_eq!(state.users[0].email, EmailRef::new("some@example.com"));
+        assert_eq!(state.users[0].email(), EmailRef::new("some@example.com"));
         assert_eq!(
             state.email_index.get(EmailRef::new("some@example.com")),
             Some(&0)
@@ -194,7 +193,7 @@ mod test {
         state.add_user(EmailRef::new("some_2@example.com"));
         assert_eq!(state.users.len(), 2);
         assert_eq!(state.email_index.len(), 2);
-        assert_eq!(state.users[1].email, EmailRef::new("some_2@example.com"));
+        assert_eq!(state.users[1].email(), EmailRef::new("some_2@example.com"));
         assert_eq!(
             state.email_index.get(EmailRef::new("some_2@example.com")),
             Some(&1)
@@ -206,11 +205,11 @@ mod test {
 
         let user = state.find_user(EmailRef::new("some@example.com"));
         assert!(user.is_some());
-        assert_eq!(user.unwrap().email, EmailRef::new("some@example.com"));
+        assert_eq!(user.unwrap().email(), EmailRef::new("some@example.com"));
 
         let user = state.find_user(EmailRef::new("some_2@example.com"));
         assert!(user.is_some());
-        assert_eq!(user.unwrap().email, EmailRef::new("some_2@example.com"));
+        assert_eq!(user.unwrap().email(), EmailRef::new("some_2@example.com"));
     }
 
     #[test]
@@ -222,7 +221,7 @@ mod test {
         assert!(state
             .users
             .iter()
-            .position(|u| u.email == EmailRef::new("some@example.com") && u.filter.is_none())
+            .position(|u| u.email() == EmailRef::new("some@example.com") && u.filter().is_none())
             .is_some());
 
         let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), true);
@@ -241,8 +240,8 @@ mod test {
         assert!(state
             .users
             .iter()
-            .position(|u| u.email == EmailRef::new("some@example.com")
-                && u.filter.as_ref().map(|f| f.regex.as_str()) == Some(".*some_word.*"))
+            .position(|u| u.email() == EmailRef::new("some@example.com")
+                && u.filter().map(|f| f.regex.as_str()) == Some(".*some_word.*"))
             .is_some());
 
         {
@@ -254,8 +253,8 @@ mod test {
         assert!(state
             .users
             .iter()
-            .position(|u| u.email == EmailRef::new("some@example.com")
-                && u.filter.as_ref().map(|f| f.enabled) == Some(false))
+            .position(|u| u.email() == EmailRef::new("some@example.com")
+                && u.filter().map(|f| f.enabled) == Some(false))
             .is_some());
         {
             let filter = state.get_filter(EmailRef::new("some@example.com"));
@@ -266,8 +265,8 @@ mod test {
         assert!(state
             .users
             .iter()
-            .position(|u| u.email == EmailRef::new("some@example.com")
-                && u.filter.as_ref().map(|f| f.enabled) == Some(true))
+            .position(|u| u.email() == EmailRef::new("some@example.com")
+                && u.filter().map(|f| f.enabled) == Some(true))
             .is_some());
         {
             let filter = state.get_filter(EmailRef::new("some@example.com"));
@@ -290,7 +289,7 @@ mod test {
     fn add_valid_filter_for_disabled_user() {
         let mut state = State::new();
         state.add_user(EmailRef::new("some@example.com"));
-        state.users[0].enabled = false;
+        state.users[0].set_enabled(false);
 
         let res = state.add_filter(EmailRef::new("some@example.com"), ".*some_word.*");
         assert_eq!(res, Ok(()));
