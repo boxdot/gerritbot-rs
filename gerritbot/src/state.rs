@@ -55,23 +55,23 @@ impl State {
 
     // Note: This method is not idempotent, and in particular, when adding the same user twice,
     // it will completely mess up the indexes.
-    pub fn add_user<'a>(&'a mut self, email: &spark::EmailRef) -> &'a mut User {
+    pub fn add_user(&mut self, email: &spark::EmailRef) -> &mut User {
         let user_pos = self.users.len();
         self.users.push(User::new(email.to_owned()));
         self.email_index.insert(email.to_owned(), user_pos);
         self.users.last_mut().unwrap()
     }
 
-    fn find_or_add_user_by_email<'a>(&'a mut self, email: &spark::EmailRef) -> &'a mut User {
+    fn find_or_add_user_by_email(&mut self, email: &spark::EmailRef) -> &mut User {
         let pos = self.users.iter().position(|u| u.email() == email);
-        let user: &'a mut User = match pos {
+        let user: &mut User = match pos {
             Some(pos) => &mut self.users[pos],
             None => self.add_user(email),
         };
         user
     }
 
-    fn find_user_mut<'a, P: ?Sized>(&'a mut self, email: &P) -> Option<&'a mut User>
+    fn find_user_mut<P: ?Sized>(&mut self, email: &P) -> Option<&mut User>
     where
         spark::Email: std::borrow::Borrow<P>,
         P: std::hash::Hash + Eq,
@@ -82,7 +82,7 @@ impl State {
             .map(move |pos| &mut self.users[pos])
     }
 
-    pub fn find_user<'a, P: ?Sized>(&'a self, email: &P) -> Option<&'a User>
+    pub fn find_user<P: ?Sized>(&self, email: &P) -> Option<&User>
     where
         spark::Email: std::borrow::Borrow<P>,
         P: std::hash::Hash + Eq,
@@ -93,7 +93,7 @@ impl State {
             .map(|pos| &self.users[pos])
     }
 
-    pub fn find_user_by_email<'a, E: ?Sized>(&self, email: &E) -> Option<&User>
+    pub fn find_user_by_email<E: ?Sized>(&self, email: &E) -> Option<&User>
     where
         spark::Email: std::borrow::Borrow<E>,
         E: std::hash::Hash + Eq,

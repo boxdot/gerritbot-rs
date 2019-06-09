@@ -31,7 +31,7 @@ impl User {
     pub(super) fn new(email: spark::Email) -> Self {
         Self {
             spark_person_id: None,
-            email: email,
+            email,
             filter: None,
             enabled: true,
             flags: UserFlags::Default,
@@ -74,7 +74,9 @@ impl User {
     }
 
     pub fn set_filter_enabled(&mut self, enabled: bool) {
-        self.filter.as_mut().map(|f| f.enabled = enabled);
+        if let Some(f) = self.filter.as_mut() {
+            f.enabled = enabled;
+        }
     }
 
     pub fn set_filter(&mut self, filter: Filter) {

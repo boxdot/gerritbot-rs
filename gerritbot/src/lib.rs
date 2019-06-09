@@ -373,7 +373,7 @@ where
 
     fn handle_task(&mut self, task: Task) -> Option<Response> {
         debug!("New task {:#?}", task);
-        let response = match task {
+        match task {
             Task::Reply(response) => Some(response),
             Task::Save => {
                 self.save("state.json")
@@ -383,8 +383,7 @@ where
                     .ok();
                 None
             }
-        };
-        return response;
+        }
     }
 
     /// Return iterator of users which might be interested in an event.

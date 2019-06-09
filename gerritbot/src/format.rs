@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use rlua::{prelude::*, StdLib as LuaStdLib};
 use serde::Serialize;
 
@@ -162,13 +164,16 @@ impl Formatter {
         Ok(format!(
             "Notifications for you are **{}**. I am notifying {}.",
             if enabled { "enabled" } else { "disabled" },
-            match (enabled, enabled_user_count) {
-                (false, 0) => format!("no users"),
-                (true, 0) => format!("no other users"),
-                (false, 1) => format!("one user"),
-                (true, 1) => format!("another user"),
-                (false, _) => format!("{} users", enabled_user_count),
-                (true, _) => format!("another {} users", enabled_user_count),
+            {
+                let users: Cow<_> = match (enabled, enabled_user_count) {
+                    (false, 0) => "no users".into(),
+                    (true, 0) => "no other users".into(),
+                    (false, 1) => "one user".into(),
+                    (true, 1) => "another user".into(),
+                    (false, _) => format!("{} users", enabled_user_count).into(),
+                    (true, _) => format!("another {} users", enabled_user_count).into(),
+                };
+                users
             }
         ))
     }

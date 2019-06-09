@@ -105,7 +105,7 @@ impl IntoCacheLine for &gerrit::CommentAddedEvent {
             .author
             .email
             .as_ref()
-            .or(event.author.username.as_ref())
+            .or_else(|| event.author.username.as_ref())
             .map(String::as_str)
             .unwrap_or("<unknown user>")
             .to_string();
