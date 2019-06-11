@@ -536,7 +536,7 @@ where
     ) -> Vec<(spark::Email, String)> {
         self.interested_users(&event.change, &event.patchset)
             .filter(|user| event.abandoner.spark_email() != Some(user.email()))
-            .filter(|user| dbg!(user).has_flag(UserFlag::NotifyChangeAbandoned))
+            .filter(|user| user.has_flag(UserFlag::NotifyChangeAbandoned))
             .filter_map(|user| {
                 self.formatter
                     .format_message(Some(user), event)
