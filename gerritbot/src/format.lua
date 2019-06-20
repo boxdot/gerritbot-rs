@@ -357,9 +357,27 @@ function format_status(status_details, user_flags)
         other_users_string = string.format("%s users", other_count)
     end
 
+    local flag_strings = {}
+    local flags_string
+
+    for flag_name, flag_value in pairs(user_flags or {}) do
+        if flag_value then
+            table.insert(flag_strings, flag_name)
+        end
+    end
+
+    table.sort(flag_strings)
+
+    if #flag_strings > 0 then
+        flags_string = "The following flags are enabled for you: " .. table.concat(flag_strings, ", ") .. "."
+    else
+        flags_string = "No flags are enabled for you."
+    end
+
     return string.format(
-        "Notifications for you are **%s**. I am notifying %s.",
+        "Notifications for you are **%s**. I am notifying %s. %s",
         status_details.user_enabled and "enabled" or "disabled",
-        other_users_string
+        other_users_string,
+        flags_string
     )
 end
