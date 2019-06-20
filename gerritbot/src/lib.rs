@@ -568,7 +568,7 @@ where
         self.formatter
             .format_status(user, enabled_user_count)
             .map_err(|e| error!("formatting status failed: {}", e))
-            .ok()
+            .ok()?
     }
 }
 

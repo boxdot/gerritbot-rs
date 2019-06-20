@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use rlua::{prelude::*, StdLib as LuaStdLib};
 use serde::Serialize;
 
@@ -47,6 +45,16 @@ pub struct GreetingMessage;
 
 impl<'a> MessageInput for GreetingMessage {
     const FORMAT_FUNCTION: &'static str = "format_greeting";
+}
+
+#[derive(Serialize)]
+struct StatusDetails {
+    user_enabled: bool,
+    enabled_user_count: usize,
+}
+
+impl MessageInput for StatusDetails {
+    const FORMAT_FUNCTION: &'static str = "format_status";
 }
 
 pub struct Formatter {
@@ -155,27 +163,16 @@ impl Formatter {
         &self,
         user: Option<&User>,
         enabled_user_count: usize,
-    ) -> Result<String, String> {
-        let enabled = user
-            .map(|u| u.has_any_flag(NOTIFICATION_FLAGS))
-            .unwrap_or(false);
-        let enabled_user_count = enabled_user_count - (enabled as usize);
-
-        Ok(format!(
-            "Notifications for you are **{}**. I am notifying {}.",
-            if enabled { "enabled" } else { "disabled" },
-            {
-                let users: Cow<_> = match (enabled, enabled_user_count) {
-                    (false, 0) => "no users".into(),
-                    (true, 0) => "no other users".into(),
-                    (false, 1) => "one user".into(),
-                    (true, 1) => "another user".into(),
-                    (false, _) => format!("{} users", enabled_user_count).into(),
-                    (true, _) => format!("another {} users", enabled_user_count).into(),
-                };
-                users
-            }
-        ))
+    ) -> Result<Option<String>, String> {
+        self.format_message(
+            user,
+            StatusDetails {
+                user_enabled: user
+                    .map(|u| u.has_any_flag(NOTIFICATION_FLAGS))
+                    .unwrap_or(false),
+                enabled_user_count,
+            },
+        )
     }
 
     pub fn format_greeting(&self) -> Result<Option<String>, String> {

@@ -338,3 +338,28 @@ Commands:
 This project is open source, feel free to help us at: https://github.com/boxdot/gerritbot-rs
 ]=]
 end
+
+function format_status(status_details, user_flags)
+    local enabled = status_details.user_enabled
+    local other_count = status_details.enabled_user_count - (enabled and 1 or 0)
+
+    if not enabled and other_count == 0 then
+        other_users_string = "no users"
+    elseif enabled and other_count == 0 then
+        other_users_string = "no other users"
+    elseif not enabled and other_count == 1 then
+        other_users_string = "one user"
+    elseif enabled and other_count == 1 then
+        other_users_string = "another user"
+    elseif enabled then
+        other_users_string = string.format("another %s users", other_count)
+    else
+        other_users_string = string.format("%s users", other_count)
+    end
+
+    return string.format(
+        "Notifications for you are **%s**. I am notifying %s.",
+        status_details.user_enabled and "enabled" or "disabled",
+        other_users_string
+    )
+end
