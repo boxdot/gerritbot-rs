@@ -1,5 +1,3 @@
-use std::convert::identity;
-
 use futures::{future, stream, Future, Stream};
 use log::{error, warn};
 use rusoto_core::Region;
@@ -32,13 +30,16 @@ pub fn sqs_receiver(
         Some(
             receive_client
                 .receive_message(receive_request.clone())
-                .map(|receive_result| (receive_result, ())),
+                // unfold stops at the first error so pretend we always succeed
+                .then(|receive_result| Ok((receive_result, ()))),
         )
     })
-    // log the errors and skip the errors
-    .map_err(|e| error!("failed to receive message: {}", e))
-    .then(|result| future::ok(result.ok()))
-    .filter_map(identity)
+    // log and skip the errors
+    .filter_map(|result| {
+        result
+            .map_err(|e| error!("failed to receive message: {}", e))
+            .ok()
+    })
     // delete messages from the queue
     .and_then(move |receive_result| {
         let messages = receive_result.messages.unwrap_or_else(Vec::new);
