@@ -317,13 +317,36 @@ For more information, type in **help**.
 ]=]
 end
 
+local FLAG_DESCRIPTIONS = {
+    notify_review_approvals = "Toggle notification messages for reviews with approvals (Code-Review, Verified etc.).",
+    notify_review_comments = "Toggle notification messages for comments without approvals.",
+    notify_review_inline_comments = "Toggle notifications messages for inline comments.",
+    notify_review_responses = "Toggle notification on follow up comments to earlier review comments.",
+    notify_reviewer_added = "Toggle notification messages when added as reviewer.",
+    notify_change_abandoned = "Toggle notification when a change is abandoned.",
+    notify_change_merged = "Toggle notification when a change is merged.",
+}
+
 function format_help()
+    local flags = {}
+
+    for flag_name, flag_description in pairs(FLAG_DESCRIPTIONS) do
+        table.insert(flags, string.format("* %s -- %s", flag_name, flag_description))
+    end
+
+    table.sort(flags)
+
     return [=[
 Commands:
 
 `enable` -- I will start notifying you.
 
 `disable` -- I will stop notifying you.
+
+`enable <flag>`, `disable <flag>` -- Enable or disable specific behavior.  The following flags are available:
+
+]=] .. table.concat(flags, "\n") .. [=[
+
 
 `filter <regex>` -- Filter all messages by applying the specified regex pattern. If the pattern matches, the message is filtered. The pattern is applied to the full text I send to you. Be aware, to send this command **not** in markdown mode, otherwise, Spark would eat some special characters in the pattern. For regex specification, cf. https://docs.rs/regex/0.2.10/regex/#syntax.
 

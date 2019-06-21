@@ -36,7 +36,7 @@ impl<'a> MessageInput for &'a VersionInfo {
 #[derive(Serialize)]
 pub struct HelpMessage;
 
-impl<'a> MessageInput for HelpMessage {
+impl MessageInput for HelpMessage {
     const FORMAT_FUNCTION: &'static str = "format_help";
 }
 
