@@ -222,7 +222,8 @@ where
             .map(|send_future| {
                 // try sending a message for up to 5 seconds, then give up
                 tokio::timer::Timeout::new(send_future, Duration::from_secs(5))
-                    .map_err(|e| error!("failed to send spark message: {}", e))
+                    // log and suppress errors
+                    .or_else(|e| Ok(error!("failed to send spark message: {}", e)))
             })
             // try sending up to 10 messages at a time
             .buffer_unordered(10)
@@ -1007,5 +1008,43 @@ mod test {
 
         event.comment = "Nope, colleague comment!".to_string();
         assert!(!maybe_has_inline_comments(&event));
+    }
+
+    #[test]
+    fn dont_exit_on_spark_send_failure() {
+        /// When sending a message fails there was a bug that lead the bot to
+        /// exit at this point. This a regression test for this bug.
+
+        #[derive(Clone, Default)]
+        struct TestSparkClient {
+            message_count: std::rc::Rc<std::cell::Cell<usize>>,
+        };
+
+        impl SparkClient for TestSparkClient {
+            type ReplyFuture = future::FutureResult<(), spark::Error>;
+            fn send_message(&self, _email: &EmailRef, _msg: &str) -> Self::ReplyFuture {
+                self.message_count.set(self.message_count.get() + 1);
+
+                future::err(spark::Error::IoError(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "it did not work",
+                )))
+            }
+        }
+
+        let spark_client = TestSparkClient::default();
+
+        let bot = Builder::new(State::new()).build(TestGerritCommandRunner, spark_client.clone());
+
+        let spark_messages = stream::repeat(spark::Message {
+            person_email: spark::EmailRef::new("some@example.com").to_owned(),
+            text: "status".to_string(),
+            ..Default::default()
+        })
+        .take(7);
+        let gerrit_events = stream::empty();
+
+        assert_eq!(bot.run(gerrit_events, spark_messages).wait(), Ok(()));
+        assert_eq!(spark_client.message_count.get(), 7);
     }
 }
