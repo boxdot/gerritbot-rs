@@ -18,7 +18,7 @@ mkdir -p "${GERRIT_HOME}"
 # download Plugins
 PLUGIN_VERSION=bazel-stable-2.15
 GERRITFORGE_URL=https://gerrit-ci.gerritforge.com
-GERRITFORGE_ARTIFACT_DIR=lastSuccessfulBuild/artifact/bazel-genfiles/plugins
+GERRITFORGE_ARTIFACT_DIR=lastSuccessfulBuild/artifact/bazel-bin/plugins
 
 # delete-project
 [ -e "${GERRIT_HOME}/delete-project.jar" ] || \
