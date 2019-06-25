@@ -3,6 +3,9 @@ use std::time::Duration;
 use lru_time_cache::LruCache;
 
 use gerritbot_gerrit as gerrit;
+use gerritbot_spark::Email;
+
+use super::state::User;
 
 #[derive(Clone, Default)]
 pub struct RateLimiter {
@@ -18,13 +21,18 @@ impl RateLimiter {
         }
     }
 
-    pub fn limit<E>(&mut self, user_index: usize, event: E) -> bool
+    pub fn limit<E>(&mut self, user: &User, event: E) -> bool
     where
         E: IntoCacheLine,
     {
         self.cache
             .as_mut()
-            .and_then(|cache| cache.insert(IntoCacheLine::into_cache_line(user_index, &event), ()))
+            .and_then(|cache| {
+                cache.insert(
+                    IntoCacheLine::into_cache_line(user.email().to_owned(), &event),
+                    (),
+                )
+            })
             .is_some()
     }
 }
@@ -55,26 +63,28 @@ pub struct Approval {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MsgCacheLine {
     Approvals {
-        /// position of the user in bots.user vector
-        user_ref: usize,
+        email: Email,
         subject: Subject,
         approver: String,
         approvals: Vec<Approval>,
     },
     ReviewerAdded {
-        user_ref: usize,
+        email: Email,
         subject: Subject,
     },
 }
 
 pub trait IntoCacheLine {
-    fn into_cache_line(user_index: usize, event: &Self) -> MsgCacheLine;
+    fn into_cache_line(email: Email, event: &Self) -> MsgCacheLine;
 }
 
 impl IntoCacheLine for &gerrit::CommentAddedEvent {
-    fn into_cache_line(user_index: usize, event: &Self) -> MsgCacheLine {
+    fn into_cache_line(email: Email, event: &Self) -> MsgCacheLine {
         let mut approvals: Vec<_> = event
             .approvals
+            .as_ref()
+            .map(Vec::as_slice)
+            .unwrap_or(&[][..])
             .iter()
             .map(
                 |gerrit::Approval {
@@ -95,13 +105,13 @@ impl IntoCacheLine for &gerrit::CommentAddedEvent {
             .author
             .email
             .as_ref()
-            .or(event.author.username.as_ref())
+            .or_else(|| event.author.username.as_ref())
             .map(String::as_str)
             .unwrap_or("<unknown user>")
             .to_string();
 
         MsgCacheLine::Approvals {
-            user_ref: user_index,
+            email,
             subject: Subject::from_change(&event.change),
             approver,
             approvals,
@@ -110,9 +120,9 @@ impl IntoCacheLine for &gerrit::CommentAddedEvent {
 }
 
 impl IntoCacheLine for &gerrit::ReviewerAddedEvent {
-    fn into_cache_line(user_index: usize, event: &Self) -> MsgCacheLine {
+    fn into_cache_line(email: Email, event: &Self) -> MsgCacheLine {
         MsgCacheLine::ReviewerAdded {
-            user_ref: user_index,
+            email,
             subject: Subject::from_change(&event.change),
         }
     }

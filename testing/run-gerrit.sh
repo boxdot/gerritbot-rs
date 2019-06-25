@@ -6,7 +6,7 @@ BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 GERRIT_HOME="${BASE_DIR}/data/gerrit"
 GERRIT_SITE="${GERRIT_HOME}/review_site"
 GERRIT_WAR="${GERRIT_HOME}/gerrit.war"
-GERRIT_VERSION=2.14.19
+GERRIT_VERSION=2.15.13
 
 mkdir -p "${GERRIT_HOME}"
 
@@ -16,9 +16,9 @@ mkdir -p "${GERRIT_HOME}"
     -o "$GERRIT_WAR"
 
 # download Plugins
-PLUGIN_VERSION=bazel-stable-2.14
+PLUGIN_VERSION=bazel-stable-2.15
 GERRITFORGE_URL=https://gerrit-ci.gerritforge.com
-GERRITFORGE_ARTIFACT_DIR=lastSuccessfulBuild/artifact/bazel-genfiles/plugins
+GERRITFORGE_ARTIFACT_DIR=lastSuccessfulBuild/artifact/bazel-bin/plugins
 
 # delete-project
 [ -e "${GERRIT_HOME}/delete-project.jar" ] || \

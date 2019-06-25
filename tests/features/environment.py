@@ -3,8 +3,8 @@ import os
 from behave import use_fixture
 
 from gerritbot_behave.gerrit import setup_gerrit
-from gerritbot_behave.bot import setup_bot
-from gerritbot_behave.persons import Persons, Person
+from gerritbot_behave.bot import build_bot, setup_bot
+from gerritbot_behave.accounts import Accounts, Bot
 from gerritbot_behave.format import URLs
 
 
@@ -24,6 +24,17 @@ def before_all(context):
     context.gerrit_admin_username = userdata.get("gerrit_admin_username", "admin")
     context.gerrit_admin_password = userdata.get("gerrit_admin_password", "secret")
 
+    context.gerritbot_message_timeout = float(
+        userdata.get("gerritbot_message_timeout", "0.2")
+    )
+
+    gerritbot_executable = userdata.get("gerritbot_executable")
+
+    if gerritbot_executable is None:
+        context.gerritbot_executable = build_bot()
+    else:
+        context.gerritbot_executable = gerritbot_executable
+
     # set up gerrit
     use_fixture(
         setup_gerrit,
@@ -36,8 +47,8 @@ def before_all(context):
         gerrit_start_timeout=userdata.getfloat("gerrit_start_timeout"),
     )
 
-    context.bot_user = Person("gerritbot", "gerritbot@gerritbot.rs")
-    context.gerrit.create_user(context.bot_user)
+    context.bot_user = Bot("gerritbot")
+    context.gerrit.create_account(context.bot_user)
     context.gerrit.add_user_to_group(context.bot_user, "Non-Interactive+Users")
     context.urls = URLs(context)
 
@@ -49,6 +60,8 @@ def before_scenario(context, scenario):
         user=context.bot_user,
         hostname=context.gerrit_ssh_hostname,
         port=context.gerrit_ssh_port,
+        message_timeout=context.gerritbot_message_timeout,
+        executable=context.gerritbot_executable,
     )
 
-    context.persons = Persons()
+    context.accounts = Accounts()

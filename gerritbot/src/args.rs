@@ -45,12 +45,6 @@ pub struct BotConfig {
 #[derive(StructOpt, Debug, Clone)]
 #[structopt(rename_all = "kebab-case")]
 pub struct Args {
-    /// Print more
-    #[structopt(short, long)]
-    pub verbose: bool,
-    /// Be silent
-    #[structopt(short, long, conflicts_with = "verbose")]
-    pub quiet: bool,
     /// YAML configuration file
     #[structopt(long, short, default_value = "config.yml")]
     pub config: PathBuf,

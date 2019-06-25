@@ -28,7 +28,7 @@ def step_impl(context, person, text):
 @then("there is a message for {person} which includes the following text")
 def step_impl(context, person):
     text = context.text
-    person = context.persons.get(person)
+    person = context.accounts.get_person(person)
     messages_for_person = context.bot.get_messages_for_person(person)
     item_matcher = has_entry("text", contains_string(text))
     assert_that(messages_for_person, has_item(item_matcher))
@@ -40,7 +40,7 @@ def step_impl(context, person):
 @then("there is a message for {person} with the following text")
 def step_impl(context, person):
     text = context.text.format(context=context)
-    person = context.persons.get(person)
+    person = context.accounts.get_person(person)
     messages_for_person = context.bot.get_messages_for_person(person)
     item_matcher = has_entry("text", equal_to(text))
     assert_that(messages_for_person, has_item(item_matcher))
@@ -64,7 +64,7 @@ def step_impl(context, person, text):
 @then("there is no message for {person} which includes the following text")
 def step_impl(context, person):
     text = context.text
-    person = context.persons.get(person)
+    person = context.accounts.get_person(person)
     messages_for_person = context.bot.get_messages_for_person(person)
     item_matcher = has_entry("text", contains_string(text))
     assert_that(messages_for_person, is_not(has_item(item_matcher)))
@@ -85,8 +85,8 @@ def step_impl(context, text):
 @step("{sender} sends the {command} command to the bot")
 def step_impl(context, sender, command):
     if sender == "everybody":
-        for person in context.persons:
+        for person in context.accounts.all_persons():
             context.bot.send_message(person, command)
     else:
-        sender = context.persons.get(sender)
+        sender = context.accounts.get_person(sender)
         context.bot.send_message(sender, command)

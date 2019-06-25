@@ -42,12 +42,6 @@ struct Args {
     /// Path to SSH private key
     #[structopt(short, long, parse(from_os_str))]
     identity_file: PathBuf,
-    /// Enable verbose output
-    #[structopt(short, long)]
-    verbose: bool,
-    /// Log only errors
-    #[structopt(short, long, conflicts_with = "verbose")]
-    quiet: bool,
     /// User email address
     ///
     /// If given input messages will be treated as if coming from this user.
@@ -76,26 +70,15 @@ struct Args {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 struct SimpleInputMessage {
-    person_email: spark::Email,
-    person_id: Option<spark::PersonId>,
+    email: spark::Email,
     text: String,
-}
-
-fn email_to_person_id(email: &spark::Email) -> spark::PersonId {
-    spark::PersonId::new(email.to_string())
 }
 
 impl Into<spark::Message> for SimpleInputMessage {
     fn into(self) -> spark::Message {
-        let SimpleInputMessage {
-            person_email,
-            person_id,
-            text,
-        } = self;
-        let person_id = person_id.unwrap_or_else(|| email_to_person_id(&person_email));
+        let SimpleInputMessage { email, text } = self;
         spark::Message {
-            person_email,
-            person_id,
+            person_email: email,
             text,
             ..Default::default()
         }
@@ -105,7 +88,7 @@ impl Into<spark::Message> for SimpleInputMessage {
 #[derive(Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 struct SimpleOutputMessage {
-    person_id: spark::PersonId,
+    email: spark::Email,
     text: String,
 }
 
@@ -117,15 +100,16 @@ enum ConsoleSparkClient {
 
 impl bot::SparkClient for ConsoleSparkClient {
     type ReplyFuture = future::FutureResult<(), spark::Error>;
-    fn send_message(&self, person_id: &spark::PersonId, msg: &str) -> Self::ReplyFuture {
+    fn send_message(&self, email: &spark::EmailRef, msg: &str) -> Self::ReplyFuture {
         // Write synchronously and crash if writing fails. There's no point in
         // error handling here.
         match self {
-            ConsoleSparkClient::Plain => write!(std::io::stdout(), "{}: {}\n", person_id, msg)
-                .expect("writing to stdout failed"),
+            ConsoleSparkClient::Plain => {
+                write!(std::io::stdout(), "{}: {}\n", email, msg).expect("writing to stdout failed")
+            }
             ConsoleSparkClient::Json => {
                 let message = SimpleOutputMessage {
-                    person_id: person_id.clone(),
+                    email: email.to_owned(),
                     text: msg.to_string(),
                 };
                 serde_json::to_writer(std::io::stdout(), &message)
@@ -140,19 +124,14 @@ impl bot::SparkClient for ConsoleSparkClient {
 }
 
 fn main() {
+    env_logger::init_from_env(
+        env_logger::Env::default()
+            .filter_or(
+                "GERRITBOT_LOG",
+                concat!(module_path!(), "=info,gerritbot=info,gerritbot_gerrit=info"),
+            )
+    );
     let args = Args::from_args();
-    stderrlog::new()
-        .module(module_path!())
-        .module("gerritbot")
-        .module("gerritbot_gerrit")
-        .timestamp(stderrlog::Timestamp::Second)
-        .verbosity(match (args.quiet, args.verbose) {
-            (true, _) => 0,      // ERROR
-            (false, false) => 2, // INFO
-            (_, true) => 4,      // TRACE
-        })
-        .init()
-        .unwrap();
 
     if let Some(working_directory) = args.working_directory.as_ref() {
         info!("Changing current directory to {:?}", working_directory);
@@ -221,7 +200,6 @@ fn main() {
             // If we have an email, send each line from this email.
             Some(spark::Message {
                 person_email: spark::Email::new(email.clone()),
-                person_id: spark::PersonId::new(email.clone()),
                 text: line,
                 ..Default::default()
             })
@@ -239,7 +217,6 @@ fn main() {
                     let message = captures.name("message").unwrap().as_str();
                     spark::Message {
                         person_email: spark::Email::new(email.to_string()),
-                        person_id: spark::PersonId::new(email.to_string()),
                         text: message.to_string(),
                         ..Default::default()
                     }

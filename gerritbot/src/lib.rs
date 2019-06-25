@@ -1,62 +1,32 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
-use std::convert;
+use std::convert::{self, identity};
 use std::fs::File;
 use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use futures::{future::Future, stream::Stream};
+use futures::{future::Future, stream, stream::Stream};
 use lazy_static::lazy_static;
-use log::{debug, error, warn};
+use log::{debug, error};
 use regex::Regex;
-use serde::{Deserialize, Serialize};
 
 use gerritbot_gerrit as gerrit;
 use gerritbot_spark as spark;
 
 pub mod args;
+mod command;
 mod format;
 mod rate_limit;
+mod state;
+mod version;
 
+use command::Command;
 use format::Formatter;
 pub use format::DEFAULT_FORMAT_SCRIPT;
 use rate_limit::RateLimiter;
-
-#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Filter {
-    pub regex: String,
-    pub enabled: bool,
-}
-
-impl Filter {
-    pub fn new<A: Into<String>>(regex: A) -> Self {
-        Self {
-            regex: regex.into(),
-            enabled: true,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct User {
-    spark_person_id: spark::PersonId,
-    /// email of the user; assumed to be the same in Spark and Gerrit
-    email: spark::Email,
-    enabled: bool,
-    filter: Option<Filter>,
-}
-
-impl User {
-    fn new(person_id: spark::PersonId, email: spark::Email) -> Self {
-        Self {
-            spark_person_id: person_id,
-            email: email,
-            filter: None,
-            enabled: true,
-        }
-    }
-}
+pub use state::State;
+use state::{User, UserFlag, NOTIFICATION_FLAGS, REVIEW_COMMENT_FLAGS};
+use version::VERSION_INFO;
 
 pub trait GerritCommandRunner {}
 
@@ -64,44 +34,14 @@ impl GerritCommandRunner for gerrit::CommandRunner {}
 
 pub trait SparkClient: Clone {
     type ReplyFuture: Future<Item = (), Error = spark::Error> + Send;
-    fn send_message(&self, person_id: &spark::PersonId, msg: &str) -> Self::ReplyFuture;
+    fn send_message(&self, email: &spark::EmailRef, msg: &str) -> Self::ReplyFuture;
 }
 
 impl SparkClient for spark::Client {
     type ReplyFuture = Box<dyn Future<Item = (), Error = spark::Error> + Send>;
-    fn send_message(&self, person_id: &spark::PersonId, msg: &str) -> Self::ReplyFuture {
-        Box::new(self.send_message(person_id, msg))
+    fn send_message(&self, email: &spark::EmailRef, msg: &str) -> Self::ReplyFuture {
+        Box::new(self.send_message(email, msg))
     }
-}
-
-pub struct Bot<G = gerrit::CommandRunner, S = spark::Client> {
-    state: State,
-    rate_limiter: RateLimiter,
-    formatter: format::Formatter,
-    gerrit_command_runner: G,
-    spark_client: S,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct State {
-    users: Vec<User>,
-    #[serde(skip_serializing, skip_deserializing)]
-    person_id_index: HashMap<spark::PersonId, usize>,
-    #[serde(skip_serializing, skip_deserializing)]
-    email_index: HashMap<spark::Email, usize>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct MsgCacheParameters {
-    capacity: usize,
-    expiration: Duration,
-}
-
-#[derive(Default)]
-pub struct Builder {
-    state: State,
-    rate_limiter: RateLimiter,
-    formatter: Formatter,
 }
 
 #[derive(Debug)]
@@ -122,189 +62,11 @@ impl convert::From<serde_json::Error> for BotError {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum AddFilterResult {
-    UserNotFound,
-    UserDisabled,
-    InvalidFilter,
-    FilterNotConfigured,
-}
-
-impl State {
-    pub fn new() -> Self {
-        Default::default()
-    }
-
-    pub fn load<P>(filename: P) -> Result<Self, BotError>
-    where
-        P: AsRef<Path>,
-    {
-        let f = File::open(filename)?;
-
-        serde_json::from_reader(f)
-            .map(|mut state: Self| {
-                state.index_users();
-                state
-            })
-            .map_err(BotError::from)
-    }
-
-    fn index_users(&mut self) {
-        for (user_pos, user) in self.users.iter().enumerate() {
-            self.person_id_index
-                .insert(user.spark_person_id.clone(), user_pos);
-            self.email_index.insert(user.email.clone(), user_pos);
-        }
-    }
-
-    pub fn num_users(&self) -> usize {
-        self.users.len()
-    }
-
-    // Note: This method is not idempotent, and in particular, when adding the same user twice,
-    // it will completely mess up the indexes.
-    fn add_user<'a>(
-        &'a mut self,
-        person_id: &spark::PersonIdRef,
-        email: &spark::EmailRef,
-    ) -> &'a mut User {
-        let user_pos = self.users.len();
-        self.users
-            .push(User::new(person_id.to_owned(), email.to_owned()));
-        self.person_id_index.insert(person_id.to_owned(), user_pos);
-        self.email_index.insert(email.to_owned(), user_pos);
-        self.users.last_mut().unwrap()
-    }
-
-    fn find_or_add_user_by_person_id<'a>(
-        &'a mut self,
-        person_id: &spark::PersonIdRef,
-        email: &spark::EmailRef,
-    ) -> &'a mut User {
-        let pos = self
-            .users
-            .iter()
-            .position(|u| u.spark_person_id == person_id);
-        let user: &'a mut User = match pos {
-            Some(pos) => &mut self.users[pos],
-            None => self.add_user(person_id, email),
-        };
-        user
-    }
-
-    fn find_user_mut<'a, P: ?Sized>(&'a mut self, person_id: &P) -> Option<&'a mut User>
-    where
-        spark::PersonId: std::borrow::Borrow<P>,
-        P: std::hash::Hash + Eq,
-    {
-        self.person_id_index
-            .get(person_id)
-            .cloned()
-            .map(move |pos| &mut self.users[pos])
-    }
-
-    fn find_user<'a, P: ?Sized>(&'a self, person_id: &P) -> Option<&'a User>
-    where
-        spark::PersonId: std::borrow::Borrow<P>,
-        P: std::hash::Hash + Eq,
-    {
-        self.person_id_index
-            .get(person_id)
-            .cloned()
-            .map(|pos| &self.users[pos])
-    }
-
-    fn enable<'a>(
-        &'a mut self,
-        person_id: &spark::PersonIdRef,
-        email: &spark::EmailRef,
-        enabled: bool,
-    ) -> &'a User {
-        let user: &'a mut User = self.find_or_add_user_by_person_id(person_id, email);
-        user.enabled = enabled;
-        user
-    }
-
-    pub fn add_filter<A>(
-        &mut self,
-        person_id: &spark::PersonIdRef,
-        filter: A,
-    ) -> Result<(), AddFilterResult>
-    where
-        A: Into<String>,
-    {
-        let user = self.find_user_mut(person_id);
-        match user {
-            Some(user) => {
-                if !user.enabled {
-                    Err(AddFilterResult::UserDisabled)
-                } else {
-                    let filter: String = filter.into();
-                    if Regex::new(&filter).is_err() {
-                        return Err(AddFilterResult::InvalidFilter);
-                    }
-                    user.filter = Some(Filter::new(filter));
-                    Ok(())
-                }
-            }
-            None => Err(AddFilterResult::UserNotFound),
-        }
-    }
-
-    pub fn get_filter<'a>(
-        &'a self,
-        person_id: &spark::PersonIdRef,
-    ) -> Result<Option<&'a Filter>, AddFilterResult> {
-        let user = self.find_user(person_id);
-        match user {
-            Some(user) => Ok(user.filter.as_ref()),
-            None => Err(AddFilterResult::UserNotFound),
-        }
-    }
-
-    pub fn enable_filter(
-        &mut self,
-        person_id: &spark::PersonIdRef,
-        enabled: bool,
-    ) -> Result<String /* filter */, AddFilterResult> {
-        let user = self.find_user_mut(person_id);
-        match user {
-            Some(user) => {
-                if !user.enabled {
-                    Err(AddFilterResult::UserDisabled)
-                } else {
-                    match user.filter.as_mut() {
-                        Some(filter) => {
-                            if Regex::new(&filter.regex).is_err() {
-                                return Err(AddFilterResult::InvalidFilter);
-                            }
-                            filter.enabled = enabled;
-                            Ok(filter.regex.clone())
-                        }
-                        None => Err(AddFilterResult::FilterNotConfigured),
-                    }
-                }
-            }
-            None => Err(AddFilterResult::UserNotFound),
-        }
-    }
-
-    fn is_filtered(&self, user_pos: usize, msg: &str) -> bool {
-        let user = &self.users[user_pos];
-        if let Some(filter) = user.filter.as_ref() {
-            if filter.enabled {
-                if let Ok(re) = Regex::new(&filter.regex) {
-                    return re.is_match(msg);
-                } else {
-                    warn!(
-                        "User {} has configured invalid filter regex: {}",
-                        user.spark_person_id, filter.regex
-                    );
-                }
-            }
-        }
-        false
-    }
+#[derive(Default)]
+pub struct Builder {
+    state: State,
+    rate_limiter: RateLimiter,
+    formatter: Formatter,
 }
 
 impl Builder {
@@ -347,34 +109,47 @@ impl Builder {
 }
 
 fn spark_message_to_action(message: spark::Message) -> Action {
-    lazy_static! {
-        static ref FILTER_REGEX: Regex = Regex::new(r"(?i)^filter (.*)$").unwrap();
-    };
+    let sender = message.person_email;
+    let text = message.text;
 
-    let sender_email = message.person_email;
-    let sender_id = message.person_id;
-    match &message.text.trim().to_lowercase()[..] {
-        "enable" => Action::Enable(sender_id, sender_email),
-        "disable" => Action::Disable(sender_id, sender_email),
-        "status" => Action::Status(sender_id),
-        "help" => Action::Help(sender_id),
-        "version" => Action::Version(sender_id),
-        "filter" => Action::FilterStatus(sender_id),
-        "filter enable" => Action::FilterEnable(sender_id),
-        "filter disable" => Action::FilterDisable(sender_id),
-        _ => FILTER_REGEX
-            .captures(&message.text.trim()[..])
-            .and_then(|cap| cap.get(1))
-            .map(|m| Action::FilterAdd(sender_id.clone(), m.as_str().to_string()))
-            .unwrap_or_else(|| Action::Unknown(sender_id.clone())),
+    match text.parse() {
+        Ok(command) => Action::RunCommand { sender, command },
+        Err(()) => Action::UnknownCommand { sender },
     }
 }
 
 /// Transform a gerrit event into a bot action.
-pub fn gerrit_event_to_action(event: gerrit::Event) -> Option<Action> {
+fn gerrit_event_to_action(event: gerrit::Event) -> Option<Action> {
     match event {
-        gerrit::Event::CommentAdded(event) => Some(Action::UpdateApprovals(Box::new(event))),
+        gerrit::Event::CommentAdded(event) => Some(Action::CommentAdded(Box::new(event))),
         gerrit::Event::ReviewerAdded(event) => Some(Action::ReviewerAdded(Box::new(event))),
+        gerrit::Event::ChangeMerged(event) => Some(Action::ChangeMerged(Box::new(event))),
+        gerrit::Event::ChangeAbandoned(event) => Some(Action::ChangeAbandoned(Box::new(event))),
+    }
+}
+
+pub trait IsHuman {
+    fn is_human(&self) -> bool;
+}
+
+impl IsHuman for gerrit::User {
+    fn is_human(&self) -> bool {
+        // XXX: Maybe this should be sophisticated to avoid matching humans
+        // whose name contains "bot"?
+        match self.username {
+            Some(ref username) if username.contains("bot") => false,
+            _ => true,
+        }
+    }
+}
+
+trait SparkEmail {
+    fn spark_email(&self) -> Option<&spark::EmailRef>;
+}
+
+impl SparkEmail for gerrit::User {
+    fn spark_email(&self) -> Option<&spark::EmailRef> {
+        self.email.as_ref().map(|s| spark::EmailRef::new(s))
     }
 }
 
@@ -385,22 +160,36 @@ pub fn request_extended_gerrit_info(event: &gerrit::Event) -> Cow<'static, [gerr
         gerrit::Event::CommentAdded(event) => {
             let owner_name = event.change.owner.username.as_ref();
             let approver_name = event.author.username.as_ref();
-            let is_human = approver_name
-                .map(|name| !name.to_lowercase().contains("bot"))
-                .unwrap_or(false);
 
-            if owner_name != approver_name && is_human && maybe_has_inline_comments(event) {
+            if event.author.is_human() && maybe_has_inline_comments(event) {
                 extended_info.push(gerrit::ExtendedInfo::InlineComments);
+            }
+
+            // Fetch existing reviewers, so they can be updated when the author
+            // comments.
+            if owner_name == approver_name {
+                extended_info.push(gerrit::ExtendedInfo::AllApprovals);
             }
 
             // Could be smarter here by checking for old_value and if the value
             // is positive.
             extended_info.push(gerrit::ExtendedInfo::SubmitRecords);
         }
+        gerrit::Event::ChangeMerged(_) | gerrit::Event::ChangeAbandoned(_) => {
+            extended_info.push(gerrit::ExtendedInfo::AllApprovals);
+        }
         _ => (),
     }
 
     Cow::Owned(extended_info)
+}
+
+pub struct Bot<G = gerrit::CommandRunner, S = spark::Client> {
+    state: State,
+    rate_limiter: RateLimiter,
+    formatter: format::Formatter,
+    gerrit_command_runner: G,
+    spark_client: S,
 }
 
 impl<G, S> Bot<G, S>
@@ -410,7 +199,6 @@ where
 {
     pub fn run(
         self,
-        // TODO: gerrit event stream probably shouldn't produce errors
         gerrit_events: impl Stream<Item = gerrit::Event, Error = ()> + Send,
         spark_messages: impl Stream<Item = spark::Message, Error = ()> + Send,
     ) -> impl Future<Item = (), Error = ()> {
@@ -423,239 +211,343 @@ where
 
         gerrit_actions
             .select(spark_actions)
-            .filter_map(move |action| bot_for_action.lock().unwrap().update(action))
+            .map(move |action| bot_for_action.lock().unwrap().update(action))
+            .map(stream::iter_ok)
+            .flatten()
             .filter_map(move |task| bot_for_task.lock().unwrap().handle_task(task))
-            .for_each(move |response| {
+            .map(move |response| {
                 debug!("Replying with: {}", response.message);
-                spark_client
-                    .send_message(&response.person_id, &response.message)
-                    .map_err(|e| error!("failed to send spark message: {}", e))
+                spark_client.send_message(&response.email, &response.message)
             })
+            .map(|send_future| {
+                // try sending a message for up to 5 seconds, then give up
+                tokio::timer::Timeout::new(send_future, Duration::from_secs(5))
+                    // log and suppress errors
+                    .or_else(|e| Ok(error!("failed to send spark message: {}", e)))
+            })
+            // try sending up to 10 messages at a time
+            .buffer_unordered(10)
+            .for_each(|()| Ok(()))
     }
 
     /// Action controller
     /// Return an optional message to send to the user
-    fn update(&mut self, action: Action) -> Option<Task> {
+    fn update(&mut self, action: Action) -> Vec<Task> {
         match action {
-        Action::Enable(person_id, email) => {
-            self.state.enable(&person_id, &email, true);
-            let task = Task::ReplyAndSave(Response::new(person_id, "Got it! Happy reviewing!"));
-            Some(task)
-        }
-        Action::Disable(person_id, email) => {
-            self.state.enable(&person_id, &email, false);
-            let task = Task::ReplyAndSave(Response::new(person_id, "Got it! I will stay silent."));
-            Some(task)
-        }
-        Action::UpdateApprovals(event) => {
-            self.get_approvals_msg(event).map(|(user, message, _is_human)|
-                    Task::Reply(Response::new(user.spark_person_id.clone(), message)))
-        }
-        Action::Help(person_id) => Some(Task::Reply(Response::new(person_id, HELP_MSG))),
-            Action::Version(person_id) => Some(Task::Reply(Response::new(person_id, VERSION_MSG))),
-        Action::Unknown(person_id) => Some(Task::Reply(Response::new(person_id, GREETINGS_MSG))),
-        Action::Status(person_id) => {
-            let status = self.status_for(&person_id);
-            Some(Task::Reply(Response::new(person_id, status)))
-        }
-        Action::FilterStatus(person_id) => {
-            let resp: String = match self.state.get_filter(&person_id) {
-                Ok(Some(filter)) => {
-                    format!(
-                        "The following filter is configured for you: `{}`. It is **{}**.",
-                        filter.regex,
-                        if filter.enabled {
-                            "enabled"
-                        } else {
-                            "disabled"
-                        }
-                    )
-                }
-                Ok(None) => "No filter is configured for you.".into(),
-                Err(err) => {
-                    match err {
-                        AddFilterResult::UserNotFound => {
-                            "Notification for you are disabled. Please enable notifications first, and then add a filter.".into()
-                        }
-                        _ => {
-                            error!("Invalid action arm with Error: {:?}", err);
-                            "".into()
-                        }
-                    }
-                }
-            };
-            if !resp.is_empty() {
-                Some(Task::Reply(Response::new(person_id, resp)))
-            } else {
-                None
-            }
-        }
-        Action::FilterAdd(person_id, filter) => {
-            Some(match self.state.add_filter(&person_id, filter) {
-                Ok(()) => Task::ReplyAndSave(Response::new(
-                    person_id,
-                    "Filter successfully added and enabled.")),
-                Err(err) => {
-                    Task::Reply(Response::new(
-                        person_id,
-                        match err {
-                            AddFilterResult::UserDisabled |
-                            AddFilterResult::UserNotFound => {
-                                "Notification for you are disabled. Please enable notifications first, and then add a filter."
-                            }
-                            AddFilterResult::InvalidFilter => {
-                                "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
-                            }
-                            AddFilterResult::FilterNotConfigured => {
-                                assert!(false, "this should not be possible");
-                                ""
-                            }
-                        },
-                    ))
-                }
-            })
-        }
-        Action::FilterEnable(person_id) => {
-            Some(match self.state.enable_filter(&person_id, true) {
-                Ok(filter) => {
-                    Task::ReplyAndSave(Response::new(
-                        person_id,
-                        format!(
-                            "Filter successfully enabled. The following filter is configured: {}",
-                            filter
-                        ),
-                    ))
-                }
-                Err(err) => {
-                    Task::Reply(Response::new(
-                        person_id,
-                        match err {
-                            AddFilterResult::UserDisabled |
-                            AddFilterResult::UserNotFound => {
-                                "Notification for you are disabled. Please enable notifications first, and then add a filter."
-                            }
-                            AddFilterResult::InvalidFilter => {
-                                "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
-                            }
-                            AddFilterResult::FilterNotConfigured => {
-                                "Cannot enable filter since there is none configured. User `filter <regex>` to add a new filter."
-                            }
-                        },
-                    ))
-                }
-            })
-        }
-        Action::FilterDisable(person_id) => {
-            Some(match self.state.enable_filter(&person_id, false) {
-                Ok(_) => Task::ReplyAndSave(
-                    Response::new(person_id, "Filter successfully disabled."),
-                ),
-                Err(err) => {
-                    Task::Reply(Response::new(
-                        person_id,
-                        match err {
-                            AddFilterResult::UserDisabled |
-                            AddFilterResult::UserNotFound => {
-                                "Notification for you are disabled. No need to disable the filter."
-                            }
-                            AddFilterResult::InvalidFilter => {
-                                "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax"
-                            }
-                            AddFilterResult::FilterNotConfigured => {
-                                "No need to disable the filter since there is none configured."
-                            }
-                        },
-                    ))
-                }
-            })
-        }
-        Action::ReviewerAdded(event) => {
-            self.get_reviewer_added_msg(&event).map(|(user, message)| {
-                Task::Reply(Response::new(user.spark_person_id.clone(), message))
-            })
+            Action::RunCommand { sender, command } => self.run_command(sender, command),
+            Action::UnknownCommand { sender } => self
+                .formatter
+                .format_greeting()
+                .map_err(|e| error!("failed to format message: {}", e))
+                .ok()
+                .into_iter()
+                .flatten()
+                .map(|message| Task::Reply(Response::new(sender.clone(), message)))
+                .collect(),
+            Action::CommentAdded(event) => self
+                .get_comment_messages(event)
+                .into_iter()
+                .map(|(email, message)| Task::Reply(Response::new(email, message)))
+                .collect(),
+            Action::ReviewerAdded(event) => self
+                .get_reviewer_added_msg(&event)
+                .map(|(user, message)| Task::Reply(Response::new(user.email().to_owned(), message)))
+                .into_iter()
+                .collect(),
+            Action::ChangeMerged(event) => self
+                .get_change_merged_messages(&event)
+                .into_iter()
+                .map(|(email, message)| Task::Reply(Response::new(email, message)))
+                .into_iter()
+                .collect(),
+            Action::ChangeAbandoned(event) => self
+                .get_change_abandoned_messages(&event)
+                .into_iter()
+                .map(|(email, message)| Task::Reply(Response::new(email, message)))
+                .into_iter()
+                .collect(),
         }
     }
+
+    fn run_command(&mut self, sender: spark::Email, command: Command) -> Vec<Task> {
+        match command {
+            Command::Enable => {
+                self.state.enable(&sender, true);
+                vec![
+                    Task::Save,
+                    Task::Reply(Response::new(sender, "Got it! Happy reviewing!")),
+                ]
+            }
+            Command::Disable => {
+                self.state.enable(&sender, false);
+                vec![
+                    Task::Save,
+                    Task::Reply(Response::new(sender, "Got it! I will stay silent.")),
+                ]
+            }
+            Command::Help => self
+                .formatter
+                .format_help()
+                .map_err(|e| error!("failed to format help: {}", e))
+                .ok()
+                .into_iter()
+                .flatten()
+                .map(|message| Task::Reply(Response::new(sender.clone(), message)))
+                .collect(),
+            Command::Version => self
+                .formatter
+                .format_message(None, &VERSION_INFO)
+                .map_err(|e| error!("failed to format version: {}", e))
+                .ok()
+                .and_then(identity)
+                .map(|version_message| Task::Reply(Response::new(sender, version_message)))
+                .into_iter()
+                .collect(),
+            Command::Status => self
+                .status_for(&sender)
+                .map(|status| Task::Reply(Response::new(sender, status)))
+                .into_iter()
+                .collect(),
+            Command::FilterStatus => {
+                let resp =
+                    if let Some((filter_str, filter_enabled)) = self.state.get_filter(&sender) {
+                        format!(
+                            "The following filter is configured for you: `{}`. It is **{}**.",
+                            filter_str,
+                            if filter_enabled {
+                                "enabled"
+                            } else {
+                                "disabled"
+                            }
+                        )
+                    } else {
+                        "No filter is configured for you.".to_string()
+                    };
+
+                vec![Task::Reply(Response::new(sender, resp))]
+            }
+            Command::FilterAdd(filter) => {
+                let resp = self.state.add_filter(&sender, &filter).map(
+                |()|
+                "Filter successfully added and enabled."
+            ).unwrap_or(
+                "Your provided filter is invalid. Please double-check the regex you provided. Specifications of the regex are here: https://doc.rust-lang.org/regex/regex/index.html#syntax");
+                vec![Task::Reply(Response::new(sender, resp.to_string()))]
+            }
+            Command::FilterEnable(enable) => {
+                let resp = self.state.enable_and_get_filter(&sender, enable).map(
+                |filter|
+                if enable {
+                format!(
+                    "Filter successfully enabled. The following filter is configured: {}",
+                    filter
+                )
+                } else {
+                    "Filter successfully disabled.".to_string()
+                }
+            ).unwrap_or_else(|()|
+                             if enable {
+                                 "Cannot enable filter since there is none configured. User `filter <regex>` to add a new filter.".to_string()
+                             } else {
+                                 "No need to disable the filter since there is none configured.".to_string()
+                             }
+                );
+
+                vec![Task::Save, Task::Reply(Response::new(sender, resp))]
+            }
+            Command::SetFlag(flag, enable) => {
+                self.state.set_flag(&sender, flag, enable);
+                vec![
+                    Task::Save,
+                    Task::Reply(Response::new(
+                        sender,
+                        format!(
+                            "Flag {} **{}**",
+                            flag,
+                            if enable { "enabled" } else { "disabled" }
+                        ),
+                    )),
+                ]
+            }
+        }
     }
 
     fn handle_task(&mut self, task: Task) -> Option<Response> {
         debug!("New task {:#?}", task);
-        let response = match task {
+        match task {
             Task::Reply(response) => Some(response),
-            Task::ReplyAndSave(response) => {
+            Task::Save => {
                 self.save("state.json")
                     .map_err(|err| {
                         error!("Could not save state: {:?}", err);
                     })
                     .ok();
-                Some(response)
+                None
             }
-        };
-        return response;
+        }
+    }
+
+    /// Return iterator of users which might be interested in an event.
+    fn interested_users<'bot, 'event, 'result>(
+        &'bot self,
+        change: &'event gerrit::Change,
+        patchset: &'event gerrit::Patchset,
+    ) -> impl Iterator<Item = &'bot User> + 'result
+    where
+        'bot: 'result,
+        'event: 'result,
+    {
+        // TODO: this function currently only considers users that added an
+        // approval on the patchset in question. Ideally, users that approved
+        // (or event commented) on any patchset might be considered interested.
+        // For that to work with the current model for each event we'd have to
+        // query gerrit with the --all-reviewers flag to get all reviewers of a
+        // change (or even --patch-sets to get all patchsets) as well. This
+        // might create quite some load on the gerrit server. We can already get
+        // almost all of that information by subscribing to events. This would
+        // holding more state and tracking changes, reviewers etc.
+        let _ = change;
+        patchset
+            .approvals
+            .iter()
+            .flatten()
+            .filter_map(|approval| approval.by.as_ref())
+            .chain(std::iter::once(&change.owner))
+            .filter(|user| user.is_human())
+            .filter_map(|user| user.spark_email())
+            .filter_map(move |email| self.state.find_user_by_email(email))
+    }
+
+    fn get_comment_response_messages(
+        &self,
+        event: Box<gerrit::CommentAddedEvent>,
+    ) -> Vec<(spark::Email, String)> {
+        self.interested_users(&event.change, &event.patchset)
+            .filter(|user| Some(user.email()) != event.author.spark_email())
+            .filter(|user| user.has_flag(UserFlag::NotifyReviewResponses))
+            .filter_map(|user| {
+                self.formatter
+                    .format_message(Some(user), &*event)
+                    .map_err(|e| error!("message formatting failed: {}", e))
+                    .unwrap_or(None)
+                    .filter(|message| !self.state.is_filtered(user, &message))
+                    .map(|message| (user.email().to_owned(), message))
+            })
+            .collect()
     }
 
     fn get_approvals_msg(
         &mut self,
         event: Box<gerrit::CommentAddedEvent>,
-    ) -> Option<(&User, String, bool)> {
-        debug!("Incoming approvals: {:#?}", event);
+    ) -> Option<(spark::Email, String)> {
+        let approvals = event
+            .approvals
+            .as_ref()
+            .map(Vec::as_slice)
+            .unwrap_or(&[][..]);
+        let owner_email = event.change.owner.spark_email()?;
 
-        let approvals = &event.approvals;
-        let change = &event.change;
-        let approver = event.author.username.as_ref()?;
-        if Some(approver) == change.owner.username.as_ref() {
-            // No need to notify about user's own approvals.
-            return None;
-        }
-        let owner_email = spark::EmailRef::new(change.owner.email.as_ref()?);
-
-        // try to find the use and check it is enabled
-        let user_pos = *self.state.email_index.get(owner_email)?;
-        if !self.state.users[user_pos].enabled {
-            return None;
-        }
-
-        let is_human = !approver.to_lowercase().contains("bot");
+        // try to find the user and check it is enabled
+        let user = self
+            .state
+            .find_user_by_email(owner_email)
+            .filter(|user| user.has_any_flag(REVIEW_COMMENT_FLAGS))?;
 
         // filter all messages that were already sent to the user recently
-        if !approvals.is_empty() && self.rate_limiter.limit(user_pos, &*event) {
+        if !approvals.is_empty() && self.rate_limiter.limit(user, &*event) {
             debug!("Filtered approval due to cache hit.");
             return None;
         }
-        let user = &self.state.users[user_pos];
 
         self.formatter
-            .format_comment_added(&event, is_human)
+            .format_message(Some(user), &*event)
             .unwrap_or_else(|e| {
                 error!("message formatting failed: {}", e);
                 None
             })
             .filter(|msg| {
                 // if user has configured and enabled a filter try to apply it
-                !self.state.is_filtered(user_pos, &msg)
+                !self.state.is_filtered(user, &msg)
             })
-            .map(|m| (user, m, is_human))
+            .map(|m| (owner_email.to_owned(), m))
+    }
+
+    fn get_comment_messages(
+        &mut self,
+        event: Box<gerrit::CommentAddedEvent>,
+    ) -> Vec<(spark::Email, String)> {
+        debug!("Incoming approvals: {:#?}", event);
+        let owner_email = event.change.owner.spark_email();
+        let approver_email = event.author.spark_email();
+
+        if owner_email == approver_email {
+            self.get_comment_response_messages(event)
+        } else {
+            self.get_approvals_msg(event).into_iter().collect()
+        }
     }
 
     fn get_reviewer_added_msg(
         &mut self,
         event: &gerrit::ReviewerAddedEvent,
     ) -> Option<(&User, String)> {
-        let reviewer = event.reviewer.clone();
-        let reviewer_email = spark::EmailRef::new(reviewer.email.as_ref()?);
-        let user_pos = *self.state.email_index.get(reviewer_email)?;
-        if !self.state.users[user_pos].enabled {
-            return None;
-        }
+        let reviewer_email = spark::EmailRef::new(event.reviewer.email.as_ref()?);
+        let user = self
+            .state
+            .find_user_by_email(reviewer_email)
+            .filter(|user| user.has_flag(UserFlag::NotifyReviewerAdded))?;
 
         // filter all messages that were already sent to the user recently
-        if self.rate_limiter.limit(user_pos, event) {
+        if self.rate_limiter.limit(user, event) {
             debug!("Filtered reviewer-added due to cache hit.");
             return None;
         }
 
-        let message = self.formatter.format_reviewer_added(event).ok()?;
+        let message = self
+            .formatter
+            .format_message(Some(user), event)
+            .map_err(|e| error!("formatting reviewer added failed: {}", e))
+            .ok()??;
 
-        Some((&self.state.users[user_pos], message))
+        Some((user, message))
+    }
+
+    fn get_change_merged_messages(
+        &mut self,
+        event: &gerrit::ChangeMergedEvent,
+    ) -> Vec<(spark::Email, String)> {
+        self.interested_users(&event.change, &event.patchset)
+            .filter(|user| event.submitter.spark_email() != Some(user.email()))
+            .filter(|user| user.has_flag(UserFlag::NotifyChangeMerged))
+            .filter_map(|user| {
+                self.formatter
+                    .format_message(Some(user), event)
+                    .map_err(|e| error!("message formatting failed: {}", e))
+                    .ok()
+                    .and_then(identity)
+                    .filter(|message| !self.state.is_filtered(user, &message))
+                    .map(|message| (user.email().to_owned(), message))
+            })
+            .collect()
+    }
+
+    fn get_change_abandoned_messages(
+        &mut self,
+        event: &gerrit::ChangeAbandonedEvent,
+    ) -> Vec<(spark::Email, String)> {
+        self.interested_users(&event.change, &event.patchset)
+            .filter(|user| event.abandoner.spark_email() != Some(user.email()))
+            .filter(|user| user.has_flag(UserFlag::NotifyChangeAbandoned))
+            .filter_map(|user| {
+                self.formatter
+                    .format_message(Some(user), event)
+                    .map_err(|e| error!("message formatting failed: {}", e))
+                    .ok()
+                    .and_then(identity)
+                    .filter(|message| !self.state.is_filtered(user, &message))
+                    .map(|message| (user.email().to_owned(), message))
+            })
+            .collect()
     }
 
     pub fn save<P>(&self, filename: P) -> Result<(), BotError>
@@ -667,101 +559,58 @@ where
         Ok(())
     }
 
-    pub fn status_for(&self, person_id: &spark::PersonIdRef) -> String {
-        let user = self.state.find_user(person_id);
-        let enabled = user.map_or(false, |u| u.enabled);
-        let enabled_user_count =
-            self.state.users.iter().filter(|u| u.enabled).count() - if enabled { 1 } else { 0 };
-        format!(
-            "Notifications for you are **{}**. I am notifying {}.",
-            if enabled { "enabled" } else { "disabled" },
-            match (enabled, enabled_user_count) {
-                (false, 0) => format!("no users"),
-                (true, 0) => format!("no other users"),
-                (false, 1) => format!("one user"),
-                (true, 1) => format!("another user"),
-                (false, _) => format!("{} users", enabled_user_count),
-                (true, _) => format!("another {} users", enabled_user_count),
-            }
-        )
+    fn status_for(&self, email: &spark::EmailRef) -> Option<String> {
+        let user = self.state.find_user(email);
+        let enabled_user_count = self
+            .state
+            .users()
+            .filter(|u| u.has_any_flag(NOTIFICATION_FLAGS))
+            .count();
+        self.formatter
+            .format_status(user, enabled_user_count)
+            .map_err(|e| error!("formatting status failed: {}", e))
+            .ok()?
     }
 }
 
 #[derive(Debug)]
-pub enum Action {
-    Enable(spark::PersonId, spark::Email),
-    Disable(spark::PersonId, spark::Email),
-    UpdateApprovals(Box<gerrit::CommentAddedEvent>),
-    Help(spark::PersonId),
-    Unknown(spark::PersonId),
-    Status(spark::PersonId),
-    Version(spark::PersonId),
-    FilterStatus(spark::PersonId),
-    FilterAdd(spark::PersonId, String /* filter */),
-    FilterEnable(spark::PersonId),
-    FilterDisable(spark::PersonId),
+enum Action {
+    RunCommand {
+        sender: spark::Email,
+        command: Command,
+    },
+    UnknownCommand {
+        sender: spark::Email,
+    },
+    CommentAdded(Box<gerrit::CommentAddedEvent>),
     ReviewerAdded(Box<gerrit::ReviewerAddedEvent>),
+    ChangeMerged(Box<gerrit::ChangeMergedEvent>),
+    ChangeAbandoned(Box<gerrit::ChangeAbandonedEvent>),
 }
 
 #[derive(Debug)]
-pub struct Response {
-    pub person_id: spark::PersonId,
+struct Response {
+    pub email: spark::Email,
     pub message: String,
 }
 
 impl Response {
-    pub fn new<A>(person_id: spark::PersonId, message: A) -> Response
+    pub fn new<A>(email: spark::Email, message: A) -> Response
     where
         A: Into<String>,
     {
         Response {
-            person_id,
+            email,
             message: message.into(),
         }
     }
 }
 
 #[derive(Debug)]
-pub enum Task {
+enum Task {
     Reply(Response),
-    ReplyAndSave(Response),
+    Save,
 }
-
-const GREETINGS_MSG: &str =
-r#"Hi. I am GerritBot. I can watch Gerrit reviews for you, and notify you about new +1/-1's.
-
-To enable notifications, just type in **enable**. A small note: your email in Spark and in Gerrit has to be the same. Otherwise, I can't match your accounts.
-
-For more information, type in **help**.
-"#;
-
-const HELP_MSG: &str = r#"Commands:
-
-`enable` -- I will start notifying you.
-
-`disable` -- I will stop notifying you.
-
-`filter <regex>` -- Filter all messages by applying the specified regex pattern. If the pattern matches, the message is filtered. The pattern is applied to the full text I send to you. Be aware, to send this command **not** in markdown mode, otherwise, Spark would eat some special characters in the pattern. For regex specification, cf. https://docs.rs/regex/0.2.10/regex/#syntax.
-
-`filter enable` -- Enable the filtering of messages with the configured filter.
-
-`filter disable` -- Disable the filtering of messages with the configured filter.
-
-`status` -- Show if I am notifying you, and a little bit more information. 😉
-
-`help` -- This message
-
-This project is open source, feel free to help us at: https://github.com/boxdot/gerritbot-rs
-"#;
-
-const VERSION_MSG: &str = concat!(
-    env!("CARGO_PKG_NAME"),
-    " ",
-    env!("CARGO_PKG_VERSION"),
-    " (commit id ",
-    env!("VERGEN_SHA"),
-    ")"
-);
 
 /// Guess if the change might have comments by looking for a specially formatted
 /// comment.
@@ -774,6 +623,8 @@ fn maybe_has_inline_comments(event: &gerrit::CommentAddedEvent) -> bool {
 
 #[cfg(test)]
 mod test {
+    use std::borrow::Borrow;
+    use std::fmt::Debug;
     use std::thread;
     use std::time::Duration;
 
@@ -781,7 +632,7 @@ mod test {
     use spectral::prelude::*;
     use speculate::speculate;
 
-    use spark::{EmailRef, PersonId, PersonIdRef};
+    use spark::EmailRef;
 
     use super::*;
 
@@ -795,20 +646,18 @@ mod test {
 
     impl SparkClient for TestSparkClient {
         type ReplyFuture = future::FutureResult<(), spark::Error>;
-        fn send_message(&self, _person_id: &PersonId, _msg: &str) -> Self::ReplyFuture {
+        fn send_message(&self, _email: &EmailRef, _msg: &str) -> Self::ReplyFuture {
             future::ok(())
         }
     }
 
     impl TestBot {
-        fn add_user(&mut self, person_id: &str, email: &str) {
-            self.state
-                .add_user(PersonIdRef::new(person_id), EmailRef::new(email));
+        fn add_user(&mut self, email: &str) {
+            self.state.add_user(EmailRef::new(email));
         }
 
-        fn enable(&mut self, person_id: &str, email: &str, enabled: bool) {
-            self.state
-                .enable(PersonIdRef::new(person_id), EmailRef::new(email), enabled);
+        fn enable(&mut self, email: &str, enabled: bool) {
+            self.state.enable(EmailRef::new(email), enabled);
         }
     }
 
@@ -823,26 +672,20 @@ mod test {
     }
 
     trait UserAssertions {
-        fn has_person_id(&mut self, expected: &str);
         fn has_email(&mut self, expected: &str);
-        fn is_enabled(&mut self);
-        fn is_not_enabled(&mut self);
+        fn has_any_flag<I, F>(&self, flags: I)
+        where
+            I: IntoIterator<Item = F> + Debug + Clone,
+            F: Borrow<UserFlag>;
+        fn has_no_flag<I, F>(&self, flags: I)
+        where
+            I: IntoIterator<Item = F> + Debug + Clone,
+            F: Borrow<UserFlag>;
     }
 
     impl<'s> UserAssertions for spectral::Spec<'s, &User> {
-        fn has_person_id(&mut self, expected: &str) {
-            let actual = &self.subject.spark_person_id;
-            let expected = PersonIdRef::new(expected);
-            if actual != expected {
-                spectral::AssertionFailure::from_spec(self)
-                    .with_expected(format!("user with name <{}>", expected))
-                    .with_actual(format!("<{}>", actual))
-                    .fail();
-            }
-        }
-
         fn has_email(&mut self, expected: &str) {
-            let actual = &self.subject.email;
+            let actual = self.subject.email();
             let expected = EmailRef::new(expected);
             if actual != expected {
                 spectral::AssertionFailure::from_spec(self)
@@ -852,20 +695,28 @@ mod test {
             }
         }
 
-        fn is_enabled(&mut self) {
-            if !self.subject.enabled {
+        fn has_any_flag<I, F>(&self, flags: I)
+        where
+            I: IntoIterator<Item = F> + Debug + Clone,
+            F: Borrow<UserFlag>,
+        {
+            if !self.subject.has_any_flag(flags.clone()) {
                 spectral::AssertionFailure::from_spec(self)
-                    .with_expected("user is enabled".to_string())
-                    .with_actual("it is not".to_string())
+                    .with_expected(format!("user has at least one of the flags {:?}", flags))
+                    .with_actual("it has none of the given flags".to_string())
                     .fail();
             }
         }
 
-        fn is_not_enabled(&mut self) {
-            if self.subject.enabled {
+        fn has_no_flag<I, F>(&self, flags: I)
+        where
+            I: IntoIterator<Item = F> + Debug + Clone,
+            F: Borrow<UserFlag>,
+        {
+            if self.subject.has_any_flag(flags.clone()) {
                 spectral::AssertionFailure::from_spec(self)
-                    .with_expected("user is not enabled".to_string())
-                    .with_actual("it is".to_string())
+                    .with_expected(format!("user has none of the flags {:?}", flags))
+                    .with_actual("it has at least one of the given flags".to_string())
                     .fail();
             }
         }
@@ -907,79 +758,80 @@ mod test {
         describe "when a user is added" {
             before {
                 let mut bot = bot;
-                bot.add_user("some_person_id", "some@example.com");
+                bot.add_user("some@example.com");
             }
 
             before {
-                assert_that!(bot.state.users).has_length(1);
+                assert_that!(bot.state.users().count()).is_equal_to(1);
             }
 
             it "has the expected attributes" {
-                let user = &bot.state.users[0];
-                assert_that!(user).has_person_id("some_person_id");
+                let user = bot.state.users().nth(0).unwrap();
                 assert_that!(user).has_email("some@example.com");
-                assert_that!(user).is_enabled();
+                assert_that!(user).has_email("some@example.com");
+                assert_that!(user).has_any_flag(NOTIFICATION_FLAGS);
             }
 
             test "enabled status response" {
-                let resp = bot.status_for(PersonIdRef::new("some_person_id"));
-                assert_that!(resp).contains("enabled");
+                let resp = bot.status_for(EmailRef::new("some@example.com"));
+                assert_that!(resp).is_some().contains("enabled");
             }
 
             test "disabled status response" {
-                bot.state.users[0].enabled = false;
-                let resp = bot.status_for(PersonIdRef::new("some_person_id"));
-                assert_that!(resp).contains("disabled");
+                bot.enable("some@example.com", false);
+                let resp = bot.status_for(EmailRef::new("some@example.com"));
+                assert_that!(resp).is_some().contains("disabled");
             }
 
             test "existing user can be enabled" {
-                bot.enable("some_person_id", "some@example.com", true);
-                assert_that!(bot.state.users)
+                bot.enable("some@example.com", true);
+                let users: Vec<_> = bot.state.users().collect();
+                assert_that!(users)
                     .has_item_matching(
-                        |u| u.spark_person_id == PersonIdRef::new("some_person_id")
-                            && u.email == EmailRef::new("some@example.com")
-                            && u.enabled);
-                assert_that!(bot.state.users).has_length(1);
+                        |u| u.email() == EmailRef::new("some@example.com")
+                            && u.has_any_flag(NOTIFICATION_FLAGS));
+                assert_that!(bot.state.users().count()).is_equal_to(1);
             }
 
             test "existing can be disabled" {
-                bot.enable("some_person_id", "some@example.com", false);
-                assert_that!(bot.state.users)
+                bot.enable("some@example.com", false);
+                let users: Vec<_> = bot.state.users().collect();
+                assert_that!(users)
                     .has_item_matching(
-                        |u| u.spark_person_id == PersonIdRef::new("some_person_id")
-                            && u.email == EmailRef::new("some@example.com")
-                            && !u.enabled);
-                assert_that!(bot.state.users).has_length(1);
+                        |u| u.email() == EmailRef::new("some@example.com")
+                            && !u.has_any_flag(NOTIFICATION_FLAGS));
+                assert_that!(bot.state.users().count()).is_equal_to(1);
             }
         }
 
         test "non-existing user is automatically added when enabled" {
-            assert_that!(bot.state.users).has_length(0);
+            assert_that!(bot.state.users().count()).is_equal_to(0);
             let mut bot = bot;
-            bot.enable("some_person_id", "some@example.com", true);
-            assert_that!(bot.state.users)
+            bot.enable("some@example.com", true);
+            let users: Vec<_> = bot.state.users().collect();
+            assert_that!(users)
                 .has_item_matching(
-                    |u| u.spark_person_id == PersonIdRef::new("some_person_id")
-                        && u.email == EmailRef::new("some@example.com")
-                        && u.enabled);
-            assert_that!(bot.state.users).has_length(1);
+                    |u| u.email() == EmailRef::new("some@example.com")
+
+                        && u.has_any_flag(NOTIFICATION_FLAGS));
+            assert_that!(bot.state.users().count()).is_equal_to(1);
         }
 
         test "non-existing user is automatically added when disabled" {
-            assert_that!(bot.state.users).has_length(0);
+            assert_that!(bot.state.users().count()).is_equal_to(0);
             let mut bot = bot;
-            bot.enable("some_person_id", "some@example.com", false);
-            assert_that!(bot.state.users)
+            bot.enable("some@example.com", false);
+            let users: Vec<_> = bot.state.users().collect();
+            assert_that!(users)
                 .has_item_matching(
-                    |u| u.spark_person_id == PersonIdRef::new("some_person_id")
-                        && u.email == EmailRef::new("some@example.com")
-                        && !u.enabled);
-            assert_that!(bot.state.users).has_length(1);
+                    |u| u.email() == EmailRef::new("some@example.com")
+                        && !u.has_any_flag(NOTIFICATION_FLAGS));
+            assert_that!(bot.state.users().count()).is_equal_to(1);
         }
 
         test "unknown user gets disabled status response" {
-            let resp = bot.status_for(PersonIdRef::new("some_non_existent_id"));
-            assert!(resp.contains("disabled"));
+            let resp = bot.status_for(EmailRef::new("some_non_existent_id"));
+            assert_that!(resp).is_some().contains("disabled");
         }
     }
 
@@ -995,72 +847,6 @@ mod test {
     }
 
     #[test]
-    fn test_add_user() {
-        let mut state = State::new();
-        state.add_user(
-            PersonIdRef::new("some_person_id"),
-            EmailRef::new("some@example.com"),
-        );
-        assert_eq!(state.users.len(), 1);
-        assert_eq!(state.person_id_index.len(), 1);
-        assert_eq!(state.email_index.len(), 1);
-        assert_eq!(
-            state.users[0].spark_person_id,
-            PersonIdRef::new("some_person_id")
-        );
-        assert_eq!(state.users[0].email, EmailRef::new("some@example.com"));
-        assert_eq!(
-            state
-                .person_id_index
-                .get(PersonIdRef::new("some_person_id")),
-            Some(&0)
-        );
-        assert_eq!(
-            state.email_index.get(EmailRef::new("some@example.com")),
-            Some(&0)
-        );
-
-        state.add_user(
-            PersonIdRef::new("some_person_id_2"),
-            EmailRef::new("some_2@example.com"),
-        );
-        assert_eq!(state.users.len(), 2);
-        assert_eq!(state.person_id_index.len(), 2);
-        assert_eq!(state.email_index.len(), 2);
-        assert_eq!(
-            state.users[1].spark_person_id,
-            PersonIdRef::new("some_person_id_2")
-        );
-        assert_eq!(state.users[1].email, EmailRef::new("some_2@example.com"));
-        assert_eq!(
-            state
-                .person_id_index
-                .get(PersonIdRef::new("some_person_id_2")),
-            Some(&1)
-        );
-        assert_eq!(
-            state.email_index.get(EmailRef::new("some_2@example.com")),
-            Some(&1)
-        );
-
-        let user = state.find_user(PersonIdRef::new("some_person_id"));
-        assert!(user.is_some());
-        assert_eq!(
-            user.unwrap().spark_person_id,
-            PersonIdRef::new("some_person_id")
-        );
-        assert_eq!(user.unwrap().email, EmailRef::new("some@example.com"));
-
-        let user = state.find_user(PersonIdRef::new("some_person_id_2"));
-        assert!(user.is_some());
-        assert_eq!(
-            user.unwrap().spark_person_id,
-            PersonIdRef::new("some_person_id_2")
-        );
-        assert_eq!(user.unwrap().email, EmailRef::new("some_2@example.com"));
-    }
-
-    #[test]
     fn get_approvals_msg_for_empty_bot() {
         // bot does not have the user => no message
         let mut bot = new_bot();
@@ -1072,10 +858,7 @@ mod test {
     fn get_approvals_msg_for_same_author_and_approver() {
         // the approval is from the author => no message
         let mut bot = new_bot();
-        bot.state.add_user(
-            PersonIdRef::new("approver_spark_id"),
-            EmailRef::new("approver@example.com"),
-        );
+        bot.state.add_user(EmailRef::new("approver@example.com"));
         let res = bot.get_approvals_msg(Box::new(get_event()));
         assert!(res.is_none());
     }
@@ -1085,11 +868,8 @@ mod test {
         // the approval is for the user with disabled notifications
         // => no message
         let mut bot = new_bot();
-        bot.state.add_user(
-            PersonIdRef::new("author_spark_id"),
-            EmailRef::new("author@example.com"),
-        );
-        bot.state.users[0].enabled = false;
+        bot.state.add_user(EmailRef::new("author@example.com"));
+        bot.enable("author@example.com", false);
         let res = bot.get_approvals_msg(Box::new(get_event()));
         assert!(res.is_none());
     }
@@ -1099,17 +879,12 @@ mod test {
         // the approval is for the user with enabled notifications
         // => message
         let mut bot = new_bot();
-        bot.state.add_user(
-            PersonIdRef::new("author_spark_id"),
-            EmailRef::new("author@example.com"),
-        );
+        bot.state.add_user(EmailRef::new("author@example.com"));
         let res = bot.get_approvals_msg(Box::new(get_event()));
         assert!(res.is_some());
-        let (user, msg, is_human) = res.unwrap();
-        assert_eq!(user.spark_person_id, PersonIdRef::new("author_spark_id"));
-        assert_eq!(user.email, EmailRef::new("author@example.com"));
+        let (email, msg) = res.unwrap();
+        assert_eq!(email, EmailRef::new("author@example.com"));
         assert!(msg.contains("Some review."));
-        assert!(is_human);
     }
 
     #[test]
@@ -1117,15 +892,12 @@ mod test {
         // the approval is for the user with enabled notifications
         // => message
         let mut bot = new_bot();
-        bot.state.add_user(
-            PersonIdRef::new("author_spark_id"),
-            EmailRef::new("author@example.com"),
-        );
+        bot.state.add_user(EmailRef::new("author@example.com"));
 
         {
             let res = bot
                 .state
-                .add_filter(PersonIdRef::new("author_spark_id"), ".*Code-Review.*");
+                .add_filter(EmailRef::new("author@example.com"), ".*Code-Review.*");
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_none());
@@ -1133,33 +905,29 @@ mod test {
         {
             let res = bot
                 .state
-                .enable_filter(PersonIdRef::new("author_spark_id"), false);
+                .enable_and_get_filter(EmailRef::new("author@example.com"), false);
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
-            let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.spark_person_id, PersonIdRef::new("author_spark_id"));
-            assert_eq!(user.email, EmailRef::new("author@example.com"));
+            let (user, msg) = res.unwrap();
+            assert_eq!(user, EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
-            assert!(is_human);
         }
         {
             let res = bot
                 .state
-                .enable_filter(PersonIdRef::new("author_spark_id"), true);
+                .enable_and_get_filter(EmailRef::new("author@example.com"), true);
             assert!(res.is_ok());
             let res = bot.state.add_filter(
-                PersonIdRef::new("author_spark_id"),
+                EmailRef::new("author@example.com"),
                 "some_non_matching_filter",
             );
             assert!(res.is_ok());
             let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
-            let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.spark_person_id, PersonIdRef::new("author_spark_id"));
-            assert_eq!(user.email, EmailRef::new("author@example.com"));
+            let (email, msg) = res.unwrap();
+            assert_eq!(email, EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
-            assert!(is_human);
         }
     }
 
@@ -1168,18 +936,13 @@ mod test {
         // same approval for the user with enabled notifications 2 times in less than 1 sec
         // => first time get message, second time nothing
         let mut bot = new_bot_with_msg_cache(10, Duration::from_secs(1));
-        bot.state.add_user(
-            PersonIdRef::new("author_spark_id"),
-            EmailRef::new("author@example.com"),
-        );
+        bot.state.add_user(EmailRef::new("author@example.com"));
         {
             let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
-            let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.spark_person_id, PersonIdRef::new("author_spark_id"));
-            assert_eq!(user.email, EmailRef::new("author@example.com"));
+            let (email, msg) = res.unwrap();
+            assert_eq!(email, EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
-            assert!(is_human);
         }
         {
             let res = bot.get_approvals_msg(Box::new(get_event()));
@@ -1192,28 +955,21 @@ mod test {
         // same approval for the user with enabled notifications 2 times in more than 100 msec
         // => get message 2 times
         let mut bot = new_bot_with_msg_cache(10, Duration::from_millis(50));
-        bot.state.add_user(
-            PersonIdRef::new("author_spark_id"),
-            EmailRef::new("author@example.com"),
-        );
+        bot.state.add_user(EmailRef::new("author@example.com"));
         {
             let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
-            let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.spark_person_id, PersonIdRef::new("author_spark_id"));
-            assert_eq!(user.email, EmailRef::new("author@example.com"));
+            let (email, msg) = res.unwrap();
+            assert_eq!(email, EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
-            assert!(is_human);
         }
         thread::sleep(Duration::from_millis(200));
         {
             let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
-            let (user, msg, is_human) = res.unwrap();
-            assert_eq!(user.spark_person_id, PersonIdRef::new("author_spark_id"));
-            assert_eq!(user.email, EmailRef::new("author@example.com"));
+            let (email, msg) = res.unwrap();
+            assert_eq!(email, EmailRef::new("author@example.com"));
             assert!(msg.contains("Some review."));
-            assert!(is_human);
         }
     }
 
@@ -1223,10 +979,7 @@ mod test {
         // but there is also another approval and bot's msg capacity is 1
         // => get message 3 times
         let mut bot = new_bot_with_msg_cache(1, Duration::from_secs(1));
-        bot.state.add_user(
-            PersonIdRef::new("author_spark_id"),
-            EmailRef::new("author@example.com"),
-        );
+        bot.state.add_user(EmailRef::new("author@example.com"));
         {
             let mut event = get_event();
             event.change.subject = String::from("A");
@@ -1248,177 +1001,6 @@ mod test {
     }
 
     #[test]
-    fn add_invalid_filter_for_existing_user() {
-        let mut bot = new_bot();
-        bot.state.add_user(
-            PersonIdRef::new("some_person_id"),
-            EmailRef::new("some@example.com"),
-        );
-        let res = bot
-            .state
-            .add_filter(PersonIdRef::new("some_person_id"), ".some_weard_regex/[");
-        assert_eq!(res, Err(AddFilterResult::InvalidFilter));
-        assert!(bot
-            .state
-            .users
-            .iter()
-            .position(|u| u.spark_person_id == PersonIdRef::new("some_person_id")
-                && u.email == EmailRef::new("some@example.com")
-                && u.filter == None)
-            .is_some());
-
-        let res = bot
-            .state
-            .enable_filter(PersonIdRef::new("some_person_id"), true);
-        assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
-        let res = bot
-            .state
-            .enable_filter(PersonIdRef::new("some_person_id"), false);
-        assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
-    }
-
-    #[test]
-    fn add_valid_filter_for_existing_user() {
-        let mut bot = new_bot();
-        bot.state.add_user(
-            PersonIdRef::new("some_person_id"),
-            EmailRef::new("some@example.com"),
-        );
-
-        let res = bot
-            .state
-            .add_filter(PersonIdRef::new("some_person_id"), ".*some_word.*");
-        assert!(res.is_ok());
-        assert!(bot
-            .state
-            .users
-            .iter()
-            .position(|u| u.spark_person_id == PersonIdRef::new("some_person_id")
-                && u.email == EmailRef::new("some@example.com")
-                && u.filter == Some(Filter::new(".*some_word.*")))
-            .is_some());
-
-        {
-            let filter = bot.state.get_filter(PersonIdRef::new("some_person_id"));
-            assert_eq!(filter, Ok(Some(&Filter::new(".*some_word.*"))));
-        }
-        let res = bot
-            .state
-            .enable_filter(PersonIdRef::new("some_person_id"), false);
-        assert_eq!(res, Ok(String::from(".*some_word.*")));
-        assert!(bot
-            .state
-            .users
-            .iter()
-            .position(|u| u.spark_person_id == PersonIdRef::new("some_person_id")
-                && u.email == EmailRef::new("some@example.com")
-                && u.filter.as_ref().map(|f| f.enabled) == Some(false))
-            .is_some());
-        {
-            let filter = bot
-                .state
-                .get_filter(PersonIdRef::new("some_person_id"))
-                .unwrap()
-                .unwrap();
-            assert_eq!(filter.regex, ".*some_word.*");
-            assert_eq!(filter.enabled, false);
-        }
-        let res = bot
-            .state
-            .enable_filter(PersonIdRef::new("some_person_id"), true);
-        assert_eq!(res, Ok(String::from(".*some_word.*")));
-        assert!(bot
-            .state
-            .users
-            .iter()
-            .position(|u| u.spark_person_id == PersonIdRef::new("some_person_id")
-                && u.email == EmailRef::new("some@example.com")
-                && u.filter.as_ref().map(|f| f.enabled) == Some(true))
-            .is_some());
-        {
-            let filter = bot.state.get_filter(PersonIdRef::new("some_person_id"));
-            assert_eq!(filter, Ok(Some(&Filter::new(".*some_word.*"))));
-        }
-    }
-
-    #[test]
-    fn add_valid_filter_for_non_existing_user() {
-        let mut bot = new_bot();
-        let res = bot
-            .state
-            .add_filter(PersonIdRef::new("some_person_id"), ".*some_word.*");
-        assert_eq!(res, Err(AddFilterResult::UserNotFound));
-        let res = bot
-            .state
-            .enable_filter(PersonIdRef::new("some_person_id"), true);
-        assert_eq!(res, Err(AddFilterResult::UserNotFound));
-        let res = bot
-            .state
-            .enable_filter(PersonIdRef::new("some_person_id"), false);
-        assert_eq!(res, Err(AddFilterResult::UserNotFound));
-    }
-
-    #[test]
-    fn add_valid_filter_for_disabled_user() {
-        let mut bot = new_bot();
-        bot.state.add_user(
-            PersonIdRef::new("some_person_id"),
-            EmailRef::new("some@example.com"),
-        );
-        bot.state.users[0].enabled = false;
-
-        let res = bot
-            .state
-            .add_filter(PersonIdRef::new("some_person_id"), ".*some_word.*");
-        assert_eq!(res, Err(AddFilterResult::UserDisabled));
-        let res = bot
-            .state
-            .enable_filter(PersonIdRef::new("some_person_id"), true);
-        assert_eq!(res, Err(AddFilterResult::UserDisabled));
-        let res = bot
-            .state
-            .enable_filter(PersonIdRef::new("some_person_id"), false);
-        assert_eq!(res, Err(AddFilterResult::UserDisabled));
-    }
-
-    #[test]
-    fn enable_non_configured_filter_for_existing_user() {
-        let mut bot = new_bot();
-        bot.state.add_user(
-            PersonIdRef::new("some_person_id"),
-            EmailRef::new("some@example.com"),
-        );
-
-        let res = bot
-            .state
-            .enable_filter(PersonIdRef::new("some_person_id"), true);
-        assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
-        let res = bot
-            .state
-            .enable_filter(PersonIdRef::new("some_person_id"), false);
-        assert_eq!(res, Err(AddFilterResult::FilterNotConfigured));
-    }
-
-    #[test]
-    fn enable_invalid_filter_for_existing_user() {
-        let mut bot = new_bot();
-        bot.state.add_user(
-            PersonIdRef::new("some_person_id"),
-            EmailRef::new("some@example.com"),
-        );
-        bot.state.users[0].filter = Some(Filter::new("invlide_filter_set_from_outside["));
-
-        let res = bot
-            .state
-            .enable_filter(PersonIdRef::new("some_person_id"), true);
-        assert_eq!(res, Err(AddFilterResult::InvalidFilter));
-        let res = bot
-            .state
-            .enable_filter(PersonIdRef::new("some_person_id"), false);
-        assert_eq!(res, Err(AddFilterResult::InvalidFilter));
-    }
-
-    #[test]
     fn test_maybe_has_inline_comments() {
         let mut event = get_event();
         event.comment = "PatchSet 666: (2 comments)".to_string();
@@ -1426,5 +1008,43 @@ mod test {
 
         event.comment = "Nope, colleague comment!".to_string();
         assert!(!maybe_has_inline_comments(&event));
+    }
+
+    #[test]
+    fn dont_exit_on_spark_send_failure() {
+        /// When sending a message fails there was a bug that lead the bot to
+        /// exit at this point. This a regression test for this bug.
+
+        #[derive(Clone, Default)]
+        struct TestSparkClient {
+            message_count: std::rc::Rc<std::cell::Cell<usize>>,
+        };
+
+        impl SparkClient for TestSparkClient {
+            type ReplyFuture = future::FutureResult<(), spark::Error>;
+            fn send_message(&self, _email: &EmailRef, _msg: &str) -> Self::ReplyFuture {
+                self.message_count.set(self.message_count.get() + 1);
+
+                future::err(spark::Error::IoError(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "it did not work",
+                )))
+            }
+        }
+
+        let spark_client = TestSparkClient::default();
+
+        let bot = Builder::new(State::new()).build(TestGerritCommandRunner, spark_client.clone());
+
+        let spark_messages = stream::repeat(spark::Message {
+            person_email: spark::EmailRef::new("some@example.com").to_owned(),
+            text: "status".to_string(),
+            ..Default::default()
+        })
+        .take(7);
+        let gerrit_events = stream::empty();
+
+        assert_eq!(bot.run(gerrit_events, spark_messages).wait(), Ok(()));
+        assert_eq!(spark_client.message_count.get(), 7);
     }
 }

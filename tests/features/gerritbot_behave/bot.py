@@ -10,18 +10,15 @@ from behave import fixture
 
 
 class BotHandler:
-    def __init__(self, *, process, message_queue):
+    def __init__(self, *, process, message_queue, message_timeout):
         self.process = process
         self.message_queue = message_queue
+        self.message_timeout = message_timeout
 
     def send_message(self, sender, message):
         log = logging.getLogger("bot-messages")
         serialized_message = json.dumps(
-            {
-                "personEmail": sender.email,
-                "personId": sender.webex_teams_person_id,
-                "text": message,
-            }
+            {"email": sender.email, "text": message}
         ).encode("utf-8")
         log.debug("sending message to bot: %r", serialized_message)
         self.process.stdin.write(serialized_message)
@@ -35,7 +32,7 @@ class BotHandler:
             # XXX: we should find a better way to check if there are no more
             # messages coming
             try:
-                message = self.message_queue.get(timeout=0.2)
+                message = self.message_queue.get(timeout=self.message_timeout)
             except queue.Empty:
                 break
             else:
@@ -45,11 +42,7 @@ class BotHandler:
         return messages
 
     def get_messages_for_person(self, person):
-        return [
-            m
-            for m in self.current_messages
-            if m["personId"] == person.webex_teams_person_id
-        ]
+        return [m for m in self.current_messages if m["email"] == person.email]
 
     def _read_messages(self):
         log = logging.getLogger("bot-messages")
@@ -74,14 +67,27 @@ class BotHandler:
             log.info("%s", line.decode("utf-8").rstrip("\n"))
 
 
+def build_bot():
+    subprocess.check_call(["cargo", "build", "--example", "gerritbot-console"])
+    metadata = json.loads(
+        subprocess.check_output(
+            ["cargo", "metadata", "--no-deps", "--format-version=1"]
+        ).decode("utf-8")
+    )
+    target_directory = metadata["target_directory"]
+
+    return os.path.join(target_directory, "debug", "examples", "gerritbot-console")
+
+
 @fixture
-def setup_bot(context, *, user, hostname, port):
+def setup_bot(context, *, user, hostname, port, message_timeout, executable):
     with tempfile.TemporaryDirectory() as bot_directory:
         user.ssh_key.write_private_key_file(os.path.join(bot_directory, "id_rsa"))
         with open(os.path.join(bot_directory, "id_rsa.pub"), "w") as f:
             f.write(f"{user.ssh_key.get_name()} {user.ssh_key.get_base64()}")
 
-        bot_args = "cargo run --example gerritbot-console --".split() + [
+        bot_args = [
+            executable,
             "-C",
             bot_directory,
             "--identity-file",
@@ -111,7 +117,11 @@ def setup_bot(context, *, user, hostname, port):
 
         message_queue = queue.Queue()
 
-        bot = context.bot = BotHandler(process=bot_process, message_queue=message_queue)
+        bot = context.bot = BotHandler(
+            process=bot_process,
+            message_queue=message_queue,
+            message_timeout=message_timeout,
+        )
         read_messages_thread = threading.Thread(target=bot._read_messages)
         read_messages_thread.start()
 
