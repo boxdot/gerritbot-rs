@@ -327,11 +327,13 @@ local FLAG_DESCRIPTIONS = {
     notify_change_merged = "Toggle notification when a change is merged.",
 }
 
+local FLAG_SINGLE_LINE_FORMAT = "* `%s` -- %s"
+
 function format_help()
     local flags = {}
 
     for flag_name, flag_description in pairs(FLAG_DESCRIPTIONS) do
-        table.insert(flags, string.format("* %s -- %s", flag_name, flag_description))
+        table.insert(flags, string.format(FLAG_SINGLE_LINE_FORMAT, flag_name, flag_description))
     end
 
     table.sort(flags)
@@ -385,20 +387,21 @@ function format_status(status_details, user_flags)
 
     for flag_name, flag_value in pairs(user_flags or {}) do
         if flag_value then
-            table.insert(flag_strings, flag_name)
+            local flag_description = FLAG_DESCRIPTIONS[flag_name]
+            table.insert(flag_strings, string.format(FLAG_SINGLE_LINE_FORMAT, flag_name, flag_description))
         end
     end
 
     table.sort(flag_strings)
 
     if #flag_strings > 0 then
-        flags_string = "The following flags are enabled for you: " .. table.concat(flag_strings, ", ") .. "."
+        flags_string = "The following flags are **enabled** for you: " .. table.concat(flag_strings, "\n") .. "."
     else
         flags_string = "No flags are enabled for you."
     end
 
     return string.format(
-        "Notifications for you are **%s**. I am notifying %s. %s",
+        "Notifications for you are **%s**. I am notifying %s.\n\n%s",
         status_details.user_enabled and "enabled" or "disabled",
         other_users_string,
         flags_string
