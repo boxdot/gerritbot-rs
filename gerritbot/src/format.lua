@@ -395,7 +395,7 @@ function format_status(status_details, user_flags)
     table.sort(flag_strings)
 
     if #flag_strings > 0 then
-        flags_string = "The following flags are **enabled** for you: " .. table.concat(flag_strings, "\n") .. "."
+        flags_string = "The following flags are **enabled** for you: \n" .. table.concat(flag_strings, "\n") .. "."
     else
         flags_string = "No flags are enabled for you."
     end
