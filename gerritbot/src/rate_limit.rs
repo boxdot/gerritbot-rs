@@ -82,8 +82,7 @@ impl IntoCacheLine for &gerrit::CommentAddedEvent {
     fn into_cache_line(email: Email, event: &Self) -> MsgCacheLine {
         let mut approvals: Vec<_> = event
             .approvals
-            .as_ref()
-            .map(Vec::as_slice)
+            .as_deref()
             .unwrap_or(&[][..])
             .iter()
             .map(

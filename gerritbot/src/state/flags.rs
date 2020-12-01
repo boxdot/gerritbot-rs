@@ -140,15 +140,11 @@ impl UserFlags {
     }
 
     pub fn is_default(&self) -> bool {
-        if let UserFlags::Default = self {
-            true
-        } else {
-            false
-        }
+        matches!(self, UserFlags::Default)
     }
 
     pub fn reset(&mut self) {
-        std::mem::replace(self, UserFlags::Default);
+        *self = UserFlags::Default;
     }
 
     pub fn set(&mut self, flag: UserFlag, value: bool) {
@@ -164,7 +160,7 @@ impl UserFlags {
             UserFlags::Default => {
                 let mut set = DEFAULT_FLAGS.iter().cloned().collect();
                 set_flag(&mut set);
-                std::mem::replace(self, UserFlags::Custom(set));
+                *self = UserFlags::Custom(set);
             }
             UserFlags::Custom(ref mut set) => set_flag(set),
         }

@@ -136,10 +136,7 @@ impl IsHuman for gerrit::User {
     fn is_human(&self) -> bool {
         // XXX: Maybe this should be sophisticated to avoid matching humans
         // whose name contains "bot"?
-        match self.username {
-            Some(ref username) if username.contains("bot") => false,
-            _ => true,
-        }
+        !matches!(self.username, Some(ref username) if username.contains("bot"))
     }
 }
 
@@ -223,7 +220,10 @@ where
                 // try sending a message for up to 5 seconds, then give up
                 tokio::timer::Timeout::new(send_future, Duration::from_secs(5))
                     // log and suppress errors
-                    .or_else(|e| Ok(error!("failed to send spark message: {}", e)))
+                    .or_else(|e| {
+                        error!("failed to send spark message: {}", e);
+                        Ok(())
+                    })
             })
             // try sending up to 10 messages at a time
             .buffer_unordered(10)
@@ -440,11 +440,7 @@ where
         &mut self,
         event: Box<gerrit::CommentAddedEvent>,
     ) -> Option<(spark::Email, String)> {
-        let approvals = event
-            .approvals
-            .as_ref()
-            .map(Vec::as_slice)
-            .unwrap_or(&[][..]);
+        let approvals = event.approvals.as_deref().unwrap_or(&[][..]);
         let owner_email = event.change.owner.spark_email()?;
 
         // try to find the user and check it is enabled
@@ -766,7 +762,7 @@ mod test {
             }
 
             it "has the expected attributes" {
-                let user = bot.state.users().nth(0).unwrap();
+                let user = bot.state.users().next().unwrap();
                 assert_that!(user).has_email("some@example.com");
                 assert_that!(user).has_email("some@example.com");
                 assert_that!(user).has_any_flag(NOTIFICATION_FLAGS);
@@ -835,7 +831,7 @@ mod test {
         }
     }
 
-    const EVENT_JSON : &'static str = r#"
+    const EVENT_JSON: &str = r#"
 {"author":{"name":"Approver","username":"approver","email":"approver@approvers.com"},"approvals":[{"type":"Code-Review","description":"Code-Review","value":"2","oldValue":"-1"}],"comment":"Patch Set 1: Code-Review+2\n\nJust a buggy script. FAILURE\n\nAnd more problems. FAILURE","patchSet":{"number":1,"revision":"49a65998c02eda928559f2d0b586c20bc8e37b10","parents":["fb1909b4eda306985d2bbce769310e5a50a98cf5"],"ref":"refs/changes/42/42/1","uploader":{"name":"Author","email":"author@example.com","username":"Author"},"createdOn":1494165142,"author":{"name":"Author","email":"author@example.com","username":"Author"},"isDraft":false,"kind":"REWORK","sizeInsertions":0,"sizeDeletions":0},"change":{"project":"demo-project","branch":"master","id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14","number":49,"subject":"Some review.","owner":{"name":"Author","email":"author@example.com","username":"author"},"url":"http://localhost/42","commitMessage":"Some review.\n\nChange-Id: Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14\n","status":"NEW"},"project":"demo-project","refName":"refs/heads/master","changeKey":{"id":"Ic160fa37fca005fec17a2434aadf0d9dcfbb7b14"},"type":"comment-added","eventCreatedOn":1499190282}"#;
 
     fn get_event() -> gerrit::CommentAddedEvent {
