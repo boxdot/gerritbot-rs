@@ -1,0 +1,67 @@
+on: [push, pull_request]
+
+name: CI
+
+env:
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build_and_test:
+    name: build
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt install libssh2-1-dev python3 python3-pip python3-setuptools docker-compose -y
+          pip3 install --user -r requirements.txt
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --all-targets --all-features
+      - uses: actions-rs/cargo@v1
+        with:
+          command: test
+      - name: Integration tests
+        run: |
+          docker-compose up -d gerrit
+          set -o pipefail; python3 -m behave -v -D gerrit_start_timeout=60 -D gerritbot_message_timeout=1 | cat
+
+  # rustfmt:
+  #   name: rustfmt
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v2
+  #     - uses: actions-rs/toolchain@v1
+  #       with:
+  #         profile: minimal
+  #         toolchain: stable
+  #         components: rustfmt
+  #     - uses: actions-rs/cargo@v1
+  #       with:
+  #         command: fmt
+  #         args: -- --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt install libssh2-1-dev
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          components: clippy
+      - uses: actions-rs/cargo@v1
+        with:
+          command: clippy

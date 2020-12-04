@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json;
 use structopt::StructOpt;
 
 use futures::{future, stream, sync::mpsc::channel, Future as _, Sink as _, Stream as _};
@@ -105,7 +104,7 @@ impl bot::SparkClient for ConsoleSparkClient {
         // error handling here.
         match self {
             ConsoleSparkClient::Plain => {
-                write!(std::io::stdout(), "{}: {}\n", email, msg).expect("writing to stdout failed")
+                writeln!(std::io::stdout(), "{}: {}", email, msg).expect("writing to stdout failed")
             }
             ConsoleSparkClient::Json => {
                 let message = SimpleOutputMessage {
@@ -115,7 +114,7 @@ impl bot::SparkClient for ConsoleSparkClient {
                 serde_json::to_writer(std::io::stdout(), &message)
                     .expect("writing JSON to stdout failed");
                 std::io::stdout()
-                    .write(b"\n")
+                    .write_all(b"\n")
                     .expect("writing to stdout failed");
             }
         }
@@ -124,13 +123,10 @@ impl bot::SparkClient for ConsoleSparkClient {
 }
 
 fn main() {
-    env_logger::init_from_env(
-        env_logger::Env::default()
-            .filter_or(
-                "GERRITBOT_LOG",
-                concat!(module_path!(), "=info,gerritbot=info,gerritbot_gerrit=info"),
-            )
-    );
+    env_logger::init_from_env(env_logger::Env::default().filter_or(
+        "GERRITBOT_LOG",
+        concat!(module_path!(), "=info,gerritbot=info,gerritbot_gerrit=info"),
+    ));
     let args = Args::from_args();
 
     if let Some(working_directory) = args.working_directory.as_ref() {

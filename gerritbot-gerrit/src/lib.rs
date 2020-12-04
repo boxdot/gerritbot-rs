@@ -211,21 +211,17 @@ impl Connection {
 
         debug!("Connecting to tcp: {}", &host);
 
-        let tcp = TcpStream::connect(&host).or_else(|err| {
-            Err(format!(
-                "Could not connect to gerrit at {}: {:?}",
-                host, err
-            ))
-        })?;
+        let tcp = TcpStream::connect(&host)
+            .map_err(|err| format!("Could not connect to gerrit at {}: {:?}", host, err))?;
 
         session
             .handshake(&tcp)
-            .or_else(|err| Err(format!("Could not connect to gerrit: {:?}", err)))?;
+            .map_err(|err| format!("Could not connect to gerrit: {:?}", err))?;
 
         // Try to authenticate
         session
             .userauth_pubkey_file(&username, Some(&pub_key_path), &priv_key_path, None)
-            .or_else(|err| Err(format!("Could not authenticate: {:?}", err)))?;
+            .map_err(|err| format!("Could not authenticate: {:?}", err))?;
 
         Ok((session, tcp))
     }

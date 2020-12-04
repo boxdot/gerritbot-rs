@@ -19,9 +19,9 @@ pub fn sqs_receiver(
         ..Default::default()
     };
     // set up deleter client and delete request template
-    let delete_client = SqsClient::new(queue_region.clone());
+    let delete_client = SqsClient::new(queue_region);
     let delete_request = DeleteMessageBatchRequest {
-        queue_url: queue_url.clone(),
+        queue_url,
         ..Default::default()
     };
 

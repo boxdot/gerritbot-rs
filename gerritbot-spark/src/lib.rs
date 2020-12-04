@@ -1,14 +1,15 @@
 #![deny(bare_trait_objects)]
 
 use std::convert::identity;
+use std::io;
 use std::net::SocketAddr;
-use std::{error, fmt, io};
 
 use futures::future::{self, Future};
 use futures::sync::mpsc::channel;
 use futures::{IntoFuture as _, Sink, Stream};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 mod sqs;
 
@@ -329,78 +330,21 @@ pub struct Client {
     bot_id: PersonId,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum Error {
-    ReqwestError(reqwest::Error),
-    HyperError(hyper::Error),
+    #[error(transparent)]
+    ReqwestError(#[from] reqwest::Error),
+    #[error(transparent)]
+    HyperError(#[from] hyper::Error),
     // SqsError(sqs::Error),
-    JsonError(serde_json::Error),
+    #[error(transparent)]
+    JsonError(#[from] serde_json::Error),
+    #[error("register webhook failed: {0}")]
     RegisterWebhook(String),
+    #[error("register webhook failed: {0}")]
     DeleteWebhook(String),
-    IoError(io::Error),
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Error::ReqwestError(ref err) => fmt::Display::fmt(err, f),
-            Error::HyperError(ref err) => fmt::Display::fmt(err, f),
-            //Error::SqsError(ref err) => fmt::Display::fmt(err, f),
-            Error::JsonError(ref err) => fmt::Display::fmt(err, f),
-            Error::RegisterWebhook(ref msg) | Error::DeleteWebhook(ref msg) => {
-                fmt::Display::fmt(msg, f)
-            }
-            Error::IoError(ref err) => fmt::Display::fmt(err, f),
-        }
-    }
-}
-
-impl error::Error for Error {
-    fn description(&self) -> &str {
-        match *self {
-            Error::ReqwestError(ref err) => err.description(),
-            Error::HyperError(ref err) => err.description(),
-            // Error::SqsError(ref err) => err.description(),
-            Error::JsonError(ref err) => err.description(),
-            Error::RegisterWebhook(ref msg) | Error::DeleteWebhook(ref msg) => msg,
-            Error::IoError(ref err) => err.description(),
-        }
-    }
-
-    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        match *self {
-            Error::ReqwestError(ref err) => err.source(),
-            Error::HyperError(ref err) => err.source(),
-            // Error::SqsError(ref err) => err.source(),
-            Error::JsonError(ref err) => err.source(),
-            Error::RegisterWebhook(_) | Error::DeleteWebhook(_) => None,
-            Error::IoError(ref err) => err.source(),
-        }
-    }
-}
-
-impl From<reqwest::Error> for Error {
-    fn from(err: reqwest::Error) -> Self {
-        Error::ReqwestError(err)
-    }
-}
-
-impl From<hyper::Error> for Error {
-    fn from(err: hyper::Error) -> Self {
-        Error::HyperError(err)
-    }
-}
-
-impl From<serde_json::Error> for Error {
-    fn from(err: serde_json::Error) -> Self {
-        Error::JsonError(err)
-    }
-}
-
-impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Self {
-        Error::IoError(err)
-    }
+    #[error(transparent)]
+    IoError(#[from] io::Error),
 }
 
 impl Client {
@@ -654,7 +598,7 @@ pub fn start_raw_webhook_server(
                     .map_err(|e| error!("failed to decode post body: {}", e))
                     .and_then(|post: WebhookMessage| {
                         message_sink
-                            .send(post.clone())
+                            .send(post)
                             .map_err(|e| error!("failed to send post body: {}", e))
                             .map(|_| ())
                     });

@@ -28,13 +28,10 @@ struct Args {
 }
 
 fn main() {
-    env_logger::init_from_env(
-        env_logger::Env::default()
-            .filter_or(
-                "GERRITBOT_LOG",
-                concat!(module_path!(), "=info,gerritbot_spark=info"),
-            )
-    );
+    env_logger::init_from_env(env_logger::Env::default().filter_or(
+        "GERRITBOT_LOG",
+        concat!(module_path!(), "=info,gerritbot_spark=info"),
+    ));
     let args = Args::from_args();
     let debug = args.debug;
     let spark_config: SparkConfig = std::fs::read(args.config_file)
@@ -81,8 +78,8 @@ fn main() {
                     } else {
                         Either::A(client.create_message(spark::CreateMessageParameters {
                             target: (&message.room_id).into(),
-                            markdown: message.markdown.as_ref().map(String::as_str),
-                            html: message.html.as_ref().map(String::as_str),
+                            markdown: message.markdown.as_deref(),
+                            html: message.html.as_deref(),
                             text: Some(&message.text),
                         }))
                     }

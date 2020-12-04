@@ -221,8 +221,7 @@ mod test {
         assert!(state
             .users
             .iter()
-            .position(|u| u.email() == EmailRef::new("some@example.com") && u.filter().is_none())
-            .is_some());
+            .any(|u| u.email() == EmailRef::new("some@example.com") && u.filter().is_none()));
 
         let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), true);
         assert_eq!(res, Err(()));
@@ -240,9 +239,8 @@ mod test {
         assert!(state
             .users
             .iter()
-            .position(|u| u.email() == EmailRef::new("some@example.com")
-                && u.filter().map(|f| f.regex.as_str()) == Some(".*some_word.*"))
-            .is_some());
+            .any(|u| u.email() == EmailRef::new("some@example.com")
+                && u.filter().map(|f| f.regex.as_str()) == Some(".*some_word.*")));
 
         {
             let filter = state.get_filter(EmailRef::new("some@example.com"));
@@ -253,9 +251,8 @@ mod test {
         assert!(state
             .users
             .iter()
-            .position(|u| u.email() == EmailRef::new("some@example.com")
-                && u.filter().map(|f| f.enabled) == Some(false))
-            .is_some());
+            .any(|u| u.email() == EmailRef::new("some@example.com")
+                && u.filter().map(|f| f.enabled) == Some(false)));
         {
             let filter = state.get_filter(EmailRef::new("some@example.com"));
             assert_eq!(filter, Some((".*some_word.*", false)));
@@ -265,9 +262,8 @@ mod test {
         assert!(state
             .users
             .iter()
-            .position(|u| u.email() == EmailRef::new("some@example.com")
-                && u.filter().map(|f| f.enabled) == Some(true))
-            .is_some());
+            .any(|u| u.email() == EmailRef::new("some@example.com")
+                && u.filter().map(|f| f.enabled) == Some(true)));
         {
             let filter = state.get_filter(EmailRef::new("some@example.com"));
             assert_eq!(filter, Some((".*some_word.*", true)));
