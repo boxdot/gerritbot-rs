@@ -93,14 +93,6 @@ impl State {
             .map(|pos| &self.users[pos])
     }
 
-    pub fn find_user_by_email<E: ?Sized>(&self, email: &E) -> Option<&User>
-    where
-        spark::Email: std::borrow::Borrow<E>,
-        E: std::hash::Hash + Eq,
-    {
-        self.email_index.get(email).map(|pos| &self.users[*pos])
-    }
-
     pub fn reset_flags(&mut self, email: &spark::EmailRef) -> &User {
         let user = self.find_or_add_user_by_email(email);
         user.reset_flags();
