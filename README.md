@@ -1,4 +1,4 @@
-# Gerritbot [![Build Status](https://travis-ci.org/boxdot/gerritbot-rs.svg?branch=master)](https://travis-ci.org/boxdot/gerritbot-rs)
+# Gerritbot [![Build Status](https://github.com/boxdot/gerritbot-rs/workflows/CI/badge.svg)](https://github.com/boxdot/gerritbot-rs/actions/workflows/ci.yaml)
 
 A [Cisco WebEx Teams](https://teams.webex.com) bot, which notifies you about new review approvals
 (i.e. +2/+1/-1/-2 etc.) from [Gerrit](https://www.gerritcodereview.com).
