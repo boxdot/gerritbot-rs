@@ -415,7 +415,7 @@ where
             .chain(std::iter::once(&change.owner))
             .filter(|user| user.is_human())
             .filter_map(|user| user.spark_email())
-            .filter_map(move |email| self.state.find_user_by_email(email))
+            .filter_map(move |email| self.state.find_user(email))
     }
 
     fn get_comment_response_messages(
@@ -446,7 +446,7 @@ where
         // try to find the user and check it is enabled
         let user = self
             .state
-            .find_user_by_email(owner_email)
+            .find_user(owner_email)
             .filter(|user| user.has_any_flag(REVIEW_COMMENT_FLAGS))?;
 
         // filter all messages that were already sent to the user recently
@@ -490,7 +490,7 @@ where
         let reviewer_email = spark::EmailRef::new(event.reviewer.email.as_ref()?);
         let user = self
             .state
-            .find_user_by_email(reviewer_email)
+            .find_user(reviewer_email)
             .filter(|user| user.has_flag(UserFlag::NotifyReviewerAdded))?;
 
         // filter all messages that were already sent to the user recently
