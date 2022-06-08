@@ -184,7 +184,7 @@ impl Event {
     }
 }
 
-fn get_pub_key_path(priv_key_path: &PathBuf) -> PathBuf {
+fn get_pub_key_path(priv_key_path: &Path) -> PathBuf {
     let mut pub_key_path = PathBuf::from(priv_key_path.to_str().unwrap());
     pub_key_path.set_extension("pub");
     pub_key_path
@@ -192,8 +192,6 @@ fn get_pub_key_path(priv_key_path: &PathBuf) -> PathBuf {
 
 pub struct Connection {
     pub session: ssh2::Session,
-    /// tcp has to be kept alive with session together, even if it is never used directly
-    tcp: TcpStream,
     // Data needed for reconnection in case this connection was terminated.
     host: String,
     username: String,
@@ -206,7 +204,7 @@ impl Connection {
         username: &str,
         pub_key_path: &Path,
         priv_key_path: &Path,
-    ) -> Result<(ssh2::Session, TcpStream), String> {
+    ) -> Result<ssh2::Session, String> {
         let mut session = ssh2::Session::new().unwrap();
 
         debug!("Connecting to tcp: {}", &host);
@@ -214,28 +212,28 @@ impl Connection {
         let tcp = TcpStream::connect(&host)
             .map_err(|err| format!("Could not connect to gerrit at {}: {:?}", host, err))?;
 
+        session.set_tcp_stream(tcp);
         session
-            .handshake(&tcp)
+            .handshake()
             .map_err(|err| format!("Could not connect to gerrit: {:?}", err))?;
 
         // Try to authenticate
         session
-            .userauth_pubkey_file(&username, Some(&pub_key_path), &priv_key_path, None)
+            .userauth_pubkey_file(username, Some(pub_key_path), priv_key_path, None)
             .map_err(|err| format!("Could not authenticate: {:?}", err))?;
 
-        Ok((session, tcp))
+        Ok(session)
     }
 
     pub fn connect(host: String, username: String, priv_key_path: PathBuf) -> Result<Self, String> {
         let pub_key_path = get_pub_key_path(&priv_key_path);
         debug!("Will use public key: {}", pub_key_path.to_str().unwrap());
 
-        let (session, tcp) =
+        let session =
             Self::connect_session(&host, &username, &pub_key_path, &priv_key_path)?;
 
         Ok(Self {
             session,
-            tcp,
             host,
             username,
             priv_key_path,
@@ -245,16 +243,12 @@ impl Connection {
     /// Reconnect once.
     pub fn reconnect(&mut self) -> Result<(), String> {
         let pub_key_path = get_pub_key_path(&self.priv_key_path);
-        let (session, tcp) = Self::connect_session(
+        self.session = Self::connect_session(
             &self.host,
             &self.username,
             &pub_key_path,
             &self.priv_key_path,
         )?;
-
-        self.session = session;
-        self.tcp = tcp;
-
         Ok(())
     }
 

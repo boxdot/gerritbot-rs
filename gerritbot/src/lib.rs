@@ -345,7 +345,7 @@ where
                 } else {
                     "Filter successfully disabled.".to_string()
                 }
-            ).unwrap_or_else(|()|
+            ).unwrap_or_else(||
                              if enable {
                                  "Cannot enable filter since there is none configured. User `filter <regex>` to add a new filter.".to_string()
                              } else {
@@ -430,7 +430,7 @@ where
                     .format_message(Some(user), &*event)
                     .map_err(|e| error!("message formatting failed: {}", e))
                     .unwrap_or(None)
-                    .filter(|message| !self.state.is_filtered(user, &message))
+                    .filter(|message| !self.state.is_filtered(user, message))
                     .map(|message| (user.email().to_owned(), message))
             })
             .collect()
@@ -463,7 +463,7 @@ where
             })
             .filter(|msg| {
                 // if user has configured and enabled a filter try to apply it
-                !self.state.is_filtered(user, &msg)
+                !self.state.is_filtered(user, msg)
             })
             .map(|m| (owner_email.to_owned(), m))
     }
@@ -521,7 +521,7 @@ where
                     .map_err(|e| error!("message formatting failed: {}", e))
                     .ok()
                     .and_then(identity)
-                    .filter(|message| !self.state.is_filtered(user, &message))
+                    .filter(|message| !self.state.is_filtered(user, message))
                     .map(|message| (user.email().to_owned(), message))
             })
             .collect()
@@ -540,7 +540,7 @@ where
                     .map_err(|e| error!("message formatting failed: {}", e))
                     .ok()
                     .and_then(identity)
-                    .filter(|message| !self.state.is_filtered(user, &message))
+                    .filter(|message| !self.state.is_filtered(user, message))
                     .map(|message| (user.email().to_owned(), message))
             })
             .collect()
@@ -902,7 +902,7 @@ mod test {
             let res = bot
                 .state
                 .enable_and_get_filter(EmailRef::new("author@example.com"), false);
-            assert!(res.is_ok());
+            assert!(res.is_some());
             let res = bot.get_approvals_msg(Box::new(get_event()));
             assert!(res.is_some());
             let (user, msg) = res.unwrap();
@@ -913,7 +913,7 @@ mod test {
             let res = bot
                 .state
                 .enable_and_get_filter(EmailRef::new("author@example.com"), true);
-            assert!(res.is_ok());
+            assert!(res.is_some());
             let res = bot.state.add_filter(
                 EmailRef::new("author@example.com"),
                 "some_non_matching_filter",
@@ -1014,7 +1014,7 @@ mod test {
         #[derive(Clone, Default)]
         struct TestSparkClient {
             message_count: std::rc::Rc<std::cell::Cell<usize>>,
-        };
+        }
 
         impl SparkClient for TestSparkClient {
             type ReplyFuture = future::FutureResult<(), spark::Error>;

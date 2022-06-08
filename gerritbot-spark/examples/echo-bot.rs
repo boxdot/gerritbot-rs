@@ -20,9 +20,6 @@ struct Args {
     /// Config file
     #[structopt(short = "f")]
     config_file: PathBuf,
-    /// Enable verbose output
-    #[structopt(short)]
-    verbose: bool,
     #[structopt(short, long)]
     debug: bool,
 }

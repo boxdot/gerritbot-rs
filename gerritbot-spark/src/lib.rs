@@ -1,4 +1,5 @@
 #![deny(bare_trait_objects)]
+#![allow(dead_code)]
 
 use std::convert::identity;
 use std::io;
@@ -480,9 +481,9 @@ impl Client {
         })
     }
 
-    pub fn create_message<'a>(
+    pub fn create_message(
         &self,
-        parameters: CreateMessageParameters<'a>,
+        parameters: CreateMessageParameters,
     ) -> impl Future<Item = (), Error = Error> {
         debug!("send message to {:?}", parameters.target);
         let json = match serde_json::to_value(&parameters) {
@@ -581,7 +582,7 @@ pub fn start_raw_webhook_server(
     info!("listening to Spark on {}", listen_address);
 
     // very simple webhook listener
-    let server = hyper::Server::bind(&listen_address).serve(move || {
+    let server = hyper::Server::bind(listen_address).serve(move || {
         let message_sink = message_sink.clone();
 
         hyper::service::service_fn_ok(move |request: hyper::Request<Body>| {

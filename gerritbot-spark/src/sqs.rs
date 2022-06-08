@@ -42,7 +42,7 @@ pub fn sqs_receiver(
     })
     // delete messages from the queue
     .and_then(move |receive_result| {
-        let messages = receive_result.messages.unwrap_or_else(Vec::new);
+        let messages = receive_result.messages.unwrap_or_default();
 
         if !messages.is_empty() {
             // prepare delete request

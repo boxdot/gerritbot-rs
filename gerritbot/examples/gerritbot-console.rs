@@ -73,10 +73,10 @@ struct SimpleInputMessage {
     text: String,
 }
 
-impl Into<spark::Message> for SimpleInputMessage {
-    fn into(self) -> spark::Message {
-        let SimpleInputMessage { email, text } = self;
-        spark::Message {
+impl From<SimpleInputMessage> for spark::Message {
+    fn from(msg: SimpleInputMessage) -> Self {
+        let SimpleInputMessage { email, text } = msg;
+        Self {
             person_email: email,
             text,
             ..Default::default()

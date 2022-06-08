@@ -111,12 +111,12 @@ fn get_flags_table<'lua>(user: &User, lua: rlua::Context<'lua>) -> rlua::Result<
 impl Formatter {
     pub fn new(format_script: &str) -> Result<Self, String> {
         Ok(Self {
-            lua: load_format_script(&format_script)?,
+            lua: load_format_script(format_script)?,
         })
     }
 
-    fn format_lua<'lua, I>(
-        lua: rlua::Context<'lua>,
+    fn format_lua<I>(
+        lua: rlua::Context,
         user: Option<&User>,
         input: I,
     ) -> Result<Option<String>, String>
