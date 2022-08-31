@@ -133,20 +133,19 @@ impl State {
     }
 
     /// Enable or disable the configured filter for the user and return it given
-    /// that the user exists and has a filter configured. Error means the user
+    /// that the user exists and has a filter configured. `None` means the user
     /// doesn't exist or doesn't have a filter configured.
     pub fn enable_and_get_filter(
         &mut self,
         email: &spark::EmailRef,
         enabled: bool,
-    ) -> Result<&str, ()> {
+    ) -> Option<&str> {
         self.find_user_mut(email)
             .and_then(|u| {
                 u.set_filter_enabled(enabled);
                 u.filter()
             })
             .map(|f| f.regex.as_str())
-            .ok_or(())
     }
 
     pub fn users(&self) -> impl Iterator<Item = &User> + Clone {
@@ -216,9 +215,9 @@ mod test {
             .any(|u| u.email() == EmailRef::new("some@example.com") && u.filter().is_none()));
 
         let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), true);
-        assert_eq!(res, Err(()));
+        assert!(res.is_none());
         let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), false);
-        assert_eq!(res, Err(()));
+        assert!(res.is_none());
     }
 
     #[test]
@@ -239,7 +238,7 @@ mod test {
             assert_eq!(filter, Some((".*some_word.*", true)));
         }
         let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), false);
-        assert_eq!(res, Ok(".*some_word.*"));
+        assert_eq!(res, Some(".*some_word.*"));
         assert!(state
             .users
             .iter()
@@ -250,7 +249,7 @@ mod test {
             assert_eq!(filter, Some((".*some_word.*", false)));
         }
         let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), true);
-        assert_eq!(res, Ok(".*some_word.*"));
+        assert_eq!(res, Some(".*some_word.*"));
         assert!(state
             .users
             .iter()
@@ -268,9 +267,9 @@ mod test {
         let res = state.add_filter(EmailRef::new("some@example.com"), ".*some_word.*");
         assert_eq!(res, Ok(()));
         let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), true);
-        assert_eq!(res, Ok(".*some_word.*"));
+        assert_eq!(res, Some(".*some_word.*"));
         let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), false);
-        assert_eq!(res, Ok(".*some_word.*"));
+        assert_eq!(res, Some(".*some_word.*"));
     }
 
     #[test]
@@ -282,9 +281,9 @@ mod test {
         let res = state.add_filter(EmailRef::new("some@example.com"), ".*some_word.*");
         assert_eq!(res, Ok(()));
         let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), true);
-        assert_eq!(res, Ok(".*some_word.*"));
+        assert_eq!(res, Some(".*some_word.*"));
         let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), false);
-        assert_eq!(res, Ok(".*some_word.*"));
+        assert_eq!(res, Some(".*some_word.*"));
     }
 
     #[test]
@@ -293,8 +292,8 @@ mod test {
         state.add_user(EmailRef::new("some@example.com"));
 
         let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), true);
-        assert_eq!(res, Err(()));
+        assert!(res.is_none());
         let res = state.enable_and_get_filter(EmailRef::new("some@example.com"), false);
-        assert_eq!(res, Err(()));
+        assert!(res.is_none());
     }
 }

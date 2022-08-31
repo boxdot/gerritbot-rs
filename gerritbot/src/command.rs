@@ -39,13 +39,13 @@ impl FromStr for Command {
             _ => None
                 .or_else(|| {
                     FILTER_REGEX
-                        .captures(&s.trim()[..])
+                        .captures(s.trim())
                         .and_then(|cap| cap.get(1))
                         .map(|m| Command::FilterAdd(m.as_str().to_string()))
                 })
                 .or_else(|| {
                     FLAG_REGEX
-                        .captures(&s.trim()[..])
+                        .captures(s.trim())
                         .and_then(|cap| cap.get(1).and_then(|m1| cap.get(2).map(|m2| (m1, m2))))
                         .and_then(|(m1, m2)| {
                             m2.as_str()
