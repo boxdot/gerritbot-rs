@@ -18,4 +18,4 @@ ssh2 = "0.9.3"
 env_logger = "0.6"
 spectral = { version = "0.6", default-features = false }
 structopt = "0.2"
-tokio = "0.1"
+tokio = "1.8"
