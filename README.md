@@ -1,5 +1,12 @@
 # Gerritbot [![Build Status](https://github.com/boxdot/gerritbot-rs/workflows/CI/badge.svg)](https://github.com/boxdot/gerritbot-rs/actions/workflows/ci.yaml)
 
+**⚠️ Important**: This project is archived now because
+
+1. Cisco WebEx Teams changed their API
+2. I don't use Gerrit anymore
+
+---
+
 A [Cisco WebEx Teams](https://teams.webex.com) bot, which notifies you about new review approvals
 (i.e. +2/+1/-1/-2 etc.) from [Gerrit](https://www.gerritcodereview.com).
 
